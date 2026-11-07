@@ -1,7 +1,7 @@
 /**
  * .help / /help — overview.
  */
-import { helpEmbed } from '../replies.js';
+import { helpReply } from '../replies.js';
 
 export default {
   name: 'help',
@@ -10,6 +10,6 @@ export default {
   slash: { options: [] },
 
   async run(ctx) {
-    return ctx.reply({ embeds: [helpEmbed(ctx.prefix)] });
+    return ctx.reply(helpReply(ctx.prefix, ctx.client));
   },
 };

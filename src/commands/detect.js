@@ -3,7 +3,7 @@
  */
 import { CONFIG } from '../config.js';
 import { detectService, guessLanguage } from '../detect.js';
-import { detectionEmbed, errorEmbed } from '../replies.js';
+import { detectionReply, errorReply } from '../replies.js';
 import { getAttachmentBuffer } from '../ctx.js';
 
 export default {
@@ -22,9 +22,9 @@ export default {
     try {
       att = await getAttachmentBuffer(ctx, { maxBytes: CONFIG.maxUploadBytes });
     } catch (e) {
-      return ctx.reply({ embeds: [errorEmbed('Download failed', String(e.message || e).slice(0, 300))] });
+      return ctx.reply(errorReply('Download failed', String(e.message || e).slice(0, 300)));
     }
-    if (att.error) return ctx.reply({ embeds: [errorEmbed('No file', att.error)] });
+    if (att.error) return ctx.reply(errorReply('No file', att.error));
 
     const det = detectService(att.buffer);
     const lang = guessLanguage(att.buffer);
@@ -33,8 +33,6 @@ export default {
       : { id: 'unknown', name: 'Unknown', confidence: 0, lang, candidates: [] };
 
     const sizeLabel = `${(att.buffer.length / 1024).toFixed(1)} KB`;
-    return ctx.reply({
-      embeds: [detectionEmbed(ctx.prefix, detected, { sizeLabel, fileLabel: att.filename || 'file' })],
-    });
+    return ctx.reply(detectionReply(detected, { sizeLabel, fileLabel: att.filename || 'file' }, ctx.prefix));
   },
 };

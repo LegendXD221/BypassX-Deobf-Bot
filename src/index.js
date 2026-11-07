@@ -11,7 +11,12 @@ import { logger } from './logger.js';
 import { COMMANDS, commandByName, toSlashJson } from './commands-index.js';
 import { makeCtx } from './ctx.js';
 import { probe as probeEngine } from './engine.js';
-import { errorEmbed } from './replies.js';
+import { errorReply } from './replies.js';
+import { startKeepalive, markDiscordReady } from './keepalive.js';
+
+// HTTP keep-alive server first — Render health checks can hit /health
+// even while Discord is still connecting.
+startKeepalive();
 
 const client = new Client({
   intents: [
@@ -43,6 +48,7 @@ async function registerSlashCommands() {
 
 client.once(Events.ClientReady, async (c) => {
   logger.info({ user: c.user.tag, guilds: c.guilds.cache.size }, 'bot ready');
+  markDiscordReady(true);
   c.user.setPresence({
     activities: [{ name: '.deobf | /deobf — best deobf bot', type: 3 }], // 3 = WATCHING
     status: 'online',
@@ -65,7 +71,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   } catch (e) {
     logger.error({ err: String(e?.stack || e).slice(0, 600), cmd: cmd.name }, 'slash command crashed');
     try {
-      await ctx.reply({ embeds: [errorEmbed('Unexpected error', String(e.message || e).slice(0, 500))] });
+      await ctx.reply(errorReply('Unexpected error', String(e.message || e).slice(0, 500)));
     } catch { /* reply already sent */ }
   }
 });

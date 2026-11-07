@@ -1,0 +1,17 @@
+name: keepalive
+# Layer 3 of the 24/7 keep-alive: ping the public /health endpoint every
+# 10 minutes as an independent layer even if the service's own self-ping dies.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /health
+        run: |
+          curl -fsS -m 30 "${{ secrets.KEEPALIVE_URL }}" \
+            && echo "keepalive ping ok" \
+            || echo "keepalive ping failed (will retry next run)"

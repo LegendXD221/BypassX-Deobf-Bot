@@ -14,6 +14,7 @@ import { detectService, guessLanguage } from './detect.js';
 import * as engine from './engine.js';
 import { postprocessFile } from './postprocess.js';
 import { spawnHardened } from './security.js';
+import { harvestConstants, harvestToLua } from './harvest.js';
 
 // ---- global job semaphore ---------------------------------------------------
 const jobState = { active: 0, queue: [] };
@@ -103,6 +104,11 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
 
       const durationMs = Date.now() - t0;
       if (!outcome.ok || !outcome.files.length) {
+        // Last tier: jailed dynamic constant harvest (escrow builds decrypt
+        // their string pool at VM init — capture it without running anything
+        // outside the sandbox).
+        const h = await tryHarvest(inputPath, detected, lang, stage, stages, t0, buffer, filename);
+        if (h) return h;
         return {
           ok: false,
           detected, stages, durationMs, lang,
@@ -116,10 +122,12 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
       let data = best.buffer || (await engine.readCodeFile(best));
 
       // Passthrough guard: engine echo'd the input back (honest "can't peel"
-      // passthrough) or returned a still-obfuscated stub — report failure
-      // rather than pasting the obfuscated file.
+      // passthrough) or returned a still-obfuscated stub — try the dynamic
+      // harvester before reporting failure.
       if (isPassthrough(data, buffer, shim.shimLine, detected.id)) {
         stage('passthrough-guard', 'engine output identical to input');
+        const h = await tryHarvest(inputPath, detected, lang, stage, stages, t0, buffer, filename);
+        if (h) return h;
         return {
           ok: false,
           detected, stages, durationMs: Date.now() - t0, lang,
@@ -169,6 +177,55 @@ function pickRoute(detected, lang, buffer) {
   if (lang === 'lua') return 'lua-engine'; // includes best-effort VM families → engine auto + sweep
   if (lang === 'js' || looksLikeJs(buffer)) return 'webcrack';
   return 'auto';
+}
+
+// ---- dynamic constant harvest (last tier) -------------------------------------
+// Applies to Lua VM families (incl. the newest escrow/anti-tamper builds) and
+// unknown Lua samples: run the VM init inside the jailed fengari sandbox and
+// capture the decrypted string pool.
+const HARVEST_ELIGIBLE = new Set([
+  'luraph', 'moonsec_v1', 'moonsec_v2', 'moonsec_v3', 'ironbrew1', 'ironbrew2', 'ironbrew3',
+  'psu', 'boronide', 'darksec', 'luaobfuscator_com', 'wearedevs', 'slua', 'moonveil',
+  '77fuscator', 'xhider', 'goofyscator', 'ironveil', '25ms', 'synapsexen', 'wynfuscate',
+  'unknown',
+]);
+
+async function tryHarvest(inputPath, detected, lang, stage, stages, t0, inBuffer, filename) {
+  const eligible = (lang === 'lua' && HARVEST_ELIGIBLE.has(detected.id)) || lang === 'unknown';
+  if (!eligible) return null;
+  stage('harvest', 'jailed VM run — dynamic constant recovery');
+  let h;
+  try {
+    h = await harvestConstants(inputPath, { timeoutMs: Math.min(CONFIG.engineTimeoutMs, 120_000) });
+  } catch (e) {
+    stage('harvest:miss', String(e.message || e).slice(0, 120));
+    return null;
+  }
+  if (!h.ok || (h.strings || []).length < 3) {
+    stage('harvest:miss', h.error || `only ${(h.strings || []).length} strings`);
+    return null;
+  }
+  stage('harvest:hit', `${h.strings.length} strings decrypted${h.ran ? '' : ' (VM init incomplete)'}`);
+  const luaText = harvestToLua(h, { detectedName: detected.name, version: detected.version });
+  let data = Buffer.from(luaText, 'utf8');
+  const post = postprocessFile('constants.lua', data);
+  data = post.data;
+  return {
+    ok: true,
+    code: data.toString('utf8'),
+    binaryOutput: false,
+    outputBuffer: null,
+    codeName: 'recovered-constants.lua',
+    detected,
+    stages,
+    durationMs: Date.now() - t0,
+    lang,
+    originalSize: inBuffer.length,
+    recoveredSize: data.length,
+    how: 'dynamic constant harvest (sandboxed VM)',
+    partialNote: `This build keeps its bytecode behind runtime keys — I recovered the **decrypted string constant pool** (${h.strings.length} strings) via a jailed sandboxed VM run. Static devirtualization of this build is on the roadmap.`,
+    engine: await engine.probe(),
+  };
 }
 
 const ENGINE_FAMILY_BY_DETECT_ID = {
@@ -224,12 +281,15 @@ function isPassthrough(outData, inBuffer, shimLine, detectedId) {
       if (stripped.equals(inBuffer)) return true;
     }
     // Still-obfuscated stub checks for families whose "extraction" can yield
-    // the original wrapper (e.g. archives):
+    // the original wrapper (e.g. archives). The _0x flood alone is NOT enough:
+    // a successfully deobfuscated file can still carry leftover hex parameter
+    // names, so require the output to be near input-sized (real deobf output
+    // shrinks dramatically once the string array + control flow are undone).
     const head4k = outData.subarray(0, 4096).toString('utf8');
     if (detectedId === 'pyarmor' && /__pyarmor__|pyarmor_runtime|Pyarmor\s+\d/i.test(head4k)) return true;
     if (detectedId === 'obfuscator_io') {
       const flood = (head4k.match(/_0x[0-9a-f]{4,}/g) || []).length;
-      if (flood >= 30) return true;
+      if (flood >= 30 && outData.length >= inBuffer.length * 0.9) return true;
     }
     return false;
   } catch {

@@ -8,11 +8,14 @@ Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) sta
 
 ## Highlights
 
+- **Components V2 UI** — every reply is a modern Discord Components V2 card (accent-colored container, sections, separators, link buttons, inline file cards).
 - **Auto-detect with confidence %** — weighted byte-signature detection across 27 services; the bot tells you *what* obfuscated the file and *how sure* it is (e.g. `Luraph v15.1 — 99%`).
 - **Pure code output** — the Pastefy paste contains **only the deobfuscated code**. No banners, no annotations, no junk.
 - **Multi-stage recovery** — targeted family peel → generic auto pipeline (packer chains included) → full 14-family Lua sweep. Fallbacks are automatic and reported in the reply embed.
 - **Prefix + slash commands** — `.deobf` and `/deobf` both work everywhere.
-- **Honest walls** — when an obfuscator's newest build is genuinely static-proof (runtime-derived VM keys), the bot says so instead of pasting garbage back. Passthrough echo is detected and rejected.
+- **Dynamic constant harvest (last tier)** — for escrow/anti-tamper VM builds the bot runs ONLY the VM's decryption init inside a jailed fengari Lua VM (no host access, no network, instruction budget + hard SIGKILL) and captures the decrypted string pool — so even "impossible" builds deliver their constants instead of nothing.
+- **Honest walls** — when a build is genuinely static-proof the bot says so instead of pasting garbage back. Passthrough echo is detected and rejected.
+- **24/7 keep-alive on Render free** — web service + /health checks + 9-minute self-ping through the public URL + an independent GitHub Actions ping every 10 minutes.
 - **Hardened** — samples are never executed (pure static analysis), the engine runs in a scrubbed-env 0700 tmpdir with hard timeouts and SIGKILL, and Discord tokens never reach child processes. No vm2/isolated-vm.
 
 ## Supported services
@@ -22,7 +25,7 @@ Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) sta
 | Service | Versions | Notes |
 | --- | --- | --- |
 | **Luraph** | v11 → **v15.1** (latest) | wire-toolkit: quoted-carrier, BE ascii85, per-build constant-pool decryption; v15 odSQ path; older versions auto-handled too |
-| **MoonSec** | V1 / V2 / V3 | static-key builds fully; escrow/runtime-key builds report an honest wall |
+| **MoonSec** | V1 / V2 / V3 | static-key builds fully; escrow/runtime-key builds fall back to the jailed-VM dynamic constant harvest |
 | **IronBrew** | 1 (Aztup Brew) & 2 | IronBrew2 = full devirt |
 | **Prometheus** | latest, incl. **VMify** | AST + VM pipeline |
 | **Hercules** | V2.x (latest) | full devirt |
@@ -36,7 +39,7 @@ Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) sta
 | Service | Versions | Status |
 | --- | --- | --- |
 | **MoonVeil** | v1.x → 2.0.26 (latest) | detected with version; current builds are full-VM — honest wall |
-| **77fuscator** | v0.4.7 → 0.6.1 (latest) | detected with version; custom VM — honest wall |
+| **77fuscator** | v0.4.7 → 0.6.1 (latest) | detected with version; auto pipeline + dynamic harvest recover constants and code for tested 0.6.x builds |
 | **Xhider** | latest | detected; MoonSec-style VM |
 | **GoofyScator** | current (polymorphic VM) | detected; anti-tamper + proxy-locals |
 | **Ironveil** | latest | detected |
@@ -56,7 +59,7 @@ Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) sta
 | `.ping` | `/ping` | Latency |
 | `.invite` | `/invite` | Add the bot to your server |
 
-`.deobf` accepts the file attached to your message **or** as a reply to a message containing one. Size limit 10 MB (configurable).
+`.deobf` accepts the file attached to your message **or** as a reply to a message containing one. Size limit 10 MB (configurable). Results arrive as a Components V2 card with **paste + raw buttons**, an inline preview, and the recovered file attached.
 
 ## Quick start (self-host)
 
@@ -81,9 +84,15 @@ node test/run.js path/to/obfuscated.lua        # detect + deobf + paste
 node test/run.js --detect-only file.lua        # detection report only
 ```
 
-## Deploy on Render (free tier)
+## Deploy on Render (free tier, 24/7)
 
-This repo ships a [Blueprint](render.yaml): **Render → New → Blueprint** → pick the repo → fill `DISCORD_TOKEN` / `CLIENT_ID` → deploy. It runs as a worker: `node bin/prepare-engine.js && node src/index.js`.
+This repo ships a [Blueprint](render.yaml): **Render → New → Blueprint** → pick the repo → fill `DISCORD_TOKEN` / `CLIENT_ID` / `PUBLIC_URL` → deploy. It runs as a **free web service** (`node bin/prepare-engine.js && node src/index.js`) whose keep-alive HTTP server answers Render health checks.
+
+Render free services sleep after 15 idle minutes — three layers prevent that:
+
+1. **Self-ping** — every 9 min the service hits its own `PUBLIC_URL/health` through the public load balancer (localhost pings don't count for Render's idle timer).
+2. **GitHub Actions** — [.github/workflows/keepalive.yml](.github/workflows/keepalive.yml) pings `/health` every 10 min (set the repo secret `KEEPALIVE_URL` to your service URL).
+3. **/health** — live status JSON (discord state, engine version, job counters) also rendered as a human status page at `/`.
 
 ## Configuration
 
@@ -107,14 +116,18 @@ Every service carries weighted byte-level indicators (version headers, VM macros
 ## Architecture
 
 ```
-Discord (discord.js v14)
+Discord (discord.js v14, Components V2 UI)
   ├── prefix + slash command layer          src/commands, src/index.js
+  ├── V2 reply builders                     src/replies.js     (containers, sections, buttons, file cards)
   ├── detection  (weighted signatures)      src/detect.js
   ├── pipeline   (routing + retries)        src/pipeline.js
   │     ├── Rust engine bridge              src/engine.js      (lua peel / auto / pyarmor / py decompile)
   │     ├── webcrack worker (isolated)      src/webcrack-worker.js (obfuscator.io, JS)
+  │     ├── dynamic constant harvest        src/harvest.js + src/harvester-worker.js (jailed fengari VM)
+  │     ├── Luau → Lua shim                 src/luau-shim.js   (compound-assign rewrite)
   │     └── post-process (pure output)      src/postprocess.js
   ├── Pastefy delivery                      src/pastefy.js
+  ├── keep-alive HTTP server                src/keepalive.js   (/health, status page, self-ping)
   └── hardening                             src/security.js    (env scrub, tmpdir, timeouts, SIGKILL)
 ```
 
@@ -130,7 +143,7 @@ Built standing on excellent open-source work:
 - [terrorlua/obfuscator-samples](https://github.com/terrorlua/obfuscator-samples) — labeled sample corpus used for calibration
 - [upx/upx](https://github.com/upx/upx), [Pastefy](https://pastefy.app)
 
-**What this bot adds over the OSS bots:** 27-service detection with confidence %, Luraph v11–v15.1 wire decryption, a 64-crate static engine (Lua VMs + Python + packers in one), pure-output policy, honest walls, dual prefix/slash UX, and hardened sandboxing.
+**What this bot adds over the OSS bots:** 27-service detection with confidence %, Luraph v11–v15.1 wire decryption, a 64-crate static engine (Lua VMs + Python + packers in one), a jailed-VM dynamic constant harvester for escrow builds, pure-output policy, honest walls, Components V2 UX, dual prefix/slash commands, 24/7 free-tier keep-alive, and hardened sandboxing.
 
 ## License
 

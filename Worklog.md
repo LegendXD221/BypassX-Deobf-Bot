@@ -1,0 +1,76 @@
+# Worklog — BypassX Deobf Bot
+
+Self-updating worklog. Read before work; update + push after every change.
+
+---
+
+## 2026-11-07 — v1.1.0 "Components V2 + dynamic harvest + 24/7 deploy"
+
+### Added
+- **Components V2 UI everywhere** (`src/replies.js` rewritten): accent-colored
+  containers, sections w/ avatar thumbnails, separators, link buttons
+  (paste / raw / invite / repo), inline File cards for recovered code and
+  unpacked binaries. 13-reply smoke suite: `node test/v2-smoke.js` (all pass).
+- **Dynamic constant harvester** (`src/harvest.js`, `src/harvester-worker.js`):
+  jailed fengari (pure-JS Lua 5.3) VM that runs ONLY an obfuscator's decryption
+  init — io/os/require removed, `bit32`/`bit` shims, getfenv/setfenv/unpack/
+  loadstring 5.1 compat, inert Roblox proxies, polyglot NEUTRON fallback for
+  missing globals, string sinks on char/sub/rep/reverse/upper/lower/format/
+  gsub/table.concat, 300M instruction budget via debug count hook, graceful
+  SIGTERM dump + spawnHardened 5s SIGKILL backstop. Verified live: MoonSec V3
+  sample → 43 decrypted strings → Pastefy.
+- **Luau → Lua shim** (`src/luau-shim.js`): string/comment-aware rewrite of
+  Luau compound assignments (`o*=-1`, `h+=b`, `s..=t`, `x//=y`) that standard
+  Lua VMs reject; best-effort, falls back to the original source on any doubt.
+- **Keep-alive HTTP server** (`src/keepalive.js`): `/health` JSON, human
+  status page at `/`, job counters, 9-min self-ping through `PUBLIC_URL`
+  (through Render's LB — localhost doesn't reset the idle timer), engine
+  probe cache. GitHub Actions layer: `.github/workflows/keepalive.yml`
+  (pings every 10 min via `KEEPALIVE_URL` repo secret).
+- **Engine release asset**: `bypassx-deobf.gz` (51.5 MB, engine 0.12.0,
+  commit 54c88e2) uploaded to this repo's `engine-v0.11.0` release —
+  `ENGINE_URL` default now resolves with zero auth on every boot (~7 s).
+
+### Fixed
+- `src/commands/help.js` had a syntax error (`elpEmbed` + stray bracket) that
+  crashed the module load — caught by local testing, rewritten.
+- webcrack passthrough false-positive: deobfuscated obfuscator.io output kept
+  `_0x…` hex names (`mangle:false`), tripping the "still obfuscated" guard.
+  Fixed by `mangle:true` in the worker + size-aware guard (flood ≥30 AND
+  output ≥90% of input size). obfuscator.io RC4 sample: 7484 → 720 B full
+  recovery.
+- `guessLanguage` misrouted Luraph v15.1 (Lua) to the JS pipeline; now requires
+  JS-only tokens (`const/let/=>/_0x…`) ≥2, and Lua `then` counts subtract JS
+  `.then(` promise calls.
+- Slash registration rejected: `deobf` description >100 chars → shortened.
+- `tryHarvest` missing `stages` param → ReferenceError on first harvest run.
+
+### Changed
+- `render.yaml`: worker → **free web service** (`type: web`, healthCheckPath
+  `/health`); workers aren't on the free plan.
+- discord.js `^14.16.3` → `^14.28.1` (Components V2 support).
+- Version 1.0.0 → 1.1.0.
+
+### Verified (local, real samples)
+- Prometheus VMify: full peel, paste OK.
+- Hercules gauntlet 329 KB → 127 KB, paste OK.
+- IronBrew2 hello/arith: recovered via auto, paste OK.
+- Luraph v14.3 (constants decrypted), v14.7, v15.0, v15.1_a, v15.1_b, corpus
+  v15.1: payload extraction + pastes OK.
+- MoonSec V3 (escrow): 43-string dynamic harvest → paste OK.
+- 77fuscator 0.6.1: 61 KB → 113 KB recovery → paste OK.
+- obfuscator.io (RC4 + control-flow + rotate): full recovery → paste OK.
+- Honest walls (no crash, clear notes): moonsec_v2 (escrow, 0 sink strings),
+  moonsec_v3_b (escrow), moonveil 2.0.26 (full VM).
+
+### Deployment
+- Render (account token `rnd_wlDo…`, separate account) — free web service
+  `bypassx-deobf-bot`, auto-deploy from `main`. Env: DISCORD_TOKEN,
+  CLIENT_ID=1568531740530581586, PUBLIC_URL, PREFIX=., NODE_VERSION=22.
+- Bot verified live in sandbox before deploy: login OK (`BypassX Deobf#0267`),
+  6 global slash commands registered, `/health` OK, engine probe OK.
+
+### Next
+- UptimeRobot external monitor (user-side, optional third-party layer).
+- Luraph v15.1 devirtualization roadmap (per-build key capture).
+- MoonSec V2 escrow dispatcher compatibility in the harvest jail.

@@ -26,7 +26,7 @@ try {
     jsx: false,
     unminify: true,
     deobfuscate: true,
-    mangle: false,
+    mangle: true, // rename leftover _0x… hexadecimal bindings to readable names
   });
   const out = result?.code || '';
   if (!out.trim()) {

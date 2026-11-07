@@ -1,7 +1,7 @@
 /**
  * .families / /families — supported services table.
  */
-import { familiesEmbed } from '../replies.js';
+import { familiesReply } from '../replies.js';
 
 export default {
   name: 'families',
@@ -10,6 +10,6 @@ export default {
   slash: { options: [] },
 
   async run(ctx) {
-    return ctx.reply({ embeds: [familiesEmbed(ctx.prefix)] });
+    return ctx.reply(familiesReply(ctx.prefix));
   },
 };

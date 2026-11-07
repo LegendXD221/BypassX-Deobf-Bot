@@ -352,11 +352,20 @@ export function guessLanguage(buf) {
   if (buf[0] === 0x7f && buf[1] === 0x45) return 'binary';
   const text = head.toString('utf8').replace(/\0/g, '');
   if (/__pyarmor__|pyarmor/i.test(text)) return 'python';
-  // Lua signals — `then`/`until`/`repeat` are Lua keywords JS never uses; VM
+  // Lua signals — `until`/`elseif` are Lua keywords JS never uses; `then` is
+  // Lua-only EXCEPT for JS promise `.then(` calls, which we subtract. VM
   // wrappers often open with setmetatable(function returns.
-  const luaKeys = (text.match(/\b(?:then|until|elseif)\b/g) || []).length;
+  const rawThen = (text.match(/\bthen\b/g) || []).length;
+  const jsThen = (text.match(/\.\s*then\b/g) || []).length;
+  const luaKeys = (rawThen - jsThen)
+    + (text.match(/\buntil\b/g) || []).length
+    + (text.match(/\belseif\b/g) || []).length;
   if (luaKeys >= 2 || (/\b(?:local|function|return)\b/.test(text) && /\bend\b/.test(text))) return 'lua';
-  if (/\b(?:function|const|let|var|=>)\b/.test(text) && /[{};]/.test(text)) return 'js';
+  // JS-only signals: `const`/`let`/arrows do not exist in Lua 5.1; require at
+  // least one so string constants inside Lua VM payloads ("var", "eval") do
+  // not misroute Lua samples to the JS pipeline.
+  const jsKeys = (text.match(/\b(?:const|let)\b|=>|_0x[0-9a-f]{4,}\b|\bdocument\.|\bwindow\./g) || []).length;
+  if (jsKeys >= 2 && /[{};]/.test(text)) return 'js';
   if (/\bimport\s+\w+|def\s+\w+\(|print\s*\(/.test(text)) return 'python';
   return 'unknown';
 }

@@ -33,7 +33,7 @@ export const CONFIG = {
   maxQueue: 8,
   userCooldownMs: 10_000,
 
-  version: '1.0.0',
+  version: '1.1.0',
 };
 
 export function ensureVarDir(sub = '') {

@@ -78,7 +78,7 @@ process.once('SIGTERM', () => termHandler('SIGTERM'));
  * Spawn a process with all hardening applied.
  * Resolves { code, stdout, stderr, killed, pid }.
  */
-export function spawnHardened(binaryPath, args, { cwd, timeoutMs = 120_000, maxBuffer = 32 * 1024 * 1024, label = 'proc' } = {}) {
+export function spawnHardened(binaryPath, args, { cwd, timeoutMs = 120_000, maxBuffer = 32 * 1024 * 1024, label = 'proc', killSignal = 'SIGKILL' } = {}) {
   const safeArgs = validateArgs(args);
   const env = buildSandboxEnv();
   return new Promise((resolve) => {
@@ -90,7 +90,7 @@ export function spawnHardened(binaryPath, args, { cwd, timeoutMs = 120_000, maxB
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: false,
         windowsHide: true,
-        killSignal: 'SIGKILL',
+        killSignal,
       });
     } catch (e) {
       resolve({ code: 1, stdout: '', stderr: String(e.message || e).slice(0, 400), killed: false, pid: null });
@@ -106,7 +106,9 @@ export function spawnHardened(binaryPath, args, { cwd, timeoutMs = 120_000, maxB
     let settled = false;
     const timer = setTimeout(() => {
       killed = true;
-      try { child.kill('SIGKILL'); } catch { /* already dead */ }
+      try { child.kill(killSignal); } catch { /* already dead */ }
+      // hard backstop if the process ignores the graceful signal
+      setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* dead */ } }, 5_000).unref();
     }, Math.max(1000, timeoutMs));
 
     child.stdout.on('data', (chunk) => {

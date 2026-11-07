@@ -1,25 +1,45 @@
-# Render Blueprint — BypassX Deobf Bot (free-tier worker)
-# Deploy: Render → New → Blueprint → point at this repo.
-# Set DISCORD_TOKEN + CLIENT_ID when prompted (sync: false keeps them out of git).
+# Render Blueprint — BypassX Deobf Bot (free-tier web service, 24/7 keep-alive)
+#
+# Free-tier notes:
+#  - `type: web` + plan free (workers are paid; a bot runs fine as a web service
+#    with the keep-alive HTTP server in src/keepalive.js)
+#  - Render sleeps free services after 15 min without INBOUND traffic. Three
+#    layers prevent that: /health health checks, a 9-min self-ping to PUBLIC_URL,
+#    and .github/workflows/keepalive.yml pinging every 10 min.
+#
+# Deploy: Render → New → Blueprint → point at this repo. Secrets use sync:false
+# so they are prompted in the dashboard and never stored in git.
 services:
-  - type: worker
+  - type: web
     name: bypassx-deobf-bot
     runtime: node
     plan: free
     region: oregon
+    branch: main
     buildCommand: npm install
     startCommand: node bin/prepare-engine.js && node src/index.js
+    healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: DISCORD_TOKEN
         sync: false
       - key: CLIENT_ID
         sync: false
+      - key: PUBLIC_URL
+        sync: false          # e.g. https://bypassx-deobf-bot.onrender.com (enables self-ping)
       - key: PASTEFY_TOKEN
+        sync: false
+      - key: GUILD_ID
         sync: false
       - key: PREFIX
         value: "."
-      - key: ENGINE_URL
-        value: https://github.com/LegendXD221/BypassX-Deobf-Bot/releases/latest/download/bypassx-deobf.gz
       - key: NODE_VERSION
         value: "22"
+      - key: ENGINE_URL
+        value: https://github.com/LegendXD221/BypassX-Deobf-Bot/releases/latest/download/bypassx-deobf.gz
+      - key: ENGINE_TIMEOUT_S
+        value: "240"
+      - key: MAX_UPLOAD_MB
+        value: "10"
+      - key: PASTEFY_EXPIRE_DAYS
+        value: "30"
