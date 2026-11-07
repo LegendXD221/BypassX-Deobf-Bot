@@ -4,6 +4,13 @@
  * Supports both prefix commands (.deobf …) and slash commands (/deobf …).
  * Slash commands self-register on ready (global; + instant per-guild when
  * GUILD_ID is set).
+ *
+ * Dispatch order for every command:
+ *   1. blacklist check (Neon DB, 30 s cache; owner bypasses)
+ *   2. owner commands → 5-layer protection (src/owner-guard.js):
+ *      L1 exact owner-id match → L2 optional OWNER_PIN (3 fails = 15 min
+ *      lock) → L3 single-use confirm button for danger commands →
+ *      L4 danger rate limit → L5 audit row + DM alert on any denial.
  */
 import { Client, GatewayIntentBits, Events, REST, Routes } from 'discord.js';
 import { CONFIG } from './config.js';
@@ -12,7 +19,14 @@ import { COMMANDS, commandByName, toSlashJson } from './commands-index.js';
 import { makeCtx } from './ctx.js';
 import { looksLikeUrl } from './fetchurl.js';
 import { probe as probeEngine } from './engine.js';
-import { errorReply, ownerOnlyReply } from './replies.js';
+import {
+  errorReply, ownerOnlyReply, blockedReply, pinReply, dangerLimitedReply, cancelledReply,
+} from './replies.js';
+import {
+  isOwner, pinRequired, checkPin, stripPinArg, peekPinArg,
+  acquireDanger, releaseDanger, audit, confirmGate,
+} from './owner-guard.js';
+import * as db from './db.js';
 import { startKeepalive, markDiscordReady } from './keepalive.js';
 
 // HTTP keep-alive server first — Render health checks can hit /health
@@ -59,7 +73,124 @@ client.once(Events.ClientReady, async (c) => {
   if (!engine.available) {
     logger.warn({}, 'engine not available — runs will fail until bin/prepare-engine.js completes');
   }
+  // Neon database (optional — fully functional without it).
+  if (db.describe().enabled) {
+    await db.init();
+  } else {
+    logger.info({}, 'DATABASE_URL not set — running without database persistence');
+  }
 });
+
+// ---- shared dispatch --------------------------------------------------------
+
+/** Non-owner ran an owner command: L5 audit + instant DM alert. */
+function ownerDenied(cmd, ctx) {
+  logger.warn({ user: ctx.userId, cmd: cmd.name }, 'owner command denied');
+  audit(client, {
+    userId: ctx.userId,
+    username: ctx.userTag,
+    command: cmd.name,
+    args: (ctx.args || []).join(' '),
+    allowed: false,
+    layer: 'L1 identity',
+    result: 'non-owner attempted an owner command',
+  });
+  return ctx.reply(ownerOnlyReply(cmd.name));
+}
+
+/** Blacklist gate for public commands (owner bypasses). */
+async function blacklisted(ctx) {
+  if (isOwner(ctx.userId)) return false;
+  try {
+    if (ctx.userId && (await db.blacklistHas(ctx.userId))) return 'user';
+    const gid = ctx.interaction?.guildId || ctx.message?.guildId;
+    if (gid && (await db.blacklistHas(gid))) return 'server';
+  } catch { /* db optional — never block on an outage */ }
+  return false;
+}
+
+/**
+ * Run an owner command through the 5 protection layers, then the command.
+ * rawArgs: prefix args (PIN token stripped in-place) — slash reads options.
+ */
+async function runOwnerCommand(cmd, ctx, rawArgs) {
+  // L4 — danger rate limit (before PIN/confirm so spam fails fast).
+  const slot = acquireDanger();
+  if (!slot.ok) {
+    await audit(client, {
+      userId: ctx.userId, username: ctx.userTag, command: cmd.name,
+      args: (rawArgs || []).join(' '), allowed: false, layer: 'L4 rate limit', result: slot.reason,
+    });
+    return ctx.reply(dangerLimitedReply(slot.reason));
+  }
+  try {
+    // L2 — optional PIN.
+    if (pinRequired()) {
+      const provided = ctx.isSlash
+        ? (ctx.interaction.options.getString('pin') || '')
+        : (peekPinArg(rawArgs) === process.env.OWNER_PIN ? (rawArgs.shift(), process.env.OWNER_PIN) : '');
+      const pin = checkPin(ctx.userId, provided);
+      if (!pin.ok) {
+        await audit(client, {
+          userId: ctx.userId, username: ctx.userTag, command: cmd.name,
+          allowed: false, layer: 'L2 pin', result: pin.locked ? 'locked out (3 wrong PINs)' : 'wrong/missing PIN',
+        });
+        return ctx.reply(pinReply(pin));
+      }
+    }
+
+    // L3 — single-use confirm button for danger-flagged commands.
+    if (cmd.danger) {
+      const argPreview = ctx.isSlash
+        ? (ctx.interaction.options.getAttachment?.('file')?.name
+          || ctx.interaction.options.getString('command')
+          || ctx.interaction.options.getString('sql')
+          || ctx.interaction.options.getString('message')
+          || ctx.interaction.options.getString('text')
+          || ctx.interaction.options.getString('code')
+          || '')
+        : stripPinArg(rawArgs).join(' ');
+      const okConfirm = await confirmGate(ctx, {
+        title: `Confirm ${cmd.name}`,
+        details: [
+          `**Command** \`${cmd.name}\``,
+          argPreview ? `**Input**\n\`\`\`\n${String(argPreview).slice(0, 500)}\n\`\`\`` : null,
+          'This is a **dangerous** owner action. It runs only if you press Confirm.',
+        ].filter(Boolean).join('\n'),
+      });
+      if (!okConfirm) {
+        await audit(client, {
+          userId: ctx.userId, username: ctx.userTag, command: cmd.name,
+          args: argPreview, allowed: false, layer: 'L3 confirm', result: 'not confirmed — nothing executed',
+        });
+        return ctx.reply(cancelledReply());
+      }
+    }
+
+    await audit(client, {
+      userId: ctx.userId, username: ctx.userTag, command: cmd.name,
+      args: (rawArgs || []).join(' '), allowed: true, layer: 'all layers passed',
+    });
+    await cmd.run(ctx);
+  } finally {
+    releaseDanger();
+  }
+}
+
+async function dispatch(cmd, ctx, rawArgs) {
+  const bl = await blacklisted(ctx);
+  if (bl) {
+    logger.warn({ user: ctx.userId, cmd: cmd.name, kind: bl }, 'blacklisted entity blocked');
+    audit(client, {
+      userId: ctx.userId, username: ctx.userTag, command: cmd.name,
+      args: (rawArgs || []).join(' '), allowed: false, layer: 'blacklist', result: `${bl} blocked`,
+    });
+    return ctx.reply(blockedReply(bl));
+  }
+  if (cmd.owner && !isOwner(ctx.userId)) return ownerDenied(cmd, ctx);
+  if (cmd.owner) return runOwnerCommand(cmd, ctx, rawArgs);
+  return cmd.run(ctx);
+}
 
 // ---- slash interactions -----------------------------------------------------
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -67,12 +198,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const cmd = commandByName(interaction.commandName);
   if (!cmd) return;
   const ctx = makeCtx({ interaction, client });
-  if (cmd.owner && ctx.userId !== CONFIG.ownerId) {
-    logger.warn({ user: ctx.userId, cmd: cmd.name }, 'owner command denied');
-    return ctx.reply(ownerOnlyReply(cmd.name));
-  }
+  ctx.args = [];
   try {
-    await cmd.run(ctx);
+    await dispatch(cmd, ctx, ctx.args);
   } catch (e) {
     logger.error({ err: String(e?.stack || e).slice(0, 600), cmd: cmd.name }, 'slash command crashed');
     try {
@@ -108,11 +236,7 @@ client.on(Events.MessageCreate, async (message) => {
     }
     ctx.prefix = CONFIG.prefix;
 
-    if (cmd.owner && ctx.userId !== CONFIG.ownerId) {
-      logger.warn({ user: ctx.userId, cmd: cmd.name }, 'owner command denied (prefix)');
-      return ctx.reply(ownerOnlyReply(cmd.name));
-    }
-    await cmd.run(ctx);
+    await dispatch(cmd, ctx, ctx.args);
   } catch (e) {
     logger.error({ err: String(e?.stack || e).slice(0, 600) }, 'prefix command crashed');
   }

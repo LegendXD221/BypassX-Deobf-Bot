@@ -33,6 +33,12 @@ services:
         sync: false
       - key: GUILD_ID
         sync: false
+      - key: DATABASE_URL
+        sync: false          # Neon free-tier Postgres connection string (postgresql://…neon.tech/…?sslmode=require)
+      - key: OWNER_ID
+        sync: false          # bot owner user id (default baked into src/config.js)
+      - key: OWNER_PIN
+        sync: false          # optional 2nd protection layer for dangerous owner commands
       - key: PREFIX
         value: "."
       - key: NODE_VERSION

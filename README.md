@@ -57,23 +57,81 @@ Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) sta
 | `.beautify` | `/beautify file:` `/beautify link:` | Reformat messy/minified code — no deobfuscation |
 | `.strings` | `/strings file:` `/strings link:` | Extract the string table — quick recon of what the file hides |
 | `.paste` | `/paste file:` `/paste text:` | Upload any text/file to Pastefy (large content auto-split into parts) |
-| `.stats` | `/stats` | Jobs served, success rate, uptime, engine build |
+| `.stats` | `/stats` | Jobs served, success rate, uptime, engine build, database status |
+| `.history` | `/history` | Your last deobfuscation jobs (requires the database) |
 | `.families` | `/families` | Full support table with version ranges and recovery tiers |
 | `.help` | `/help` | Overview |
 | `.ping` | `/ping` | Latency |
 | `.invite` | `/invite` | Add the bot to your server |
 
-**Owner-only** (locked to `OWNER_ID`, default `1134757298733064203`):
+**Owner-only** (locked to `OWNER_ID`, default `1134757298733064203` — hidden from `.help` on purpose; run `.owner` for the live control panel):
 
 | Prefix | Slash | What it does |
 | --- | --- | --- |
-| `.eval` | `/eval code:` | Evaluate JavaScript in a jailed sandbox (no require/process/network, 5s cap) |
-| `.exec` | `/exec command:` | Run a shell command on the host (bash, 20s timeout) |
-| `.servers` | `/servers` | List every server the bot is in |
-| `.leave` | `/leave guild_id:` | Leave a server |
+| `.eval` | `/eval code:` | Evaluate JavaScript in a jailed sandbox running in a **secret-free child process** (no require/process/network, 5 s vm cap, 12 s hard kill) |
+| `.exec` | `/exec command:` | Host shell (bash, 90 s default, long output auto-pasted) |
+| `.restart` / `.shutdown` | same | Restart / stop the service (Render reboots it) |
+| `.db` | `/db sql:` | Raw SQL on the Neon database, or `.db status` |
+| `.blacklist` | `/blacklist action:` | Block abusive users/servers everywhere (stored in the DB) |
+| `.broadcast` | `/broadcast message:` | Message every server (skips blacklisted ones) |
+| `.dm` | `/dm user_id: text:` | Direct-message any user |
+| `.activity` | `/activity type: text:` | Change presence (playing/listening/watching/competing/clear) |
+| `.env` | `/env` | Which environment variables are set — values always masked |
+| `.owner` | `/owner` | Control panel: all owner commands + protection-layer status; `/owner audit` for the audit trail |
+| `.servers` / `.leave` | same | List servers / leave one |
 | `.setstatus` | `/setstatus text:` | Change the bot presence |
 | `.logs` | `/logs count:` | Tail the in-process log ring buffer |
-| `.shutdown` | `/shutdown` | Graceful stop (Render restarts the service) |
+
+### Owner protection — 5 layers on every dangerous command
+
+Dangerous commands (`eval`, `exec`, `restart`, `shutdown`, `db`, `broadcast`,
+`dm`, `leave`) pass through `src/owner-guard.js` before anything runs:
+
+1. **L1 identity** — exact user-id match against `OWNER_ID`. No roles, no
+   permissions, no server-admin shortcuts, no prefix/suffix spoofing.
+2. **L2 PIN** — set `OWNER_PIN` and dangerous commands additionally need it
+   (prefix: first argument · slash: the `pin` option). Three wrong tries lock
+   the sender out for 15 minutes.
+3. **L3 confirm** — the command posts a single-use **⚠ Confirm** danger
+   button (30 s expiry). Only the owner's click counts; anyone else who taps
+   it is told off and the gate stays armed.
+4. **L4 rate limit** — one dangerous op at a time, 10 s cooldown, max 12 per
+   hour (`DANGER_COOLDOWN_S`, `DANGER_MAX_PER_HOUR`, `CONFIRM_TIMEOUT_S`).
+5. **L5 audit** — every attempt, allowed **or** denied (and which layer fired),
+   lands in the `owner_audit` table + the log ring; denial attempts DM the
+   owner instantly.
+
+Layer 0: owner commands are never listed in public help.
+
+### RCE hardening — why the bot cannot be exploited into running code
+
+- The deobf engine is **static analysis only** — samples are never executed.
+- Engine/child spawns go through `spawnHardened`: env **allowlist** (all
+  tokens/secrets stripped — `DISCORD_TOKEN`, `PASTEFY_TOKEN`, `GITHUB_TOKEN`,
+  `DATABASE_URL` never reach a child), isolated 0700 tmpdir, no-network env,
+  hard SIGKILL timeout, output caps, parent-death kill.
+- `.eval` adds two more walls: an **empty-host-object vm sandbox** (no
+  constructor chains to climb) inside a **disposable child process** — even a
+  hypothetical vm escape finds an empty environment with zero secrets.
+- Link fetching is SSRF-hardened (per-hop DNS checks, metadata IPs blocked,
+  https upgrade, scheme allowlist, size caps).
+- The web server serves only static `/health` + `/ping` + a status page — no
+  dynamic input, hardened timeouts, 400 on malformed requests.
+- Blacklisted users/servers are refused every public command before dispatch.
+
+### Database — Neon Postgres (free tier)
+
+The bot works fully without a database; set **`DATABASE_URL`** (Neon
+connection string, e.g. `postgresql://…@ep-…-pooler…neon.tech/neondb?sslmode=require`)
+to unlock persistence. The schema bootstraps itself on first boot:
+
+- `deobf_history` — every deobf/detect job → `.history`, `.stats` all-time counters
+- `owner_audit` — the 5-layer audit trail → `.owner audit`
+- `blacklist` — global user/server blocks, enforced at dispatch (30 s cache)
+- `bot_stats` — all-time success counters
+
+If Neon is unreachable the bot logs a warning and keeps working — every DB
+failure is isolated. `npm i` pulls `pg` automatically.
 
 `.deobf` accepts the file attached to your message **or** as a reply to a message containing one. It also accepts **links** — paste any of these after the command:
 

@@ -6,9 +6,10 @@ import { logger } from '../logger.js';
 
 export default {
   name: 'leave',
-  description: '[owner] Leave a server by id',
+  description: '[owner] Leave a server by id (dangerous — confirmation required)',
   usage: '.leave <guildId> (defaults to this server)',
   owner: true,
+  danger: true,
   slash: {
     options: [
       { name: 'guild_id', description: 'Guild id to leave (blank = this server, prefix only)', type: 'STRING', required: false },

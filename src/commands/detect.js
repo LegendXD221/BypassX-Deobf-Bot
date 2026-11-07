@@ -6,6 +6,7 @@ import { CONFIG } from '../config.js';
 import { detectService, guessLanguage } from '../detect.js';
 import { detectionReply, errorReply } from '../replies.js';
 import { getInputBuffer } from '../ctx.js';
+import { describe as dbDescribe, logDeobf } from '../db.js';
 
 export default {
   name: 'detect',
@@ -35,6 +36,21 @@ export default {
       : { id: 'unknown', name: 'Unknown', confidence: 0, lang, candidates: [] };
 
     const sizeLabel = `${(att.buffer.length / 1024).toFixed(1)} KB`;
+    try {
+      if (dbDescribe().enabled) {
+        logDeobf({
+          userId: ctx.userId,
+          guildId: ctx.interaction?.guildId || ctx.message?.guildId || null,
+          command: 'detect',
+          family: detected.name === 'Unknown' ? null : detected.name,
+          confidence: detected.confidence,
+          success: detected.id !== 'unknown',
+          filename: att.filename,
+          size: att.buffer.length,
+          source: att.sourceUrl ? 'link' : 'upload',
+        });
+      }
+    } catch { /* db optional */ }
     return ctx.reply(detectionReply(
       detected,
       { sizeLabel, fileLabel: att.filename || 'file', sourceUrl: att.sourceUrl, sourceNote: att.note },

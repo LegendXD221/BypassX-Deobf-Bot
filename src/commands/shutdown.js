@@ -10,6 +10,7 @@ export default {
   description: '[owner] Gracefully stop the bot (Render restarts it)',
   usage: '.shutdown',
   owner: true,
+  danger: true,
   slash: { options: [] },
 
   async run(ctx) {

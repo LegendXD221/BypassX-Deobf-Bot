@@ -36,7 +36,13 @@ export const CONFIG = {
   // Bot owner — powerful owner-only commands (eval/exec/servers/…).
   ownerId: (process.env.OWNER_ID || '1134757298733064203').trim(),
 
-  version: '1.3.0',
+  // 5-layer protection for dangerous owner commands (src/owner-guard.js):
+  // L2 pin = OWNER_PIN env; L3 confirm button; L4 limits below; L5 = DB audit.
+  dangerCooldownMs: Math.max(0, num('DANGER_COOLDOWN_S', 10)) * 1000,
+  dangerMaxPerHour: Math.max(1, num('DANGER_MAX_PER_HOUR', 12)),
+  confirmTimeoutS: Math.max(5, num('CONFIRM_TIMEOUT_S', 30)),
+
+  version: '1.4.0',
 };
 
 export function ensureVarDir(sub = '') {

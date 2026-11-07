@@ -35,11 +35,17 @@ export function makeCtx({ interaction = null, message = null, client }) {
     /** Link input (.deobf <url> / /deobf link:) — resolved by index.js for prefix. */
     url,
     userId: interaction?.user?.id || message?.author?.id || '0',
+    userTag: interaction?.user?.tag || message?.author?.tag || 'unknown',
     prefix: message?._prefix || '.',
 
     async defer() {
-      if (interaction) await interaction.deferReply();
-      else if (message?.channel) await message.channel.sendTyping().catch(() => {});
+      if (interaction) {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.deferReply().catch(() => {});
+        }
+      } else if (message?.channel) {
+        await message.channel.sendTyping().catch(() => {});
+      }
     },
     async reply(payload) {
       if (interaction) {

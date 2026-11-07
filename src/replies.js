@@ -18,6 +18,7 @@ import {
   SeparatorBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, FileBuilder,
 } from 'discord.js';
 import { TIER, SERVICES } from './detect.js';
+import { CONFIG } from './config.js';
 
 export const BRAND = {
   color: 0x7c3aed,
@@ -127,17 +128,10 @@ export function helpReply(prefix, client) {
       `• **\`${prefix}strings\`** \`<file | link>\` — extract the string table for quick recon`,
       `• **\`${prefix}paste\`** \`<file | text>\` — upload any text/file to Pastefy`,
       `• **\`${prefix}stats\`** — success rate, jobs served, uptime and engine build`,
+      `• **\`${prefix}history\`** — your last deobfuscation jobs`,
       '',
       '**Info**',
       `• **\`${prefix}ping\`** • **\`${prefix}invite\`** • **\`${prefix}help\`**`,
-    ].join('\n')));
-    c.addSeparatorComponents(SEP());
-    c.addTextDisplayComponents(T([
-      '**Link sources**',
-      'Pastefy • GitHub (blob/raw, private repos too) • Gists • Pastebin • Discord message links • any direct URL',
-      '',
-      '**How it works**',
-      'Weighted signature detection → targeted family peel → generic auto pipeline → full family sweep → syntax-verified pure-code output. Samples are never executed (static analysis only, hardened spawn, RCE- and SSRF-protected).',
     ].join('\n')));
     c.addSeparatorComponents(SEP());
     c.addTextDisplayComponents(T(`**Supported (highlights)**\n${highlights} • …and ${Math.max(0, SERVICES.length - 10)} more — see \`${prefix}families\``));
@@ -378,14 +372,18 @@ export function inviteReply(url) {
 
 // ---- stats ------------------------------------------------------------------
 
-export function statsReply({ version, uptimeS, engine, jobs, guilds, memoryMb, discordReady, pingMs, owner }) {
+export function statsReply({ version, uptimeS, engine, jobs, guilds, memoryMb, discordReady, pingMs, owner, dbInfo = null, allTime = null }) {
   const rate = jobs.total > 0 ? Math.round((jobs.ok / jobs.total) * 100) : null;
+  const dbLine = dbInfo?.enabled
+    ? `Neon • ${dbInfo.connected ? 'connected' : 'connecting…'}${allTime ? ` • ${allTime.ok}/${allTime.total} all-time` : ''}`
+    : 'not configured';
   const card = container(BRAND.color, (c) => {
     brandHeader(c, '📊 Bot statistics', `v${version} • ${discordReady ? 'gateway connected' : 'gateway connecting'}`, null);
     c.addSeparatorComponents(SEP());
     facts(c, [
       { label: 'Deobfuscations', value: `**${jobs.ok}** succeeded • ${jobs.fail} failed • ${jobs.total} total` },
       { label: 'Success rate', value: rate == null ? '— (no jobs yet)' : `${rate}%` },
+      { label: 'Database', value: dbLine },
       { label: 'Uptime', value: fmtUptime(uptimeS) },
       { label: 'Engine', value: engine?.available ? engine.version : 'preparing…' },
       { label: 'Gateway ping', value: `${Math.round(pingMs || 0)}ms` },
@@ -401,9 +399,118 @@ export function statsReply({ version, uptimeS, engine, jobs, guilds, memoryMb, d
 
 export function ownerOnlyReply(cmdName) {
   const card = container(BRAND.err, (c) => {
-    brandHeader(c, '🔒 Owner only', 'Restricted command', null);
+    brandHeader(c, '🔒 Owner only', 'Restricted command — attempt logged', null);
     c.addSeparatorComponents(SEP());
     c.addTextDisplayComponents(T(`\`${cmdName}\` is reserved for the bot owner.`));
+    c.addTextDisplayComponents(T('-# This attempt has been recorded and reported.'));
+  });
+  return v2([card], { ephemeral: true });
+}
+
+/** Blacklist enforcement block. */
+export function blockedReply(kind) {
+  const card = container(BRAND.err, (c) => {
+    brandHeader(c, '⛔ Access blocked', 'blacklisted', null);
+    c.addSeparatorComponents(SEP());
+    c.addTextDisplayComponents(T(`This ${kind} has been blocked from using the bot.`));
+  });
+  return v2([card], { ephemeral: true });
+}
+
+/** L2 pin rejections. */
+export function pinReply({ locked, retryMs = 0, remaining = 0 }) {
+  const card = container(BRAND.err, (c) => {
+    brandHeader(c, locked ? '🔐 Locked out' : '🔐 PIN required', 'protection layer 2', null);
+    c.addSeparatorComponents(SEP());
+    c.addTextDisplayComponents(T(locked
+      ? `Too many wrong PIN attempts — locked for **${Math.ceil(retryMs / 60_000)} min**.`
+      : `A valid **PIN** is required for dangerous commands (set \`OWNER_PIN\` in the dashboard).\n-# ${remaining} attempt(s) left before a 15-minute lockout.`));
+  });
+  return v2([card], { ephemeral: true });
+}
+
+/** L4 danger rate limit. */
+export function dangerLimitedReply(reason) {
+  const card = container(BRAND.warn, (c) => {
+    brandHeader(c, '⏳ Dangerous command limited', 'protection layer 4', null);
+    c.addSeparatorComponents(SEP());
+    c.addTextDisplayComponents(T(clamp(String(reason), 400)));
+  });
+  return v2([card], { ephemeral: true });
+}
+
+/** L3 confirm cancelled/timeout. */
+export function cancelledReply() {
+  const card = container(BRAND.warn, (c) => {
+    brandHeader(c, '🚫 Cancelled', 'nothing was executed', null);
+    c.addSeparatorComponents(SEP());
+    c.addTextDisplayComponents(T('The dangerous action was **not** confirmed, so nothing happened.'));
+  });
+  return v2([card], { ephemeral: false });
+}
+
+/** .history — the user's recent deobf jobs from the Neon DB. */
+export async function historyReply(userId) {
+  const { describe, historyFor } = await import('./db.js');
+  const d = describe();
+  if (!d.enabled) {
+    const card = container(BRAND.warn, (c) => {
+      brandHeader(c, '🕘 History unavailable', 'database not configured', null);
+      c.addSeparatorComponents(SEP());
+      c.addTextDisplayComponents(T('The owner has not connected a database yet, so job history is not stored.'));
+    });
+    return v2([card], { ephemeral: true });
+  }
+  const rows = await historyFor(userId, 10);
+  const card = container(BRAND.color, (c) => {
+    brandHeader(c, '🕘 Your last jobs', rows.length ? `${rows.length} deobfuscation(s)` : 'nothing yet', null);
+    c.addSeparatorComponents(SEP());
+    c.addTextDisplayComponents(T(rows.length
+      ? rows.map((r) => {
+        const at = r.created_at ? new Date(r.created_at).toISOString().replace('T', ' ').slice(0, 16) : '?';
+        const fam = r.family || 'unknown';
+        const pct = Number.isFinite(r.confidence) ? ` ${r.confidence}%` : '';
+        const link = r.paste_url ? ` — [result](${r.paste_url})` : '';
+        return `${r.success ? '✅' : '⚠️'} **${fam}**${pct} • ${at} UTC${link}`;
+      }).join('\n')
+      : `No jobs yet — run \`.deobf\` with an obfuscated file and it will show up here.`));
+  });
+  return v2([card], { ephemeral: true });
+}
+
+/** .owner panel — command list + live layer status. */
+export function ownerPanelReply(prefix, { pinSet, db: dbInfo, danger }) {
+  const rows = [
+    '**Control**',
+    `• **\`${prefix}eval\`** \`<code>\` — jailed JS sandbox (secret-free child)`,
+    `• **\`${prefix}exec\`** \`<cmd>\` — host shell (90 s, auto-paste for long output)`,
+    `• **\`${prefix}restart\`** / **\`${prefix}shutdown\`** — restart / stop the service`,
+    '',
+    '**Server + data**',
+    `• **\`${prefix}db\`** \`<sql | status>\` — raw SQL on the Neon database`,
+    `• **\`${prefix}blacklist\`** \`add|remove|list <id>\` — block abusive users/servers`,
+    `• **\`${prefix}broadcast\`** \`<text>\` — message every server`,
+    `• **\`${prefix}dm\`** \`<userId> <text>\` — direct-message a user`,
+    '',
+    '**Presence + ops**',
+    `• **\`${prefix}activity\`** \`<type> <text>\` — change presence`,
+    `• **\`${prefix}env\`** — environment variables (masked)`,
+    `• **\`${prefix}owner audit\`** — recent audit trail`,
+    `• **\`${prefix}servers\`** / **\`${prefix}leave\`** / **\`${prefix}logs\`** / **\`${prefix}setstatus\`**`,
+  ];
+  const layers = [
+    `**L1 identity** — only <@${CONFIG.ownerId}>, exact id match`,
+    `**L2 pin** — ${pinSet ? '🟢 armed (OWNER_PIN set — 3 fails = 15 min lock)' : '⚪ inactive (set OWNER_PIN to arm)'}`,
+    '**L3 confirm** — danger commands need a single-use button (30 s)',
+    `**L4 rate limit** — ${danger ? `${danger.capPerHour}/h • ${Math.round(danger.cooldownMs / 1000)} s cooldown • 1 at a time (used ${danger.usedThisHour})` : '—'}`,
+    `**L5 audit** — ${dbInfo?.enabled ? `🟢 Neon DB (${dbInfo.connected ? 'connected' : 'connecting…'}) + DM alerts` : '🟡 console + DM alerts only (no DATABASE_URL)'}`,
+  ];
+  const card = container(BRAND.color, (c) => {
+    brandHeader(c, '🛡 Owner control panel', 'dangerous commands — 5 protection layers', null);
+    c.addSeparatorComponents(SEP());
+    c.addTextDisplayComponents(T(rows.join('\n')));
+    c.addSeparatorComponents(SEP());
+    c.addTextDisplayComponents(T(layers.join('\n')));
   });
   return v2([card], { ephemeral: true });
 }

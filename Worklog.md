@@ -4,6 +4,91 @@ Self-updating worklog. Read before work; update + push after every change.
 
 ---
 
+## 2026-11-07 — v1.4.0 "5-layer owner protection + Neon DB + anti-RCE"
+
+### User asks driving this release
+1. Remove **Link Sources** + **How It Works** from the help command. → done.
+2. More powerful/dangerous commands, all protected by owner id with
+   **5 layers of protection**. → done (see below).
+3. "Make more better rced" — clarified: **no one should be able to use RCE to
+   exploit the bot or abuse it** → hardened, not empowered (eval stays jailed,
+   moved into a secret-free child process; see hardening notes).
+
+### Added — dangerous owner commands (all danger-gated: L1–L5)
+- `.restart` — destroy client + exit(0); Render reboots the service.
+- `.db <sql | status>` — raw SQL on the Neon DB (`rawSql` in src/db.js);
+  rows rendered as pipe tables, 20-row cap, latency + rowcount meta.
+- `.broadcast <text>` — every guild's system channel (or first sendable),
+  250 ms pace, skips blacklisted guilds, sent/failed report.
+- `.dm <userId> <text>` — direct message any user.
+- `.leave` / `.shutdown` / `.exec` / `.eval` — promoted to `danger: true`.
+- Non-danger owner tools: `.blacklist add|remove|list`, `.activity`, `.env`
+  (names + masked values only), `.owner` (panel + `/owner audit`).
+- Public: `.history` (own recent jobs from the DB).
+
+### Added — 5-layer protection (src/owner-guard.js, enforced in src/index.js)
+- **L1 identity** — exact `CONFIG.ownerId` match; no roles/permission paths.
+- **L2 PIN** — optional `OWNER_PIN`: prefix first-arg or slash `pin` option
+  (auto-added to danger slash defs by `toSlashJson`); 3 fails → 15 min lock;
+  correct pin resets the counter; stripped from args before commands run.
+- **L3 confirm** — single-use danger button card (30 s), owner-only clicks,
+  other users get an ephemeral refusal and the gate stays armed; buttons are
+  stripped after resolution.
+- **L4 rate limit** — 1 concurrent, 10 s cooldown (`DANGER_COOLDOWN_S`),
+  12/hour cap (`DANGER_MAX_PER_HOUR`).
+- **L5 audit** — every attempt (allowed/denied + layer) → console + Neon
+  `owner_audit`; denials DM the owner (`alertOwner`, fire-and-forget).
+- Blacklist gate: `blacklistHas(user)` + `blacklistHas(guild)` checked before
+  every dispatch (30 s cache, owner bypasses, DB outage never blocks).
+
+### Added — Neon Postgres free-tier support (src/db.js, `pg` dep)
+- Activated **only** by `DATABASE_URL` (must be `postgres://…` — the sandbox's
+  own `file:` DATABASE_URL is rejected by scheme check). SSL always on.
+- Schema bootstraps: `bot_stats`, `deobf_history`, `owner_audit`, `blacklist`.
+- Every helper is failure-isolated: DB off/broken ⇒ `{}`/`[]`/false/null and
+  a warning log; the bot keeps working exactly as before.
+- Wired: deobf/detect history + all-time stats (`.stats` shows DB line),
+  audit trail, blacklist enforcement, `/health` now reports `db: {...}`.
+
+### Hardened — anti-RCE (the "better rced" ask)
+- `.eval` rewritten: code runs in `bin/eval-harness.cjs` — `vm.runInContext`
+  with an **empty sandbox** (zero host objects → no constructor-chain escape),
+  realm-native console only, 5 s instruction timeout, wrapped in an IIFE for
+  `return` support — **inside a spawnHardened child process**: env scrubbed of
+  every token/secret (`DATABASE_URL` included), isolated tmpdir, no-network,
+  12 s SIGKILL, 1 MB cap. A vm escape reaches an empty disposable shell with
+  no credentials. (Found+fixed on the way: `vm.compileFunction`'s `timeout`
+  is NOT enforced on invocation in current Node — use `runInContext`.)
+- `.exec` raised to 90 s (per-call `%% <seconds>` up to 300), 16 MB capture,
+  long output auto-uploaded to Pastefy with the inline preview capped.
+- keepalive HTTP server: request/headers/keepalive timeouts, clientError 400.
+- Denial audit + owner DM = abuse alarm for brute-force attempts.
+
+### Fixed
+- `ctx.defer()` no longer throws when the interaction already replied (the
+  confirm gate replies first, commands then defer+edit).
+- PIN counter reset bug (lockedUntil=0 counted as "expired lock" every time).
+- `package.json` version was stale at 1.2.0 → bumped with `config.version`.
+
+### UI
+- Help card: removed the "Link sources" + "How it works" blocks (user ask);
+  utilities list gained `.history`. Owner commands stay unlisted (layer 0).
+
+### Tests
+- `test/owner-guard.js` (new): L1 spoof attempts, L2 pin lifecycle (correct
+  pin passes+resets, 3 fails lock, right pin refused while locked), L4
+  concurrency/cooldown, DB no-env fallback for every helper, protection reply
+  cards render, harness jail (return works, console captured, `process`
+  unreachable, `require` not exposed, infinite loop killed). ALL PASS.
+- v2-smoke 24/24, chunk-paste 11/11, links 17/17, e2e-links PASS (Prometheus
+  via GitHub + Pastefy link → 99%, 836 B).
+
+### Deploy
+- render.yaml: `DATABASE_URL`, `OWNER_ID`, `OWNER_PIN` added (sync:false —
+  user fills the Neon value manually in the dashboard). `.env.example` added.
+
+---
+
 ## 2026-11-07 — v1.3.0 "clean UI + paste fix + accuracy verification + owner tools"
 
 ### Added

@@ -15,6 +15,7 @@ import http from 'node:http';
 import { CONFIG } from './config.js';
 import { logger } from './logger.js';
 import { probe as probeEngine } from './engine.js';
+import { describe as dbDescribe } from './db.js';
 
 const startedAt = Date.now();
 const state = {
@@ -44,6 +45,7 @@ function healthJson() {
     uptimeS: Math.round((Date.now() - startedAt) / 1000),
     discordReady: state.discordReady,
     engine: state.engine,
+    db: dbDescribe(),
     jobs: {
       total: state.jobs.total,
       ok: state.jobs.ok,
@@ -105,6 +107,15 @@ export function startKeepalive() {
     }
   });
   server.listen(port, '0.0.0.0', () => logger.info({ port }, 'keepalive http listening'));
+
+  // HTTP hardening: bound slow-client abuse (no dynamic input is served —
+  // only static /health, /ping and the status page — but be tidy anyway).
+  server.requestTimeout = 30_000;
+  server.headersTimeout = 15_000;
+  server.keepAliveTimeout = 10_000;
+  server.on('clientError', (err, socket) => {
+    try { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); } catch { /* gone */ }
+  });
 
   // keep engine info fresh for /health + status page
   const refreshEngine = () => probeEngine().then((i) => { state.engine = i; }).catch(() => {});
