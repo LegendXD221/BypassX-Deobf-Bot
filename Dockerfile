@@ -14,9 +14,14 @@ COPY . .
 
 # Engine: download precompiled binary (glibc 2.31+, ~147 MB unpacked) from the
 # release, verify it runs, and point ENGINE_PATH at it (skips boot-time fetch).
-RUN curl -fsSL "https://github.com/LegendXD221/BypassX-Deobf-Bot/releases/latest/download/bypassx-deobf.gz" -o /tmp/engine.gz \
-    && gunzip -c /tmp/engine.gz > /app/bin/bypassx-deobf \
-    && rm /tmp/engine.gz \
+# node:22-slim ships no curl/wget — use node's fetch + zlib.
+RUN node -e "\
+    const fs = require('fs'), zlib = require('zlib');\
+    fetch('https://github.com/LegendXD221/BypassX-Deobf-Bot/releases/latest/download/bypassx-deobf.gz')\
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })\
+      .then(b => new Promise((res, rej) => zlib.gunzip(Buffer.from(b), (e, out) => e ? rej(e) : res(out))))\
+      .then(out => { fs.writeFileSync('/app/bin/bypassx-deobf', out, { mode: 0o755 }); console.log('engine bytes:', out.length); })\
+      .catch(e => { console.error(e); process.exit(1); })" \
     && chmod 0755 /app/bin/bypassx-deobf \
     && /app/bin/bypassx-deobf --version
 
