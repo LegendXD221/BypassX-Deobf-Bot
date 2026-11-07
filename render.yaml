@@ -9,6 +9,8 @@
 #
 # Deploy: Render → New → Blueprint → point at this repo. Secrets use sync:false
 # so they are prompted in the dashboard and never stored in git.
+# LIVE DEPLOYMENT: bypassx-deobf-bot.onrender.com (created via API, same shape).
+# Backup container image: ghcr.io/legendxd221/bypassx-deobf-bot (built by CI).
 services:
   - type: web
     name: bypassx-deobf-bot

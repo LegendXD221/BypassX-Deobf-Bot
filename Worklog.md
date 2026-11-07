@@ -63,12 +63,27 @@ Self-updating worklog. Read before work; update + push after every change.
 - Honest walls (no crash, clear notes): moonsec_v2 (escrow, 0 sink strings),
   moonsec_v3_b (escrow), moonveil 2.0.26 (full VM).
 
-### Deployment
-- Render (account token `rnd_wlDo…`, separate account) — free web service
-  `bypassx-deobf-bot`, auto-deploy from `main`. Env: DISCORD_TOKEN,
-  CLIENT_ID=1568531740530581586, PUBLIC_URL, PREFIX=., NODE_VERSION=22.
+### Deployment (LIVE)
+- **Live at https://bypassx-deobf-bot.onrender.com** — Render free web service
+  `srv-dbnf4lp5efls73b60sp0` (original account), repo-based, autoDeploy from
+  `main`, health check `/health`. Verified: `/health` 200 with
+  `discordReady: true`, engine 0.12.0, v1.1.0.
+- 24/7 plan on the free tier: `/health` checks + 9-min self-ping via
+  PUBLIC_URL + GitHub Actions keepalive (secret KEEPALIVE_URL) every 10 min.
+  The set-aside `bypassx-deobf` API service was **suspended** to free the
+  workspace's 750 free instance-hours for the bot (re-enable in one click if
+  ever needed; repo + code untouched).
+- New-account deploy attempted first (token rnd_wlDo…): team workspace →
+  Render requires a payment method for free services (HTTP 402), and repo
+  deploys need the GitHub App connected (browser-only step). Prepared anyway:
+  GHCR registry credential `rgc-dbnf0bqjnfac73c6v3kg` + public image
+  `ghcr.io/legendxd221/bypassx-deobf-bot:latest`. Once a card is added there,
+  the service can be created from the image in one API call.
+- Backup artifact: Dockerfile + build-image.yml push the image to GHCR on
+  every push to main.
 - Bot verified live in sandbox before deploy: login OK (`BypassX Deobf#0267`),
-  6 global slash commands registered, `/health` OK, engine probe OK.
+  6 global slash commands registered on app 1568531740530581586, `/health`
+  OK, engine probe OK.
 
 ### Next
 - UptimeRobot external monitor (user-side, optional third-party layer).

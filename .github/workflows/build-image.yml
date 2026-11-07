@@ -1,7 +1,7 @@
 name: build-image
-# Builds the production Docker image and pushes it to GHCR, then triggers a
-# Render deploy of the image-based service (RENDER_SERVICE_ID +
-# RENDER_DEPLOY_TOKEN repo secrets).
+# Builds the production Docker image and pushes it to GHCR as a backup
+# deployment artifact (the live Render service is repo-based with autoDeploy).
+# The image also serves any Docker host: docker run ghcr.io/legendxd221/bypassx-deobf-bot
 on:
   push:
     branches: [main]
@@ -34,13 +34,3 @@ jobs:
             ghcr.io/legendxd221/bypassx-deobf-bot:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Trigger Render deploy
-        run: |
-          curl -fsS -m 60 -X POST \
-            "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
-            -H "Authorization: Bearer ${{ secrets.RENDER_DEPLOY_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache": "do_not_clear"}' \
-            && echo "render deploy triggered" \
-            || echo "render deploy trigger skipped/failed (service may not exist yet)"
