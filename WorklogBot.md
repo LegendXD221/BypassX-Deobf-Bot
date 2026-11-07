@@ -1,5 +1,70 @@
 # WorklogBot — BypassX Deobf Bot
 
+
+## v1.9.0 — VM devirtualization (behavioral opcode lifting)
+
+**Every VM family now gets a real devirtualization attempt, not just a string pool.**
+
+New engine (`src/vm-lift-worker.js` + `src/vm-lift.js`):
+
+- **STATE CAPTURE** — a debug count hook walks the live call stack (read-only
+  `debug.getinfo` / `debug.getlocal`) hunting the obfuscator's dispatcher frame:
+  a table-of-records instruction stream + scalar constant pool. Row-record
+  validation (uniform arity + repeated opcodes) rejects string-pool byte
+  tables that merely look like instruction streams.
+- **OPCODE PROBING (behavioral, per build — no signature tables)** — the real
+  instruction table gets a metatable; the probe window (starting one record
+  past the dispatcher's current pc, because the in-flight dispatch already
+  consumed it raw) is nilled so every dispatch read serves synthetic sentinel
+  records, one per opcode id × arity. The obfuscator's OWN handlers execute
+  against logging-metatable stack/const tables (both cleared post-snapshot —
+  Lua metamethods only fire for MISSING keys, so leftover guest state would
+  bypass interception) plus an instrumented `_G` carrying real global names.
+  Per-slot identity mocks mean handlers never crash on sentinel types.
+  Semantics are learned from behavior — shuffled, renamed and polymorphic
+  VMs classify identically. Match gate: probing only installs once the
+  register stack is sighted (setup-window matches would probe raw state).
+- **MULTI-PASS PROBING** — the RETURN-style op exits the dispatcher
+  mid-probe-program, truncating later opids; uncovered opids are retried on
+  fresh states with the known-exit op placed last (mirrors KryptIT's
+  repeated devirtualization rounds).
+- **TRANSPILER** — per-opcode operand roles inferred from sentinel movement
+  (probe records use sentinel operands 1,2,3 ↔ record fields 2,3,4); emits a
+  pc-runner program: exact control flow (jumps → `__pc` assignments),
+  decrypted constants inlined, globals resolved from the captured pool, one
+  comment per instruction showing the raw record. Always valid Lua →
+  `verifyCode` badge.
+
+Jail upgrades (`src/jail-prelude.js`, shared by both workers):
+
+- full **Luau `buffer` library** (create/fromstring/read*/write*/copy/fill/
+  readbits/writebits over string.pack) — unblocked Luraph v15.1 loaders; the
+  real-sample regression fixture now decrypts its pool (~40k strings,
+  previously zero).
+- `_BX_MUTE` sink-suppression flag (rawget-based — a plain read would hit
+  the polyglot `__index` and return a truthy object, muting everything).
+
+Worker plumbing: synchronous stdout writes (`fs.writeSync` loop) — large JSON
+results were truncated by async pipe buffers racing `process.exit`.
+
+Pipeline (`src/pipeline.js`): `tryHarvest` now runs the lifting worker
+(chunk capture → devirt → constant pool, in that order); the Luraph augment
+path replaces the payload inventory with devirt output when the dispatcher is
+captured. Family wall notes updated.
+
+Fixtures: two VM-obfuscator fixtures (MoonSec-style table dispatch,
+Luraph-style if-chain) with XOR-encrypted pools + a real Luraph v15.1 sample
+with its ground truth. `test/vm-lift.js`: 6 tests — 10/10 opcode
+classification on both shapes, syntax-verified transpiles, buffer library,
+pool regression.
+
+Known limits: real Luraph v15.1 (Luau-target, metatable-structured VM state)
+captures its pool but full transpile needs deeper Luau emulation (buffer/
+vector semantics, per-build SoA layouts) — engine work; the behavioral
+engine engages automatically on dispatcher shapes it captures.
+
+---
+
 Self-updating worklog. **Read before starting any work on the bot; update + push after every change.**
 
 ---

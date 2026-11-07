@@ -144,9 +144,11 @@ test('linearity: 300KB blanked string-data region transforms fast', () => {
 
 // ---- harvester prelude surface (stdlib the VM dispatchers bind) ------------------
 test('prelude: math.ldexp/frexp + Luau stdlib available in the jail', async () => {
-  // read the worker source directly — importing it would run the jail
+  // read the shared prelude directly — importing it would run the jail
+  // (v1.9.0: the prelude lives in jail-prelude.js, shared by both workers)
   const fs = await import('node:fs');
-  const src = fs.readFileSync(new URL('../src/harvester-worker.js', import.meta.url), 'utf8');
+  const src = fs.readFileSync(new URL('../src/jail-prelude.js', import.meta.url), 'utf8')
+    + fs.readFileSync(new URL('../src/harvester-worker.js', import.meta.url), 'utf8');
   for (const needle of [
     'math.ldexp = function', 'math.frexp = function', 'math.round = function',
     'math.clamp = function', 'string.split = function', 'table.find = function',

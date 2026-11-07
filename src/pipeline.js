@@ -14,11 +14,12 @@ import { detectService, guessLanguage } from './detect.js';
 import * as engine from './engine.js';
 import { postprocessFile } from './postprocess.js';
 import { spawnHardened } from './security.js';
-import { harvestConstants, harvestToLua } from './harvest.js';
+import { harvestConstants, harvestToLua, liftVM } from './harvest.js';
 import { verifyCode } from './validate.js';
 import { transformLuauToLua } from './luau-shim.js';
 import { parsePayload, captureKeyCarriers, looksLikeLuraphInventory, formatReport } from './luraph15.js';
 import { staticPeel } from './static-peel.js';
+import { liftFromHarvest } from './vm-lift.js';
 
 // ---- global job semaphore ---------------------------------------------------
 const jobState = { active: 0, queue: [] };
@@ -231,7 +232,7 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
       let chunkVerifyOverride = null;
       if (detected.id === 'luraph' && !binaryOutput) {
         try {
-          const h = await runHarvest(inputPath, detected, stage);
+          const h = await runLift(inputPath, detected, stage);
           const art = h ? pickChunkArtifact(h) : null;
           if (art) {
             stage('luraph15:chunk-capture', `${art.kind} captured at load() — complete recovery`);
@@ -256,6 +257,28 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
                 engine: await engine.probe(),
               };
             }
+          } else if (h && h.lift && h.lift.snap) {
+            // v1.9.0: VM state captured — behavioral lift REPLACES the inventory
+            const lift = liftFromHarvest(h.lift, { detectedName: detected.name, version: detected.version || '' });
+            if (lift.ok) {
+              stage('luraph15:devirt', lift.how);
+              const post = postprocessFile('devirtualized.lua', Buffer.from(lift.code, 'utf8'));
+              if (outcome.workDir) await engine.cleanupWorkDir(outcome.workDir);
+              return {
+                ok: true,
+                code: post.data.toString('utf8'),
+                binaryOutput: false,
+                outputBuffer: null,
+                codeName: 'devirtualized.lua',
+                detected, stages, durationMs: Date.now() - t0, lang,
+                verification: verifyCode(post.data.toString('utf8'), { lang: 'lua', filename: 'devirtualized.lua' }),
+                originalSize: buffer.length,
+                recoveredSize: post.data.length,
+                how: 'Luraph VM devirtualization (behavioral opcode lifting)',
+                partialNote: `Luraph ${detected.version || 'v15.x'} devirtualization: the obfuscator's own VM ran inside the jailed sandbox — instruction stream + decrypted constant pool captured at the dispatcher, ${lift.classified}/${lift.total} opcodes behaviorally probed, bytecode transpiled below.${h.strings.length ? ` ${h.strings.length} pool strings also decrypted.` : ''}`,
+                engine: await engine.probe(),
+              };
+            }
           } else if (!binaryOutput
             && looksLikeLuraphInventory(data.toString('utf8'))
             && (detected.version || '').startsWith('v15')) {
@@ -272,7 +295,7 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
             if (h && h.strings.length >= 3) {
               const poolText = harvestToLua(h, { detectedName: detected.name, version: detected.version });
               poolSection = `\n\n-- ---- decrypted constant pool (jailed VM run, ${h.strings.length} strings) ----\n${poolText}`;
-              luraphNote = `Luraph ${detected.version || 'v15.x'} devirtualization: I recovered the **per-build key material** (${carriers.filter((c) => c.looksKeyish).length} key-like carriers) + full payload structure, and the jailed sandboxed VM replayed the build's key schedule to decrypt **${h.strings.length} constant-pool strings**. The VM bytecode itself stays behind Luraph's per-build VM — full bytecode lifting is engine-0.13 work.`;
+              luraphNote = `Luraph ${detected.version || 'v15.x'} devirtualization: I recovered the **per-build key material** (${carriers.filter((c) => c.looksKeyish).length} key-like carriers) + full payload structure, and the jailed sandboxed VM replayed the build's key schedule to decrypt **${h.strings.length} constant-pool strings**. Behavioral VM lifting is active for dispatcher shapes it captures; this build's VM bytecode stays behind Luraph's per-build structure (full Luau-VM lifting is engine work).`;
             } else {
               luraphNote = `Luraph ${detected.version || 'v15.x'}: I recovered the **per-build key material** (${carriers.filter((c) => c.looksKeyish).length} key-like carriers) and the full payload structure (record headers, entropy, sizes). This build's loader diverges inside the sandbox before the constant pool decrypts — the payload inventory below is the complete static picture.`;
             }
@@ -328,25 +351,6 @@ const HARVEST_ELIGIBLE = new Set([
   'unknown',
 ]);
 
-/** Run the jailed harvester; returns the raw result or null (no stage output).
- *  A HIT is ≥3 recovered pool strings OR any captured load()-chunk. */
-async function runHarvest(inputPath, detected, stage) {
-  stage('harvest', 'jailed VM run — dynamic constant + load()-chunk recovery');
-  try {
-    const h = await harvestConstants(inputPath, { timeoutMs: Math.min(CONFIG.engineTimeoutMs, 120_000) });
-    const nStrings = (h.strings || []).length;
-    const nChunks = (h.chunks || []).length;
-    if (!h.ok || (nStrings < 3 && nChunks === 0)) {
-      stage('harvest:miss', h.error || `only ${nStrings} strings, ${nChunks} chunks`);
-      return null;
-    }
-    stage('harvest:hit', `${nStrings} strings decrypted, ${nChunks} load()-chunks captured${h.ran ? '' : ' (VM init incomplete)'}`);
-    return h;
-  } catch (e) {
-    stage('harvest:miss', String(e.message || e).slice(0, 120));
-    return null;
-  }
-}
 
 // ---- load()-chunk artifacts (v1.8.0) ----------------------------------------
 // Decrypt-then-load obfuscators (Luraph LPH_ENCSTR wrappers, PSU, MoonSec V2
@@ -435,13 +439,40 @@ function chunkArtifactResult(art, h, detected, stages, t0, inBuffer, lang) {
 async function tryHarvest(inputPath, detected, lang, stage, stages, t0, inBuffer, filename) {
   const eligible = (lang === 'lua' && HARVEST_ELIGIBLE.has(detected.id)) || lang === 'unknown';
   if (!eligible) return null;
-  const h = await runHarvest(inputPath, detected, stage);
+  // v1.9.0: the lifting worker supersedes the plain harvester — it does
+  // everything the harvester does (load()-chunk capture, string sinks) PLUS
+  // VM state capture + behavioral opcode probing for devirtualization.
+  const h = await runLift(inputPath, detected, stage);
   if (!h) return null;
-  // Chunk artifact first — full source/bytecode beats a string pool.
+  // Chunk artifact first — full source/bytecode beats everything.
   const art = pickChunkArtifact(h);
   if (art) {
     stage('chunk-capture', `${art.kind} (${art.kind === 'source' ? art.lang : art.format}) — complete recovery via load()-hook`);
     return chunkArtifactResult(art, h, detected, stages, t0, inBuffer, lang);
+  }
+  // Devirtualization: behavioral opcode lift → real transpiled Lua.
+  const lift = liftFromHarvest(h.lift, { detectedName: detected.name, version: detected.version || '' });
+  if (lift.ok) {
+    stage('vm-devirt', lift.how);
+    const post = postprocessFile('devirtualized.lua', Buffer.from(lift.code, 'utf8'));
+    const verification = verifyCode(post.data.toString('utf8'), { lang: 'lua', filename: 'devirtualized.lua' });
+    return {
+      ok: true,
+      code: post.data.toString('utf8'),
+      binaryOutput: false,
+      outputBuffer: null,
+      codeName: 'devirtualized.lua',
+      detected,
+      stages,
+      durationMs: Date.now() - t0,
+      lang,
+      verification,
+      originalSize: inBuffer.length,
+      recoveredSize: post.data.length,
+      how: 'VM devirtualization (behavioral opcode lifting)',
+      partialNote: `Devirtualized: the obfuscator's own VM was run inside the jailed sandbox, its instruction stream and decrypted constant pool captured at the dispatcher, every opcode behaviorally probed (${lift.classified}/${lift.total} classified), and the bytecode transpiled into the runnable runner below.${h.strings.length ? ` ${h.strings.length} pool strings also decrypted.` : ''}`,
+      engine: await engine.probe(),
+    };
   }
   const luaText = harvestToLua(h, { detectedName: detected.name, version: detected.version });
   let data = Buffer.from(luaText, 'utf8');
@@ -462,15 +493,42 @@ async function tryHarvest(inputPath, detected, lang, stage, stages, t0, inBuffer
     originalSize: inBuffer.length,
     recoveredSize: data.length,
     how: 'dynamic constant harvest (sandboxed VM)',
-    partialNote: `This build keeps its bytecode behind runtime keys — I recovered the **decrypted string constant pool** (${h.strings.length} strings) via a jailed sandboxed VM run. Static devirtualization of this build is on the roadmap.`,
+    partialNote: `This build keeps its bytecode behind runtime keys — I recovered the **decrypted string constant pool** (${h.strings.length} strings) via a jailed sandboxed VM run. Behavioral VM lifting is active and will engage automatically on builds whose dispatcher shape is captured; static devirtualization of this exact build is on the roadmap.`,
     engine: await engine.probe(),
   };
 }
 
+/** Run the jailed lifting worker; returns the raw result or null (no stage output).
+ *  A HIT is ≥3 recovered pool strings OR any captured load()-chunk OR a lift snapshot. */
+async function runHarvest(inputPath, detected, stage) {
+  return runLift(inputPath, detected, stage);
+}
+
+/** Run the jailed lifting worker; returns the raw result or null (no stage output).
+ *  A HIT is ≥3 recovered pool strings OR any captured load()-chunk OR a lift snapshot. */
+async function runLift(inputPath, detected, stage) {
+  stage('vm-lift', 'jailed VM run — chunk capture + state capture + behavioral opcode probing');
+  try {
+    const h = await liftVM(inputPath, { timeoutMs: Math.min(CONFIG.engineTimeoutMs, 120_000) });
+    const nStrings = (h.strings || []).length;
+    const nChunks = (h.chunks || []).length;
+    const hasSnap = Boolean(h.lift && h.lift.snap);
+    if (!h.ok || (nStrings < 3 && nChunks === 0 && !hasSnap)) {
+      stage('vm-lift:miss', h.error || `only ${nStrings} strings, ${nChunks} chunks, snap=${hasSnap}`);
+      return null;
+    }
+    stage('vm-lift:hit', `${nStrings} strings decrypted, ${nChunks} load()-chunks captured, VM state ${hasSnap ? 'captured' : 'not sighted'}${h.ran ? '' : ' (VM init incomplete)'}`);
+    return h;
+  } catch (e) {
+    stage('vm-lift:miss', String(e.message || e).slice(0, 120));
+    return null;
+  }
+}
+
 const ENGINE_FAMILY_BY_DETECT_ID = {
   luraph: 'luraph',
-  moonsec_v3: 'moonsec-v3',
-  moonsec_v2: 'moonsec-v2',
+  moonsec_v3: "moonsec-v3",
+  moonsec_v2: "moonsec-v2",
   moonsec_v1: 'moonsec-v1',
   ironbrew2: 'ironbrew2',
   ironbrew1: 'aztup-brew',
@@ -573,14 +631,14 @@ async function runAutoRoute(inputPath, _detected, stage) {
 
 // Family-specific honest-wall notes for the newest-generation VM obfuscators.
 const FAMILY_WALL_NOTES = {
-  moonveil: 'MoonVeil 2.x is a full VM obfuscator — the original code is not present in the file at all. Detection is reliable; static recovery of the VM bytecode is not possible yet (roadmap: dynamic capture).',
-  '77fuscator': '77fuscator 0.6.x ships a custom VM with control-flow flattening and encrypted constants. Detection is reliable; the current build is not statically devirtualizable yet.',
-  goofyscator: 'GoofyScator uses a polymorphic VM with proxy-locals and anti-tamper. Detection is reliable; static recovery of the current build is not possible yet.',
-  ironveil: 'Ironveil is VM-based in current builds. Detection is reliable; static recovery is not possible yet.',
-  xhider: 'Xhider wraps code in a MoonSec-style VM. Detection is reliable; the current build is not statically devirtualizable yet.',
-  '25ms': '25ms-branded builds route through VM obfuscators (often Luraph-family). This sample hit a VM wall — no static recovery path found.',
-  moonsec_v3: 'This MoonSec V3 build derives its constant-pool keys at runtime (escrow/anti-tamper). Static-key V3 builds recover fully; this one cannot be lifted statically.',
-  moonsec_v2: 'This MoonSec V2 build derives its keys at runtime (escrow mode). The jailed VM now runs this dispatcher end-to-end against a production-shaped Roblox environment (Is* probes return production booleans, executor-only methods read nil, PlaceId/JobId real-shaped) and replays its key schedule — decrypt-then-load variants hand their full decrypted source to load(), which the load()-hook captures for complete recovery. The very newest anti-dump builds may still fragment.',
+  moonveil: 'MoonVeil 2.x is a full VM obfuscator — the original code is not present in the file at all. Detection is reliable. v1.9.0 behavioral VM lifting engages automatically when the dispatcher shape is captured (instruction stream + decrypted constant pool + opcode probing); builds it cannot capture fall back to the decrypted constant pool.',
+  '77fuscator': '77fuscator 0.6.x ships a custom VM with control-flow flattening and encrypted constants. Detection is reliable. v1.9.0 behavioral VM lifting engages when the dispatcher is captured at runtime; otherwise the decrypted constant pool is delivered.',
+  goofyscator: 'GoofyScator uses a polymorphic VM with proxy-locals and anti-tamper. Detection is reliable. v1.9.0 behavioral VM lifting engages when the dispatcher is captured at runtime; otherwise the decrypted constant pool is delivered.',
+  ironveil: 'Ironveil is VM-based in current builds. Detection is reliable. v1.9.0 behavioral VM lifting engages when the dispatcher is captured at runtime; otherwise the decrypted constant pool is delivered.',
+  xhider: 'Xhider wraps code in a MoonSec-style VM. Detection is reliable. v1.9.0 behavioral VM lifting engages when the dispatcher is captured at runtime; otherwise the decrypted constant pool is delivered.',
+  '25ms': '25ms-branded builds route through VM obfuscators (often Luraph-family). v1.9.0 behavioral VM lifting engages when the dispatcher is captured at runtime; otherwise the decrypted constant pool is delivered.',
+  moonsec_v3: "This MoonSec V3 build derives its constant-pool keys at runtime (escrow/anti-tamper). v1.9.0 behavioral VM lifting engages automatically: the jailed run captures the dispatcher, probes every opcode against the obfuscator's own handlers, and transpiles the bytecode into a runnable runner — decrypt-then-load variants still hand their full source to load() for complete recovery.",
+  moonsec_v2: "This MoonSec V2 build derives its keys at runtime (escrow mode). The jailed VM runs this dispatcher end-to-end against a production-shaped Roblox environment (Is* probes return production booleans, executor-only methods read nil, PlaceId/JobId real-shaped) and replays its key schedule. v1.9.0 behavioral VM lifting: instruction stream + decrypted constant pool captured at the dispatcher, every opcode probed against the build's own handlers, bytecode transpiled into a runnable runner. Decrypt-then-load variants hand their full decrypted source to load() for complete recovery. The very newest anti-dump builds may still fragment.",
 };
 
 function familyWallNote(detected) {

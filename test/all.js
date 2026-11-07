@@ -20,6 +20,7 @@ const SUITES = [
   'chunk-paste.js',    // pastefy chunking round-trips
   'links.js',          // url detection / normalization / SSRF guards
   'luau-shim.js',      // Luau shim: compound assigns + if-expressions (v1.6.0)
+  'vm-lift.js',        // VM devirtualization engine (v1.9.0)
 ];
 
 let failed = 0;
