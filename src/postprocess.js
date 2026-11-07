@@ -155,3 +155,33 @@ export function postprocessFile(name, data) {
   if (text !== original) passes.push('pure-output tidy');
   return { data: Buffer.from(text, 'utf8'), passes };
 }
+
+/**
+ * Forced beautify for the `.beautify` command — always re-indents (no size
+ * heuristics), plus the tidy passes. Never throws.
+ */
+export function beautifyCode(name, data) {
+  const passes = [];
+  try {
+    if (!Buffer.isBuffer(data) || data.length === 0 || data.subarray(0, 1024).includes(0)) {
+      return { data, passes };
+    }
+    let text = data.toString('utf8');
+    const ext = path.extname(name).toLowerCase();
+    const lang = LUA_EXT.has(ext) ? 'lua'
+      : JS_EXT.has(ext) ? 'js'
+      : (/\blocal\s+(function|\w)\b/.test(text.slice(0, 4000)) && /\bend\b/.test(text.slice(0, 4000))) ? 'lua'
+      : (/\b(function|const|let|var)\b/.test(text.slice(0, 4000)) && !/\bthen\b/.test(text.slice(0, 4000))) ? 'js'
+      : null;
+    if (!lang) return { data, passes };
+
+    text = stripWallMarkers(text);
+    text = tidyTrailingJunk(text);
+    const beautified = lang === 'lua' ? beautifyLua(text) : beautifyJs(text);
+    if (beautified && beautified !== text) { text = beautified; passes.push(`${lang} beautify`); }
+    text = text.replace(/\s+$/g, '\n');
+    return { data: Buffer.from(text, 'utf8'), passes };
+  } catch {
+    return { data, passes };
+  }
+}

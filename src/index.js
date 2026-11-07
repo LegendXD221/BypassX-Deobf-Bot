@@ -12,7 +12,7 @@ import { COMMANDS, commandByName, toSlashJson } from './commands-index.js';
 import { makeCtx } from './ctx.js';
 import { looksLikeUrl } from './fetchurl.js';
 import { probe as probeEngine } from './engine.js';
-import { errorReply } from './replies.js';
+import { errorReply, ownerOnlyReply } from './replies.js';
 import { startKeepalive, markDiscordReady } from './keepalive.js';
 
 // HTTP keep-alive server first — Render health checks can hit /health
@@ -67,6 +67,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const cmd = commandByName(interaction.commandName);
   if (!cmd) return;
   const ctx = makeCtx({ interaction, client });
+  if (cmd.owner && ctx.userId !== CONFIG.ownerId) {
+    logger.warn({ user: ctx.userId, cmd: cmd.name }, 'owner command denied');
+    return ctx.reply(ownerOnlyReply(cmd.name));
+  }
   try {
     await cmd.run(ctx);
   } catch (e) {
@@ -90,6 +94,8 @@ client.on(Events.MessageCreate, async (message) => {
     if (!cmd) return; // silent for unknown commands
 
     const ctx = makeCtx({ message, client });
+    // Remaining arguments after the command name (owner tools use these).
+    ctx.args = parts;
     // First URL in the arguments → link input (`.deobf <url>`).
     ctx.url = parts.find(looksLikeUrl) || null;
     // Resolve a reply-target attachment or link so `.deobf` works as a reply.
@@ -102,6 +108,10 @@ client.on(Events.MessageCreate, async (message) => {
     }
     ctx.prefix = CONFIG.prefix;
 
+    if (cmd.owner && ctx.userId !== CONFIG.ownerId) {
+      logger.warn({ user: ctx.userId, cmd: cmd.name }, 'owner command denied (prefix)');
+      return ctx.reply(ownerOnlyReply(cmd.name));
+    }
     await cmd.run(ctx);
   } catch (e) {
     logger.error({ err: String(e?.stack || e).slice(0, 600) }, 'prefix command crashed');

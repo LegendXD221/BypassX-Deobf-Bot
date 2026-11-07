@@ -4,6 +4,72 @@ Self-updating worklog. Read before work; update + push after every change.
 
 ---
 
+## 2026-11-07 — v1.3.0 "clean UI + paste fix + accuracy verification + owner tools"
+
+### Added
+- **Syntax verification for every output** (`src/validate.js` new): recovered
+  code is parsed (never executed) before delivery — Lua via jailed fengari
+  compile (real grammar; Luau retried through the syntax shim), JS via
+  `vm.Script` V8 parse, binary outputs honestly "unverifiable". The pipeline
+  now reads up to 6 candidates, drops passthrough echoes, and **promotes the
+  first candidate whose postprocessed output parses** (`accuracy:pick`),
+  with a `verify` stage log and a `verification` document on the result.
+  Success card shows `Verified: ✓/⚠/○` instead of a promise.
+- **Multi-part Pastefy delivery** — the "failed to paste" bug: Pastefy 413s
+  request bodies ≳1.1 MB, so big recovered files (e.g. Hercules 129 KB with
+  heavy string escaping) never uploaded. `splitForPaste` now budgets the
+  **JSON-escaped** size (string-dense obfuscated code expands ~1.3-2.2x),
+  splits on line boundaries (byte-aware, multibyte-safe, oversized single
+  lines hard-split), and `createPaste` uploads Part 1..N with the success
+  card rendering per-part buttons (`Part 1/2 … Raw`) plus inline links for
+  parts 5+. Verified live: 1.66 MB payload → 2 parts, both fetch back byte-
+  correct.
+- **Pastefy client hardening**: correct shape discovered empirically —
+  `type: 'PASTE'` + `visibility: 'UNLISTED'` (the old `type: 'UNLISTED'`
+  500'd with `{error:true}` and only worked via the third fallback shape),
+  and `expireAt` **always** trips a server IllegalArgumentException → 500 —
+  removed (expiry dropped; field kept in config for compat). Transient
+  429/5xx/network failures retry 3x with exponential backoff + Retry-After.
+- **New public commands**: `.stats` (jobs/success-rate/uptime/engine/memory),
+  `.paste` (file/text/link → Pastefy, auto-split), `.beautify` (forced
+  re-indent via `beautifyCode` in postprocess), `.strings` (string-table
+  extraction with ordered dedupe, preview + full table to Pastefy).
+- **Owner-only commands** (locked to `OWNER_ID`, enforced at dispatch for
+  both slash + prefix): `.eval` (jailed node:vm — no require/process/
+  network, sync-only 5s cap, console captured), `.exec` (bash on the host,
+  20s timeout, 1MB buffer), `.servers`, `.leave <id>`, `.setstatus`,
+  `.logs [n]` (new 300-line ring buffer in logger), `.shutdown` (graceful;
+  Render restarts).
+
+### Changed
+- **Reply redesign (professional layout)** — every card now follows one
+  discipline: header (title + single `-#` subtitle) → separator → facts
+  block (uniform `**Label** value` rows) → separator → content → separator →
+  actions. No more scattered fragments; help panel groups commands into
+  Deobfuscate / Utilities / Info sections.
+- **GitHub links removed from all bot replies** (footer button gone); smoke
+  suite now asserts no `github.com` button URL rides any reply.
+- `ctx.args` now carries prefix arguments (owner tools); `jobStats()` exported
+  from keepalive for `.stats`.
+
+### Verified (local, real samples)
+- `test/v2-smoke.js` — 24/24 cards serialize (incl. parts/source/verify/
+  stats/owner/logs/servers/codeTool) + zero GitHub buttons.
+- `test/chunk-paste.js` — 11/11: splitter unit cases (rejoin with `join('')`
+  exact, multibyte-safe, hard-split) + live 1.66 MB → 2-part paste round-trip.
+- `test/links.js` — 17/17 still green (pastefy shape change compatible).
+- `test/e2e-links.js` — Prometheus VMify via GitHub + Pastefy links: both
+  verified outputs, 836 B recovered.
+- `test/run.js` Hercules gauntlet: 336,864 → 129,612 B, `verify` stage ran,
+  paste OK (`pastefy.app/Jw4Y2OgA`).
+
+### Next
+- UptimeRobot external monitor (user-side, optional third-party layer).
+- Luraph v15.1 devirtualization roadmap (per-build key capture).
+- MoonSec V2 escrow dispatcher compatibility in the harvest jail.
+
+---
+
 ## 2026-11-07 — v1.2.0 "link support"
 
 ### Added

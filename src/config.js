@@ -33,7 +33,10 @@ export const CONFIG = {
   maxQueue: 8,
   userCooldownMs: 10_000,
 
-  version: '1.2.0',
+  // Bot owner — powerful owner-only commands (eval/exec/servers/…).
+  ownerId: (process.env.OWNER_ID || '1134757298733064203').trim(),
+
+  version: '1.3.0',
 };
 
 export function ensureVarDir(sub = '') {

@@ -31,6 +31,10 @@ export function bumpJob(ok, file = null) {
   state.jobs.lastAt = Date.now();
   if (file) state.jobs.lastFile = String(file).slice(0, 80);
 }
+/** Live job counters for the .stats command. */
+export function jobStats() {
+  return { ...state.jobs, discordReady: state.discordReady };
+}
 
 function healthJson() {
   return {

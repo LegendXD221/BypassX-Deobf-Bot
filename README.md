@@ -54,10 +54,26 @@ Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) sta
 | --- | --- | --- |
 | `.deobf` | `/deobf file:` `/deobf link:` | Detect + deobfuscate an attached file or linked file → Pastefy link (+ inline preview for small outputs) |
 | `.detect` | `/detect file:` `/detect link:` | Detection report only: confidence bar, evidence, runner-up candidates |
+| `.beautify` | `/beautify file:` `/beautify link:` | Reformat messy/minified code — no deobfuscation |
+| `.strings` | `/strings file:` `/strings link:` | Extract the string table — quick recon of what the file hides |
+| `.paste` | `/paste file:` `/paste text:` | Upload any text/file to Pastefy (large content auto-split into parts) |
+| `.stats` | `/stats` | Jobs served, success rate, uptime, engine build |
 | `.families` | `/families` | Full support table with version ranges and recovery tiers |
 | `.help` | `/help` | Overview |
 | `.ping` | `/ping` | Latency |
 | `.invite` | `/invite` | Add the bot to your server |
+
+**Owner-only** (locked to `OWNER_ID`, default `1134757298733064203`):
+
+| Prefix | Slash | What it does |
+| --- | --- | --- |
+| `.eval` | `/eval code:` | Evaluate JavaScript in a jailed sandbox (no require/process/network, 5s cap) |
+| `.exec` | `/exec command:` | Run a shell command on the host (bash, 20s timeout) |
+| `.servers` | `/servers` | List every server the bot is in |
+| `.leave` | `/leave guild_id:` | Leave a server |
+| `.setstatus` | `/setstatus text:` | Change the bot presence |
+| `.logs` | `/logs count:` | Tail the in-process log ring buffer |
+| `.shutdown` | `/shutdown` | Graceful stop (Render restarts the service) |
 
 `.deobf` accepts the file attached to your message **or** as a reply to a message containing one. It also accepts **links** — paste any of these after the command:
 
@@ -69,6 +85,24 @@ Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) sta
 - any direct URL to the raw obfuscated file
 
 Every redirect hop is DNS-checked and private/reserved/metadata addresses (127/8, 10/8, 169.254/16 including cloud metadata, …) are blocked — the link fetcher is SSRF-hardened like the rest of the pipeline. Size limit 10 MB (configurable). Results arrive as a Components V2 card with **paste + raw buttons**, an inline preview, and the recovered file attached.
+
+### Accuracy: verified output, not promises
+
+Every recovered file is **parsed before delivery** — Lua through a real Lua
+grammar check (jailed fengari compile, Luau retried via a syntax shim) and
+JavaScript through a V8 parse. When the engine returns several candidates the
+pipeline **promotes the first one that actually parses**, and the success card
+shows the honest result:
+
+- `Verified: ✓ Lua syntax OK` — the delivered code parses cleanly
+- `Verified: ⚠ syntax check failed — …` — rare; the best available output is still delivered, honestly labeled
+- `Verified: ○ binary output — no source parser` — unpacked binaries
+
+Large recovered files no longer fail to paste: the Pastefy client now splits
+content into **multi-part pastes** (the old single-request path hit Pastefy's
+~1.1 MB request limit and returned 413 — that was the "failed to paste" bug).
+Chunking budgets the JSON-escaped size, splits on line boundaries, and every
+part is verified fetchable.
 
 ## Quick start (self-host)
 

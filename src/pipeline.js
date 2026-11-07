@@ -15,6 +15,7 @@ import * as engine from './engine.js';
 import { postprocessFile } from './postprocess.js';
 import { spawnHardened } from './security.js';
 import { harvestConstants, harvestToLua } from './harvest.js';
+import { verifyCode } from './validate.js';
 
 // ---- global job semaphore ---------------------------------------------------
 const jobState = { active: 0, queue: [] };
@@ -117,15 +118,46 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
         };
       }
 
-      // Choose the best recovered file: largest code file.
-      const best = outcome.files[0];
-      let data = best.buffer || (await engine.readCodeFile(best));
+      // Choose the best recovered file — accuracy-first: drop passthrough
+      // echoes, post-process, then pick the FIRST candidate whose output
+      // parses (verifyBest semantics). Verification rides the result so the
+      // reply can show a real "syntax ✓" badge instead of a promise.
+      const verifyLang = lang === 'js' ? 'js' : lang === 'lua' ? 'lua' : null;
+      let picked = null; // { name, data, post, verification }
+      const candidateCount = Math.min(outcome.files.length, 6);
+      for (let i = 0; i < candidateCount; i++) {
+        const f = outcome.files[i];
+        let raw;
+        try {
+          raw = f.buffer || (await engine.readCodeFile(f));
+        } catch { continue; }
+        if (isPassthrough(raw, buffer, shim.shimLine, detected.id)) continue;
 
-      // Passthrough guard: engine echo'd the input back (honest "can't peel"
-      // passthrough) or returned a still-obfuscated stub — try the dynamic
-      // harvester before reporting failure.
-      if (isPassthrough(data, buffer, shim.shimLine, detected.id)) {
-        stage('passthrough-guard', 'engine output identical to input');
+        // Binary-output guard: unpacked native binaries (UPX etc.) cannot ride
+        // a text paste and have no parser — accept them directly.
+        const probe = raw.subarray(0, 4096);
+        let nuls = 0;
+        for (const b of probe) if (b === 0) nuls += 1;
+        const binaryOutput = nuls > probe.length * 0.05;
+        const post = binaryOutput ? { data: raw, passes: [] } : postprocessFile(f.name, raw);
+        const verification = binaryOutput
+          ? { status: 'unverifiable', lang: 'binary', detail: 'binary output — no source parser' }
+          : verifyCode(post.data.toString('utf8'), { lang: verifyLang, filename: f.name });
+
+        if (!picked || verification.status === 'verified' || binaryOutput) {
+          picked = { name: f.name, data: post.data, post, verification, binaryOutput, path: f.path };
+          if (verification.status === 'verified') stage('verify', verification.detail);
+          else stage('verify', `${verification.status} — ${verification.detail}`);
+          if (i > 0 && (verification.status === 'verified' || binaryOutput)) {
+            stage('accuracy:pick', `candidate ${i + 1}/${candidateCount} (${f.name}) parses — promoted over the first`);
+          }
+          if (verification.status === 'verified' || binaryOutput) break;
+        }
+      }
+
+      if (!picked) {
+        // Every candidate was a passthrough echo — try the dynamic harvester.
+        stage('passthrough-guard', 'all engine outputs identical to input');
         const h = await tryHarvest(inputPath, detected, lang, stage, stages, t0, buffer, filename);
         if (h) return h;
         return {
@@ -136,16 +168,10 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
         };
       }
 
-      const post = postprocessFile(best.name, data);
-      data = post.data;
-      if (post.passes.length) stage('post-process', post.passes.join(', '));
-
-      // Binary-output guard: unpacked native binaries (UPX etc.) cannot ride
-      // a text paste — flag them so the bot delivers a Discord attachment.
-      const probe = data.subarray(0, 4096);
-      let nuls = 0;
-      for (const b of probe) if (b === 0) nuls += 1;
-      const binaryOutput = nuls > probe.length * 0.05;
+      const best = { name: picked.name, path: picked.path };
+      const data = picked.data;
+      const binaryOutput = picked.binaryOutput;
+      if (picked.post.passes.length) stage('post-process', picked.post.passes.join(', '));
 
       // Output consumed — reap the engine workdir and temp artifacts.
       if (outcome.workDir) await engine.cleanupWorkDir(outcome.workDir);
@@ -158,6 +184,7 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
         outputBuffer: binaryOutput ? data : null,
         codeName: best.name,
         detected, stages, durationMs, lang,
+        verification: picked.verification,
         originalSize: buffer.length,
         recoveredSize: data.length,
         how: outcome.how || 'engine',
@@ -210,6 +237,7 @@ async function tryHarvest(inputPath, detected, lang, stage, stages, t0, inBuffer
   let data = Buffer.from(luaText, 'utf8');
   const post = postprocessFile('constants.lua', data);
   data = post.data;
+  const verification = verifyCode(data.toString('utf8'), { lang: 'lua', filename: 'recovered-constants.lua' });
   return {
     ok: true,
     code: data.toString('utf8'),
@@ -220,6 +248,7 @@ async function tryHarvest(inputPath, detected, lang, stage, stages, t0, inBuffer
     stages,
     durationMs: Date.now() - t0,
     lang,
+    verification,
     originalSize: inBuffer.length,
     recoveredSize: data.length,
     how: 'dynamic constant harvest (sandboxed VM)',
