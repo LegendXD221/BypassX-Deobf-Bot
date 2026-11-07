@@ -1,0 +1,7 @@
+node_modules/
+var/
+.env
+*.log
+out/
+test/samples-local/
+__pycache__/

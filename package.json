@@ -1,0 +1,35 @@
+{
+  "name": "bypassx-deobf-bot",
+  "version": "1.0.0",
+  "description": "BypassX Deobf — the best Discord deobfuscation bot. Luraph v11→v15.1, MoonSec v1/v2/v3, IronBrew 1/2/3, Prometheus, Hercules, obfuscator.io, pyArmor, UPX, MoonVeil, 77fuscator, Xhider, GoofyScator, Ironveil and more. Auto-detect with confidence %, pure-code Pastefy delivery, prefix + slash commands.",
+  "main": "src/index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node bin/prepare-engine.js && node src/index.js",
+    "bot": "node src/index.js",
+    "prepare-engine": "node bin/prepare-engine.js",
+    "deploy": "node deploy-commands.js",
+    "test": "node test/run.js"
+  },
+  "keywords": [
+    "deobfuscator",
+    "lua",
+    "luraph",
+    "moonsec",
+    "ironbrew",
+    "prometheus",
+    "hercules",
+    "obfuscator.io",
+    "pyarmor",
+    "upx",
+    "discord-bot"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "webcrack": "^2.16.0"
+  }
+}

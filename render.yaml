@@ -1,0 +1,25 @@
+# Render Blueprint — BypassX Deobf Bot (free-tier worker)
+# Deploy: Render → New → Blueprint → point at this repo.
+# Set DISCORD_TOKEN + CLIENT_ID when prompted (sync: false keeps them out of git).
+services:
+  - type: worker
+    name: bypassx-deobf-bot
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: node bin/prepare-engine.js && node src/index.js
+    autoDeploy: true
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: CLIENT_ID
+        sync: false
+      - key: PASTEFY_TOKEN
+        sync: false
+      - key: PREFIX
+        value: "."
+      - key: ENGINE_URL
+        value: https://github.com/LegendXD221/BypassX-Deobf-Bot/releases/latest/download/bypassx-deobf.gz
+      - key: NODE_VERSION
+        value: "22"
