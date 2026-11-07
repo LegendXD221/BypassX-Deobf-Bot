@@ -4,6 +4,81 @@ Self-updating worklog. **Read before starting any work on the bot; update + push
 
 ---
 
+## 2026-11-07 — v1.5.1 "confirm-gate fix + full code scan"
+
+### User asks driving this release
+1. **"On Dangerous Commands When I Click confirm it just cancels it"** — the
+   L3 confirm button on danger commands executed the CANCEL path.
+2. **"Do Full Code Scan And Fix Every Error And Bugs"** — whole-repo audit.
+3. **"Complete All The Pending Works"** — audit of v1.3.x–v1.5.0 leftovers.
+
+### THE bug (root cause of #1)
+`src/owner-guard.js` → `confirmGate()` collect handler ran
+`collector.stop('confirmed')` BEFORE `done(yes)`. discord.js `stop()` emits
+the `end` event **synchronously**, and the end handler resolved the gate with
+`false` — so the verdict was ALWAYS false and every Confirm press behaved like
+Cancel. Fix (belt and braces):
+- settle the verdict first (`done(yes)`), THEN stop the collector;
+- the end handler now respects the stop reason (`done(reason === 'confirmed')`);
+- after resolution the dead buttons are swapped for a verdict card
+  (✅ Confirmed / 🚫 Cancelled) instead of a broken empty-components edit.
+
+### Full code scan — everything else found & fixed
+- **`.eval` was completely broken** (dashboard eval too): `src/runners.js`
+  built the harness path as `src/bin/eval-harness.cjs`, but `bin/` lives at the
+  repo root → `Cannot find module …/src/bin/eval-harness.cjs` on every run.
+  Proven failing before, working after (`return 6*7` → `=> 42`).
+- **Dashboard `?n=` query param was dead**: keepalive stripped the query
+  string before handing the URL to `handleDashboard`, and routeApi re-parsed
+  `req.url` (already queryless). Now the raw URL is passed and parsed once
+  (`new URL`), so `/api/logs?n=300` works.
+- **Dashboard brute-force lockout could lock the OWNER out**: buckets were
+  keyed on `req.socket.remoteAddress` (Render's shared proxy IP for ALL
+  clients). One attacker spamming wrong tokens could 15-min-lock everyone.
+  Buckets now key on the leftmost `X-Forwarded-For` address.
+- **Dashboard UI crashed on API errors**: eval/exec/logs/audit/SQL/blacklist
+  handlers read `r.data.*` unguarded (`r.data` is undefined when the API
+  returns ok:false / 500) and several buttons had no try/catch → stuck
+  "running…" + console TypeError. All handlers now guard + report errors in
+  the UI.
+- **Stale engine status**: `engine.probe()` cached "unavailable" forever, so
+  keepalive's 60 s refresh could show "preparing…" even after the engine
+  installed. probe() now re-probes while unavailable (warn only on state
+  change to avoid log spam).
+- **Negative gateway ping**: discord.js reports `-1` before the first
+  heartbeat; `.ping`/`.stats` cards showed `-1ms`. Clamped at 0.
+- **DB-down hammering**: `blacklistHas` re-queried Neon on every dispatch
+  during an outage (TTL only refreshed on success). TTL now refreshes on
+  failure too — serves the last known set for 30 s instead of hammering.
+- **`npm test` was broken**: it ran the sample harness (`test/run.js`) which
+  exits 2 without file args. `npm test` now runs `test/all.js` — all six
+  offline suites (confirm-gate, owner-guard, dashboard, v2-smoke,
+  chunk-paste, links); `npm run test:sample` keeps the old sample harness.
+
+### New regression tests (test/confirm-gate.js)
+Fake collector with exact discord.js semantics (stop() emits 'end'
+synchronously): CONFIRM→true, CANCEL→false, stranger-click ignored (gate not
+consumed, owner still decides), timeout→false. All pass against the fixed
+gate; the first test fails against the old ordering (verified by reading).
+
+### Verified this release
+- `npm test` → ALL 6 TEST SUITES PASSED (incl. live Pastefy round-trip,
+  GitHub fetch, SSRF guards, eval-harness jail).
+- `runJailedEval('return 6*7')` → `{ok:true, output:'=> 42'}` (was a
+  module-not-found crash).
+- Live Pastefy paste created: https://pastefy.app/K9bxVlch (v1.3.0 fix holds).
+- Live bot `/health`: v1.5.0 ok, discordReady true, Neon **connected**
+  (DATABASE_URL configured on Render — pending-work audit: already live).
+- Help card audit: no GitHub links, no "Link Sources", no "How It Works".
+- render.yaml audit: DATABASE_URL (sync:false) present — done in v1.4.0.
+- All 6 pastebin/host resolvers + owner-guard layers re-read; no further
+  defects found. Sandbox-eval RCE surface unchanged and still secret-free.
+
+### Version
+- 1.5.0 → 1.5.1 (src/config.js + package.json).
+
+---
+
 ## 2026-11-07 — v1.5.0 "secret owner dashboard + DB overload protection"
 
 ### User asks driving this release

@@ -28,7 +28,7 @@ export default {
       guilds: ctx.client?.guilds?.cache?.size,
       memoryMb: mem.rss / 1024 / 1024,
       discordReady: jobs.discordReady,
-      pingMs: ctx.client?.ws?.ping ?? 0,
+      pingMs: Math.max(0, ctx.client?.ws?.ping ?? 0),
       owner: CONFIG.ownerId,
       dbInfo,
       allTime,

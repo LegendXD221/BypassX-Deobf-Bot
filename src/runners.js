@@ -10,7 +10,8 @@ import { spawnHardened } from './security.js';
 import { ensureVarDir } from './config.js';
 import { logger } from './logger.js';
 
-const harnessPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'bin', 'eval-harness.cjs');
+// bin/ lives at the repo ROOT (next to package.json), not under src/.
+const harnessPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'eval-harness.cjs');
 
 /**
  * Jailed eval — see bin/eval-harness.cjs + commands/eval.js for the full

@@ -359,9 +359,12 @@ export async function blacklistHas(target) {
   const now = Date.now();
   if (now - blacklistCache.at > BLACKLIST_TTL) {
     const res = await query('SELECT target FROM blacklist');
+    // Refresh the TTL even on failure — a down/overloaded DB must not be
+    // re-queried on literally every dispatch (the breaker alone is not
+    // enough at command-fanout scale; serve the last known set instead).
+    blacklistCache.at = now;
     if (res) {
       blacklistCache.set = new Set(res.rows.map((r) => String(r.target)));
-      blacklistCache.at = now;
     }
   }
   return blacklistCache.set.has(String(target));

@@ -46,15 +46,21 @@ export function enginePath() {
   return path.join(CONFIG.varDir, 'engine', 'bypassx-deobf');
 }
 
-/** Probe the engine once; returns { available, version }. */
+/** Probe the engine once; returns { available, version }. Re-probes while the
+ *  engine is unavailable so keepalive's 60s refresh can pick up a late
+ *  install instead of showing "preparing…" forever. */
 export async function probe() {
-  if (state.probed) return { available: state.available, version: state.version };
+  if (state.probed && state.available) return { available: state.available, version: state.version };
   state.probed = true;
   const p = enginePath();
   try {
     fs.accessSync(p, fs.constants.X_OK);
   } catch {
-    logger.warn({ path: p }, 'engine: binary missing or not executable');
+    if (state.available !== false || state.version !== null) {
+      logger.warn({ path: p }, 'engine: binary missing or not executable');
+    }
+    state.available = false;
+    state.version = null;
     return { available: false, version: null };
   }
   const r = await spawnHardened(p, ['--version'], { timeoutMs: 15_000, label: 'engine --version' });

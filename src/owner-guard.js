@@ -172,21 +172,38 @@ export async function confirmGate(ctx, { title, details }) {
         return; // does not consume the gate
       }
       const yes = i.customId === confirmId;
-      await i.deferUpdate().catch(() => {});
-      collector.stop(yes ? 'confirmed' : 'cancelled');
+      // IMPORTANT: settle the verdict BEFORE stopping the collector —
+      // collector.stop() emits the 'end' event synchronously, so stopping
+      // first used to run done(false) and swallow the owner's Confirm click
+      // (every press behaved like Cancel). The end handler below now also
+      // respects the stop reason as a belt-and-braces guard.
       done(yes);
+      collector.stop(yes ? 'confirmed' : 'cancelled');
+      await i.deferUpdate().catch(() => {});
     });
-    collector.on('end', () => done(false));
+    collector.on('end', (_collected, reason) => done(reason === 'confirmed'));
   });
 
-  // Strip the dead buttons so the card can't be pressed after resolution.
-  // (Prefix flow — the slash flow's final reply replaces the whole card.
-  // V2 messages must keep the flag on edit; failures are cosmetic only.)
-  try { await msg.edit({ components: [], flags: MessageFlags.IsComponentsV2 }); } catch { /* cosmetic */ }
+  // Swap the dead buttons for a verdict line so the card can't be pressed
+  // after resolution and the owner sees what happened at a glance. (The
+  // slash flow's final reply replaces the whole card afterwards; failures
+  // here are cosmetic only.)
+  try { await msg.edit({ components: [verdictCard(verdict)], flags: MessageFlags.IsComponentsV2 }); } catch { /* cosmetic */ }
   return verdict;
 }
 
 // ---- card builders (imported lazily to avoid a cycle with replies.js) ------------
+
+/** Green/red status card shown after the gate resolves (no buttons left). */
+function verdictCard(confirmed) {
+  const c = new ContainerBuilder().setAccentColor(confirmed ? 0x22c55e : 0xf59e0b);
+  c.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(confirmed
+      ? '## ✅ Confirmed\n-# Running the dangerous action…'
+      : '## 🚫 Cancelled\n-# Nothing was executed'),
+  );
+  return c;
+}
 
 function confirmCard({ title, details, confirmId, cancelId, timeoutS }) {
   const c = new ContainerBuilder().setAccentColor(0xef4444);

@@ -94,7 +94,8 @@ Dangerous commands (`eval`, `exec`, `restart`, `shutdown`, `db`, `broadcast`,
    the sender out for 15 minutes.
 3. **L3 confirm** — the command posts a single-use **⚠ Confirm** danger
    button (30 s expiry). Only the owner's click counts; anyone else who taps
-   it is told off and the gate stays armed.
+   it is told off and the gate stays armed. Confirming executes; the buttons
+   are then swapped for a ✅ Confirmed / 🚫 Cancelled verdict line.
 4. **L4 rate limit** — one dangerous op at a time, 10 s cooldown, max 12 per
    hour (`DANGER_COOLDOWN_S`, `DANGER_MAX_PER_HOUR`, `CONFIRM_TIMEOUT_S`).
 5. **L5 audit** — every attempt, allowed **or** denied (and which layer fired),

@@ -108,8 +108,9 @@ export function startKeepalive() {
         res.writeHead(200, { 'content-type': 'text/plain', ...noRobots() });
         res.end('User-agent: *\nDisallow: /\n');
       } else if (url.startsWith('/dash/')) {
-        // secret owner dashboard — auth handled inside
-        handleDashboard(req, res, url).catch(() => {
+        // secret owner dashboard — auth handled inside.
+        // The RAW url (query string included) is passed so /api/logs?n=… works.
+        handleDashboard(req, res, rawUrl).catch(() => {
           try { res.writeHead(500); res.end('error'); } catch { /* socket gone */ }
         });
         return;

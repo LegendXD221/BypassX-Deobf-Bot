@@ -12,7 +12,9 @@ export default {
   slash: { options: [] },
 
   async run(ctx) {
-    const ws = ctx.client?.ws?.ping ?? 0;
+    // discord.js reports -1 until the first heartbeat — clamp so the card
+    // never shows a negative latency.
+    const ws = Math.max(0, ctx.client?.ws?.ping ?? 0);
     const engine = await probeEngine();
     return ctx.reply(pongReply({
       wsPing: ws,

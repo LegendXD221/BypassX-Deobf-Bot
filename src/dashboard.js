@@ -82,7 +82,13 @@ const FAIL_LIMIT = 8;
 const FAIL_WINDOW_MS = 15 * 60_000;
 
 function ipOf(req) {
-  return String(req.socket?.remoteAddress || req.headers['x-forwarded-for'] || '?').split(',')[0].trim();
+  // Render terminates TLS on a shared proxy: remoteAddress is the PROXY's
+  // internal address for every client. Key the brute-force buckets on the
+  // forwarded client address instead — otherwise one attacker spamming wrong
+  // tokens locks the OWNER (and everyone else) out of the dashboard too.
+  const fwd = req.headers['x-forwarded-for'];
+  if (fwd) return String(fwd).split(',')[0].trim();
+  return String(req.socket?.remoteAddress || '?');
 }
 
 function registerFail(ip) {
@@ -160,8 +166,17 @@ function apiAllowed(ip) {
  * Everything the public internet may send lands here; wrong tokens see a plain
  * 404 indistinguishable from any other unknown path.
  */
-export async function handleDashboard(req, res, pathname) {
+export async function handleDashboard(req, res, rawUrl) {
   const ip = ipOf(req);
+  // Parse once: pathname for routing, searchParams for query options (?n=…).
+  let pathname = String(rawUrl || '/');
+  let search = new URLSearchParams();
+  try {
+    const parsed = new URL(pathname, 'http://x');
+    pathname = parsed.pathname;
+    search = parsed.searchParams;
+  } catch { /* keep raw fallback */ }
+
   let parts = [];
   try { parts = pathname.split('/').filter(Boolean); } catch { parts = []; }
 
@@ -191,14 +206,14 @@ export async function handleDashboard(req, res, pathname) {
   if (!apiAllowed(ip)) return json(res, 429, { ok: false, error: 'slow down (60 req/min cap)' });
 
   try {
-    return await routeApi(req, res, rest.slice(1).join('/'));
+    return await routeApi(req, res, rest.slice(1).join('/'), search);
   } catch (e) {
     logger.warn({ err: String(e?.message || e).slice(0, 160) }, 'dashboard: api error');
     return json(res, 500, { ok: false, error: 'internal error' });
   }
 }
 
-async function routeApi(req, res, route) {
+async function routeApi(req, res, route, search = new URLSearchParams()) {
   const audit = (command, result, extra = {}) => db.audit({
     userId: 'dashboard', username: 'dashboard (owner web)', command,
     args: extra.args || '', allowed: true, layer: 'dashboard', result: String(result || '').slice(0, 200),
@@ -207,7 +222,7 @@ async function routeApi(req, res, route) {
   if (req.method === 'GET') {
     if (route === 'state') return json(res, 200, { ok: true, data: await stateData() });
     if (route === 'logs') {
-      const n = Math.max(5, Math.min(300, Number(new URL(req.url, 'http://x').searchParams.get('n')) || 80));
+      const n = Math.max(5, Math.min(300, Number(search.get('n')) || 80));
       return json(res, 200, { ok: true, data: { lines: recentLogs(n) } });
     }
     if (route === 'audit') {
@@ -548,24 +563,26 @@ function renderBlacklist(){
   const rows=(STATE.blacklist||[]);
   $('#bl-table tbody').innerHTML = rows.map(r=>'<tr><td>'+esc(r.target)+'</td><td>'+esc(r.kind)+'</td><td>'+esc(r.reason||'')+'</td><td>'+esc(r.added_by||'')+'</td><td>'+esc((r.created_at||'').slice(0,10))+'</td></tr>').join('') || '<tr><td colspan="5" class="mut">empty</td></tr>';
 }
-$('#bl-add').onclick=async()=>{ const r=await api('blacklist',{action:'add',target:$('#bl-target').value.trim(),reason:$('#bl-reason').value.trim()}); toast(r.ok?'added':r.error,r.ok); refresh(); };
-$('#bl-del').onclick=async()=>{ const r=await api('blacklist',{action:'remove',target:$('#bl-target').value.trim()}); toast(r.ok?'removed':r.error,r.ok); refresh(); };
+$('#bl-add').onclick=async()=>{ try{ const r=await api('blacklist',{action:'add',target:$('#bl-target').value.trim(),reason:$('#bl-reason').value.trim()}); toast(r.ok?'added':(r.error||'failed'),r.ok); refresh(); }catch(e){ toast(e.message,false); } };
+$('#bl-del').onclick=async()=>{ try{ const r=await api('blacklist',{action:'remove',target:$('#bl-target').value.trim()}); toast(r.ok?'removed':(r.error||'failed'),r.ok); refresh(); }catch(e){ toast(e.message,false); } };
 
-$('#bc-go').onclick=async()=>{ $('#bc-out').textContent='sending…'; const r=await api('broadcast',{text:$('#bc-text').value}); $('#bc-out').textContent = r.ok? ('delivered '+r.data.sent+'/'+r.data.total+' (failed '+r.data.failed+', skipped '+r.data.skipped+')') : r.error; };
-$('#ev-go').onclick=async()=>{ const o=$('#ev-out'); o.style.display='block'; o.textContent='running…'; const r=await api('eval',{code:$('#ev-code').value}); o.textContent=r.data.output; };
-$('#sh-go').onclick=async()=>{ const o=$('#sh-out'); o.style.display='block'; o.textContent='running…'; const r=await api('exec',{cmd:$('#sh-cmd').value}); o.textContent=r.data.output; };
-$('#pw-restart').onclick=async()=>{ if(!confirm('Restart the bot?')) return; await api('power',{action:'restart'}); toast('restarting…'); };
-$('#pw-stop').onclick=async()=>{ if(!confirm('Shut down the bot? Render will reboot it.')) return; await api('power',{action:'shutdown'}); toast('shutting down…'); };
+$('#bc-go').onclick=async()=>{ $('#bc-out').textContent='sending…'; try{ const r=await api('broadcast',{text:$('#bc-text').value}); $('#bc-out').textContent = (r.ok&&r.data)? ('delivered '+r.data.sent+'/'+r.data.total+' (failed '+r.data.failed+', skipped '+r.data.skipped+')') : ('✗ '+(r.error||'failed')); }catch(e){ $('#bc-out').textContent='✗ '+e.message; } };
+$('#ev-go').onclick=async()=>{ const o=$('#ev-out'); o.style.display='block'; o.textContent='running…'; try{ const r=await api('eval',{code:$('#ev-code').value}); o.textContent=(r.ok&&r.data)?r.data.output:('✗ '+(r.error||'eval failed')); }catch(e){ o.textContent='✗ '+e.message; } };
+$('#sh-go').onclick=async()=>{ const o=$('#sh-out'); o.style.display='block'; o.textContent='running…'; try{ const r=await api('exec',{cmd:$('#sh-cmd').value}); o.textContent=(r.ok&&r.data)?r.data.output:('✗ '+(r.error||'shell failed')); }catch(e){ o.textContent='✗ '+e.message; } };
+$('#pw-restart').onclick=async()=>{ if(!confirm('Restart the bot?')) return; try{ await api('power',{action:'restart'}); toast('restarting…'); }catch(e){ toast(e.message,false); } };
+$('#pw-stop').onclick=async()=>{ if(!confirm('Shut down the bot? Render will reboot it.')) return; try{ await api('power',{action:'shutdown'}); toast('shutting down…'); }catch(e){ toast(e.message,false); } };
 
-async function loadLogs(){ const r=await api('logs?n=80'); $('#lg-out').textContent=(r.data.lines||[]).join('\\n')||'(no logs)'; }
+async function loadLogs(){ try{ const r=await api('logs?n=80'); const lines=(r.ok&&r.data&&r.data.lines)?r.data.lines:[]; $('#lg-out').textContent = lines.length? lines.join('\n') : ('(no logs)'+(r.error?(' — '+r.error):'')); }catch(e){ $('#lg-out').textContent='✗ '+e.message; } }
 $('#lg-ref').onclick=loadLogs;
 async function loadAudit(){
-  const r=await api('audit');
-  const rows=r.data.rows||[];
-  $('#au-table tbody').innerHTML = rows.map(x=>'<tr><td>'+esc((x.created_at||'').replace('T',' ').slice(0,16))+'</td><td>'+esc(x.command)+'</td><td>'+esc(x.username||x.user_id||'')+'</td><td class="'+(x.allowed?'ok':'err')+'">'+esc(x.result||'')+'</td><td>'+esc(x.layer||'')+'</td></tr>').join('') || '<tr><td colspan="5" class="mut">no audit entries</td></tr>';
+  try{
+    const r=await api('audit');
+    const rows=(r.ok&&r.data&&r.data.rows)?r.data.rows:[];
+    $('#au-table tbody').innerHTML = rows.map(x=>'<tr><td>'+esc((x.created_at||'').replace('T',' ').slice(0,16))+'</td><td>'+esc(x.command)+'</td><td>'+esc(x.username||x.user_id||'')+'</td><td class="'+(x.allowed?'ok':'err')+'">'+esc(x.result||'')+'</td><td>'+esc(x.layer||'')+'</td></tr>').join('') || '<tr><td colspan="5" class="mut">no audit entries</td></tr>';
+  }catch(e){ toast(e.message,false); }
 }
-$('#sq-go').onclick=async()=>{ const o=$('#sq-out'); o.style.display='block'; o.textContent='running…'; const r=await api('db',{sql:$('#sq-sql').value}); if(r.ok&&r.data.rows!==undefined){ const f=(r.data.fields||[]).join(' | '); const rows=(r.data.rows||[]).slice(0,30).map(x=>Object.values(x).map(v=>v===null?'∅':String(v instanceof Date? v.toISOString():v).slice(0,80)).join(' | ')); o.textContent=[f,...rows].join('\\n')+'\\n['+(r.data.rowCount??0)+' rows, '+r.data.ms+'ms]'; } else { o.textContent=r.ok?JSON.stringify(r.data,null,1).slice(0,3000):('✗ '+r.error); } };
-$('#sq-st').onclick=async()=>{ const o=$('#sq-out'); o.style.display='block'; const r=await api('db',{sql:'status'}); o.textContent=JSON.stringify(r.data,null,1).slice(0,2000); };
+$('#sq-go').onclick=async()=>{ const o=$('#sq-out'); o.style.display='block'; o.textContent='running…'; try{ const r=await api('db',{sql:$('#sq-sql').value}); if(r.ok&&r.data&&r.data.rows!==undefined){ const f=(r.data.fields||[]).join(' | '); const rows=(r.data.rows||[]).slice(0,30).map(x=>Object.values(x).map(v=>v===null?'∅':String(v instanceof Date? v.toISOString():v).slice(0,80)).join(' | ')); o.textContent=[f,...rows].join('\n')+'\n['+(r.data.rowCount??0)+' rows, '+r.data.ms+'ms]'; } else { o.textContent=r.ok?JSON.stringify(r.data,null,1).slice(0,3000):('✗ '+r.error); } }catch(e){ o.textContent='✗ '+e.message; } };
+$('#sq-st').onclick=async()=>{ const o=$('#sq-out'); o.style.display='block'; try{ const r=await api('db',{sql:'status'}); o.textContent=r.data?JSON.stringify(r.data,null,1).slice(0,2000):('✗ '+(r.error||'failed')); }catch(e){ o.textContent='✗ '+e.message; } };
 
 refresh(); setInterval(refresh, 15000);
 </script></body></html>`;
