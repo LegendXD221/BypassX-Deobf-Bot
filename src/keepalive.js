@@ -16,6 +16,8 @@ import { CONFIG } from './config.js';
 import { logger } from './logger.js';
 import { probe as probeEngine } from './engine.js';
 import { describe as dbDescribe } from './db.js';
+import { handleDashboard, initDashboardContext } from './dashboard.js';
+import { prettyEngine } from './pretty.js';
 
 const startedAt = Date.now();
 const state = {
@@ -24,6 +26,8 @@ const state = {
   lastSelfPing: null,
   jobs: { total: 0, ok: 0, fail: 0, lastAt: null, lastFile: null },
 };
+
+const noRobots = () => ({ 'x-robots-tag': 'noindex, nofollow, noarchive' });
 
 export function markDiscordReady(v = true) { state.discordReady = v; }
 export function bumpJob(ok, file = null) {
@@ -78,7 +82,7 @@ a{color:#a78bfa}
 <div class="sub">The best Discord deobfuscation bot — static analysis, RCE-protected, pastefy delivery</div>
 <div class="row"><span class="k">Status</span><span class="badge up">healthy</span></div>
 <div class="row"><span class="k">Discord</span>${h.discordReady ? '<span class="badge up">connected</span>' : '<span class="badge down">connecting…</span>'}</div>
-<div class="row"><span class="k">Engine</span>${h.engine.available ? `<span class="badge up">${h.engine.version || 'ready'}</span>` : '<span class="badge down">preparing…</span>'}</div>
+<div class="row"><span class="k">Engine</span>${h.engine.available ? `<span class="badge up">${prettyEngine(h.engine.version) || 'ready'}</span>` : '<span class="badge down">preparing…</span>'}</div>
 <div class="row"><span class="k">Version</span><span>v${h.version}</span></div>
 <div class="row"><span class="k">Uptime</span><span>${Math.floor(h.uptimeS / 60)}m ${h.uptimeS % 60}s</span></div>
 <div class="row"><span class="k">Jobs</span><span>${h.jobs.ok} ok / ${h.jobs.fail} failed (total ${h.jobs.total})</span></div>
@@ -90,7 +94,8 @@ a{color:#a78bfa}
 export function startKeepalive() {
   const port = Number.parseInt(process.env.PORT ?? '', 10) || 3000;
   const server = http.createServer((req, res) => {
-    const url = (req.url || '/').split('?')[0];
+    const rawUrl = (req.url || '/');
+    const url = rawUrl.split('?')[0];
     try {
       if (url === '/health') {
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -98,8 +103,18 @@ export function startKeepalive() {
       } else if (url === '/ping') {
         res.writeHead(200, { 'content-type': 'text/plain' });
         res.end('pong');
+      } else if (url === '/robots.txt') {
+        // never let any crawler anywhere near the dashboard
+        res.writeHead(200, { 'content-type': 'text/plain', ...noRobots() });
+        res.end('User-agent: *\nDisallow: /\n');
+      } else if (url.startsWith('/dash/')) {
+        // secret owner dashboard — auth handled inside
+        handleDashboard(req, res, url).catch(() => {
+          try { res.writeHead(500); res.end('error'); } catch { /* socket gone */ }
+        });
+        return;
       } else {
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...noRobots() });
         res.end(statusPage());
       }
     } catch {
@@ -107,6 +122,12 @@ export function startKeepalive() {
     }
   });
   server.listen(port, '0.0.0.0', () => logger.info({ port }, 'keepalive http listening'));
+
+  // Dashboard providers (live job counters + engine state, no import cycle)
+  initDashboardContext({
+    jobStats: () => jobStats(),
+    engine: () => state.engine,
+  });
 
   // HTTP hardening: bound slow-client abuse (no dynamic input is served —
   // only static /health, /ping and the status page — but be tidy anyway).

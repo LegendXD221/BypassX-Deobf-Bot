@@ -119,6 +119,39 @@ Layer 0: owner commands are never listed in public help.
   dynamic input, hardened timeouts, 400 on malformed requests.
 - Blacklisted users/servers are refused every public command before dispatch.
 
+### Owner dashboard — one secret URL (v1.5.0)
+
+The bot serves a full control panel at **`/dash/<DASHBOARD_TOKEN>`** — the URL
+itself is the credential:
+
+- `DASHBOARD_TOKEN` is a long random string. Set it in the Render dashboard
+  (recommended, stable across deploys) or leave it unset and the bot generates
+  a 192-bit token at boot, prints it **once** in the private Render log
+  (`dashboard: ready — private URL path`) and stores it in `var/dash-token`.
+- **It is never leaked:** no link, ping, or mention anywhere in Discord
+  messages, the status page, `/health`, robots.txt (which blocks everything),
+  the README, or the repo. Wrong guesses return an identical 404, are
+  timing-safe-compared, brute-force-blocked per IP (8 tries → 15 min), sent
+  `noindex`/`no-store`/`DENY`-framing headers, and never cached.
+
+What's on it (dark one-page UI, no external assets):
+
+- **Overview** — bot/engine/database/gateway status, jobs this boot, all-time
+  DB counters, memory, per-guild totals, protection status.
+- **Guilds** — every server with **name, member count, id, join date, icon**
+  and full per-guild control: disable the bot there entirely, turn `deobf`
+  or `detect` on/off, set a **custom prefix** per server, send a message to
+  any channel, leave the server (all enforced at dispatch, owner bypasses).
+- **Power** — broadcast to every guild, the jailed **eval** (same secret-free
+  child as `.eval`), **host shell** (same runner as `.exec`), restart / stop.
+- **Blacklist** — add/remove/list global blocks.
+- **Logs** — live tail of the in-process log ring.
+- **Audit** — every owner action from Discord **and** the dashboard.
+- **SQL** — raw Neon SQL runner with `status` shortcut.
+
+Every dashboard mutation lands in the `owner_audit` table as
+`user_id = dashboard`.
+
 ### Database — Neon Postgres (free tier)
 
 The bot works fully without a database; set **`DATABASE_URL`** (Neon
@@ -128,8 +161,15 @@ to unlock persistence. The schema bootstraps itself on first boot:
 - `deobf_history` — every deobf/detect job → `.history`, `.stats` all-time counters
 - `owner_audit` — the 5-layer audit trail → `.owner audit`
 - `blacklist` — global user/server blocks, enforced at dispatch (30 s cache)
+- `guild_settings` — **per-guild controls from the dashboard** (60 s cache)
 - `bot_stats` — all-time success counters
 
+**Free-tier overload protection** (the DB must never be the bottleneck):
+max 2 concurrent queries with a bounded 16-deep queue (overflow fails soft),
+a **circuit breaker** (5 consecutive failures → 5-minute cool-down where all
+calls return instantly without touching Neon), **coalesced stat writes**
+(buffered in memory, one batched UPSERT every 30 s), and short-TTL caches on
+every read path (blacklist 30 s, guild settings 60 s, dashboard state 15 s).
 If Neon is unreachable the bot logs a warning and keeps working — every DB
 failure is isolated. `npm i` pulls `pg` automatically.
 

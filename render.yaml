@@ -39,6 +39,8 @@ services:
         sync: false          # bot owner user id (default baked into src/config.js)
       - key: OWNER_PIN
         sync: false          # optional 2nd protection layer for dangerous owner commands
+      - key: DASHBOARD_TOKEN
+        sync: false          # secret dashboard path token → /dash/<DASHBOARD_TOKEN> (long random string; unset = auto-generated, printed once in the private log)
       - key: PREFIX
         value: "."
       - key: NODE_VERSION

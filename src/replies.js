@@ -19,6 +19,7 @@ import {
 } from 'discord.js';
 import { TIER, SERVICES } from './detect.js';
 import { CONFIG } from './config.js';
+import { prettyEngine } from './pretty.js';
 
 export const BRAND = {
   color: 0x7c3aed,
@@ -252,7 +253,7 @@ export function successReply(result, paste, filename, sourceUrl, sourceNote) {
       { label: 'Recovery tier', value: TIER_LABEL[d.tier] || '◐ partial recovery' },
       verifiedFact(result.verification),
       { label: 'Size', value: `${fmtBytes(result.originalSize)} → ${fmtBytes(result.recoveredSize)} in ${((result.durationMs || 0) / 1000).toFixed(1)}s` },
-      { label: 'Engine', value: result.engine?.version || 'core' },
+      { label: 'Engine', value: result.engine?.version ? prettyEngine(result.engine.version) : 'core' },
       { label: 'Input', value: `${clamp(filename || result.codeName || 'file', 60)}${sourceUrl ? ' (link)' : ''}` },
       sourceUrl ? { label: 'Source', value: clamp(sourceUrl, 120) } : null,
     ]);
@@ -352,7 +353,7 @@ export function pongReply({ wsPing, uptimeS, engine, version, guilds }) {
     facts(c, [
       { label: 'Gateway', value: `${Math.round(wsPing || 0)}ms` },
       { label: 'Uptime', value: fmtUptime(uptimeS || 0) },
-      { label: 'Engine', value: engine?.available ? engine.version : 'preparing…' },
+      { label: 'Engine', value: engine?.available ? prettyEngine(engine.version) : 'preparing…' },
       { label: 'Bot', value: `v${version || '1.0.0'}` },
       guilds != null ? { label: 'Servers', value: String(guilds) } : null,
     ]);
@@ -385,7 +386,7 @@ export function statsReply({ version, uptimeS, engine, jobs, guilds, memoryMb, d
       { label: 'Success rate', value: rate == null ? '— (no jobs yet)' : `${rate}%` },
       { label: 'Database', value: dbLine },
       { label: 'Uptime', value: fmtUptime(uptimeS) },
-      { label: 'Engine', value: engine?.available ? engine.version : 'preparing…' },
+      { label: 'Engine', value: engine?.available ? prettyEngine(engine.version) : 'preparing…' },
       { label: 'Gateway ping', value: `${Math.round(pingMs || 0)}ms` },
       guilds != null ? { label: 'Servers', value: String(guilds) } : null,
       { label: 'Memory', value: `${(memoryMb || 0).toFixed(0)} MB` },
@@ -413,6 +414,16 @@ export function blockedReply(kind) {
     brandHeader(c, '⛔ Access blocked', 'blacklisted', null);
     c.addSeparatorComponents(SEP());
     c.addTextDisplayComponents(T(`This ${kind} has been blocked from using the bot.`));
+  });
+  return v2([card], { ephemeral: true });
+}
+
+/** Per-guild controls set from the owner dashboard. */
+export function guildOffReply(title, detail) {
+  const card = container(BRAND.warn, (c) => {
+    brandHeader(c, `🔇 ${clamp(title, 80)}`, 'disabled by the server owner', null);
+    c.addSeparatorComponents(SEP());
+    c.addTextDisplayComponents(T(clamp(String(detail), 500)));
   });
   return v2([card], { ephemeral: true });
 }

@@ -21,12 +21,14 @@ import { looksLikeUrl } from './fetchurl.js';
 import { probe as probeEngine } from './engine.js';
 import {
   errorReply, ownerOnlyReply, blockedReply, pinReply, dangerLimitedReply, cancelledReply,
+  guildOffReply,
 } from './replies.js';
 import {
   isOwner, pinRequired, checkPin, stripPinArg, peekPinArg,
   acquireDanger, releaseDanger, audit, confirmGate,
 } from './owner-guard.js';
 import * as db from './db.js';
+import { setDashboardClient, announceDashboard } from './dashboard.js';
 import { startKeepalive, markDiscordReady } from './keepalive.js';
 
 // HTTP keep-alive server first — Render health checks can hit /health
@@ -64,6 +66,8 @@ async function registerSlashCommands() {
 client.once(Events.ClientReady, async (c) => {
   logger.info({ user: c.user.tag, guilds: c.guilds.cache.size }, 'bot ready');
   markDiscordReady(true);
+  setDashboardClient(c);
+  announceDashboard();
   c.user.setPresence({
     activities: [{ name: '.deobf | /deobf — best deobf bot', type: 3 }], // 3 = WATCHING
     status: 'online',
@@ -187,6 +191,16 @@ async function dispatch(cmd, ctx, rawArgs) {
     });
     return ctx.reply(blockedReply(bl));
   }
+  // Per-guild controls set from the owner dashboard (owner always bypasses).
+  if (!cmd.owner) {
+    const gid = ctx.interaction?.guildId || ctx.message?.guildId;
+    if (gid) {
+      const gs = await db.getGuildSettings(gid);
+      if (gs.disabled) return ctx.reply(guildOffReply('The bot is disabled in this server', 'The owner turned it off from the dashboard.'));
+      if (cmd.name === 'deobf' && !gs.deobf_enabled) return ctx.reply(guildOffReply('Deobfuscation is off here', 'The owner disabled the deobf command in this server.'));
+      if (cmd.name === 'detect' && !gs.detect_enabled) return ctx.reply(guildOffReply('Detection is off here', 'The owner disabled the detect command in this server.'));
+    }
+  }
   if (cmd.owner && !isOwner(ctx.userId)) return ownerDenied(cmd, ctx);
   if (cmd.owner) return runOwnerCommand(cmd, ctx, rawArgs);
   return cmd.run(ctx);
@@ -213,9 +227,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 client.on(Events.MessageCreate, async (message) => {
   try {
     if (message.author?.bot) return;
-    if (!CONFIG.prefix || !message.content?.startsWith(CONFIG.prefix)) return;
+    // Per-guild prefix (dashboard) falls back to the global PREFIX.
+    const prefix = message.guildId ? ((await db.guildPrefix(message.guildId)) || CONFIG.prefix) : CONFIG.prefix;
+    if (!prefix || !message.content?.startsWith(prefix)) return;
 
-    const parts = message.content.slice(CONFIG.prefix.length).trim().split(/\s+/);
+    const parts = message.content.slice(prefix.length).trim().split(/\s+/);
     const name = (parts.shift() || '').toLowerCase();
     if (!name) return;
     const cmd = commandByName(name);
@@ -234,7 +250,7 @@ client.on(Events.MessageCreate, async (message) => {
         else if (ref?.content) ctx.url = ref.content.split(/\s+/).find(looksLikeUrl) || null;
       } catch { /* reference gone */ }
     }
-    ctx.prefix = CONFIG.prefix;
+    ctx.prefix = prefix;
 
     await dispatch(cmd, ctx, ctx.args);
   } catch (e) {

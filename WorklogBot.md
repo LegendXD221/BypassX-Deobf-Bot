@@ -1,6 +1,81 @@
-# Worklog — BypassX Deobf Bot
+# WorklogBot — BypassX Deobf Bot
 
-Self-updating worklog. Read before work; update + push after every change.
+Self-updating worklog. **Read before starting any work on the bot; update + push after every change.**
+
+---
+
+## 2026-11-07 — v1.5.0 "secret owner dashboard + DB overload protection"
+
+### User asks driving this release
+1. **Owner dashboard** at a secret URL only the owner has — guild list with
+   names + member counts, full per-guild control, "extremely powerful" tools.
+2. **Never leak the dashboard URL anywhere.**
+3. **WorklogBot.md** — rename + maintain after every change (this file).
+4. **DATABASE_URL added by the user** (confirmed connected in v1.4.0) → now
+   protect the Neon free tier from overload.
+5. Remove the engine's "(commit …)" hash from user-facing output ("the commit
+   from help cmd" — it rode the engine line on .stats/.ping/.deobf cards and
+   the public status page).
+
+### Added — secret owner dashboard (src/dashboard.js)
+- Route: `/dash/<DASHBOARD_TOKEN>` on the existing keep-alive HTTP server
+  (same free Render service, no extra cost).
+- **URL = credential.** Token from `DASHBOARD_TOKEN` env (stable) or
+  auto-generated 192-bit value persisted to `var/dash-token` and printed ONCE
+  in the private boot log (`announceDashboard()` on ClientReady).
+- **No-leak guarantees:** timing-safe compare; identical 404 for wrong token;
+  brute-force lockout per IP (8 fails → 15 min); `X-Robots-Tag noindex` +
+  `/robots.txt` Disallow-all; `Cache-Control: no-store`; `X-Frame-Options
+  DENY`; CSP locked to self + discord CDN (guild icons); `Referrer-Policy:
+  no-referrer`; token never echoed in the page HTML, logs (except the one
+  private boot line), README, or repo. Nothing public links to it.
+- **Tabs:** Overview (status pills, jobs, DB incl. breaker state, all-time
+  counters, protection status) • Guilds (name, id, member count, join date,
+  icon, channels — with per-guild controls) • Power (broadcast, jailed eval,
+  host shell, restart/shutdown) • Blacklist (add/remove/list) • Logs (ring
+  tail) • Audit (Discord + dashboard actions) • SQL (raw Neon runner).
+- **Per-guild control enforced at dispatch** (src/index.js + db.guild_settings,
+  60 s cache): disable bot entirely, deobf on/off, detect on/off, custom
+  prefix per guild (prefix commands read `db.guildPrefix(guildId)` first),
+  message-to-channel, leave server. Owner bypasses all of it. New
+  `guildOffReply` card tells users when a feature is turned off for their
+  server.
+- Dashboard mutations audited to `owner_audit` as `user_id = 'dashboard'`.
+- API rate limit 60 req/min per IP (protects the DB).
+- Runners shared with Discord commands: extracted `src/runners.js`
+  (`runJailedEval`, `runShell`, `broadcastAll`) — one jail, one shell, one
+  broadcast implementation; `.eval`/`.exec`/`.broadcast` refactored onto it.
+
+### Added — Neon free-tier overload protection (src/db.js)
+- **Concurrency cap**: max 2 in-flight queries, bounded 16-deep queue,
+  overflow fails soft (null) instead of piling up connections.
+- **Circuit breaker**: 5 consecutive failures → 5-min cool-down; all calls
+  return null instantly without touching Neon; trips counter visible in
+  `describe()` (→ /health + dashboard).
+- **Stat coalescing**: `stat()` buffers deltas in memory; one batched UPSERT
+  flush every 30 s (`flushStats()`) — deobf traffic ≈ 0 queries.
+- Read caches: blacklist 30 s, guild settings 60 s, dashboard state fetched
+  per request but driven by those caches + Discord cache.
+- `guild_settings` table added to the bootstrap schema.
+
+### Fixed / changed
+- Engine display: `prettyEngine()` (src/pretty.js) strips `(commit ……)` from
+  every user-facing spot — `.stats`, `.ping`, `.deobf` success card, public
+  status page. `/health` still carries the full string for debugging.
+- Worklog renamed `Worklog.md` → **`WorklogBot.md`** per owner request.
+- keepalive serves `/robots.txt` (Disallow: /) and noindex headers.
+- `render.yaml` + `.env.example`: `DASHBOARD_TOKEN` documented (sync:false).
+
+### Tests
+- `test/dashboard.js` (new): wrong-token 404 + noindex header, right-token
+  page (token never echoed, no-store, DENY framing), guild list with name +
+  member count + channels, real exec/eval through the shared runners (incl.
+  secret-unreachability probe), guild-settings/blacklist refuse without DB,
+  logs endpoint, breaker telemetry, DB fail-soft fallbacks, commit-hash
+  stripping, HTML escaping, brute-force lockout blocking even the right token
+  from that IP. ALL PASS.
+- Regression: owner-guard suite, v2-smoke 24/24, chunk-paste 11/11, links
+  17/17, 26-command registry import.
 
 ---
 

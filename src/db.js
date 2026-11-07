@@ -56,6 +56,7 @@ export function describe() {
     latencyMs: state.latencyMs,
     error: state.lastError,
     lastOkAt: state.lastOkAt ? new Date(state.lastOkAt).toISOString() : null,
+    breaker: { open: breakerOpen(), trips: breaker.trips, queued: gate.waiters.length, active: gate.active },
   };
 }
 
@@ -117,6 +118,15 @@ export async function init() {
         added_by   TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
+      CREATE TABLE IF NOT EXISTS guild_settings (
+        guild_id       TEXT PRIMARY KEY,
+        disabled       BOOLEAN NOT NULL DEFAULT FALSE,
+        deobf_enabled  BOOLEAN NOT NULL DEFAULT TRUE,
+        detect_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        prefix         TEXT,
+        note           TEXT,
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
       CREATE INDEX IF NOT EXISTS deobf_history_user_idx ON deobf_history (user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS owner_audit_time_idx ON owner_audit (created_at DESC);
     `);
@@ -133,34 +143,113 @@ export async function init() {
   }
 }
 
+// ---- Neon free-tier overload protection -------------------------------------
+//
+// Neon's free plan has tiny compute + connection budgets, so the DB layer is
+// deliberately gentle:
+//   • CONCURRENCY CAP  — at most MAX_CONCURRENT queries in flight; extra
+//     callers wait in a bounded queue (beyond MAX_QUEUE they fail fast with
+//     null instead of piling up connections).
+//   • CIRCUIT BREAKER  — BREAKER_FAILS consecutive failures trip the breaker
+//     for BREAKER_COOLDOWN_MS; every call during the trip returns null
+//     instantly without touching Neon (lets a struggling instance recover).
+//   • STAT COALESCING  — stat() deltas buffer in memory and flush as one
+//     batched UPSERT every STAT_FLUSH_MS (deobf traffic = ~0 queries).
+const MAX_CONCURRENT = 2;
+const MAX_QUEUE = 16;
+const BREAKER_FAILS = 5;
+const BREAKER_COOLDOWN_MS = 5 * 60_000;
+const STAT_FLUSH_MS = 30_000;
+
+const gate = { active: 0, waiters: [] };
+const breaker = { fails: 0, openUntil: 0, trips: 0 };
+
+function acquireSlot() {
+  if (gate.active < MAX_CONCURRENT) {
+    gate.active += 1;
+    return Promise.resolve();
+  }
+  if (gate.waiters.length >= MAX_QUEUE) {
+    return Promise.reject(new Error('db queue full'));
+  }
+  return new Promise((resolve, reject) => {
+    gate.waiters.push({ resolve, reject });
+  });
+}
+
+function releaseSlot() {
+  const next = gate.waiters.shift();
+  if (next) next.resolve();
+  else gate.active = Math.max(0, gate.active - 1);
+}
+
+function breakerOpen() {
+  return breaker.openUntil > Date.now();
+}
+
 /**
- * Run a query. Resolves rows/rowCount, or null when the DB is unavailable —
- * callers must treat null as "no data", never as an error.
+ * Run a query. Resolves rows/rowCount, or null when the DB is unavailable,
+ * tripped, or overloaded — callers must treat null as "no data", never as an
+ * error.
  */
 export async function query(text, params = []) {
   if (!dbUrl() || !state.pool) return null;
-  const t0 = Date.now();
+  if (breakerOpen()) return null;
+  let released = false;
   try {
+    await acquireSlot();
+    released = true;
+    const t0 = Date.now();
     const res = await state.pool.query(text, params);
     state.lastError = null;
     state.latencyMs = Date.now() - t0;
     state.lastOkAt = Date.now();
+    breaker.fails = 0;
     return res;
   } catch (e) {
+    breaker.fails += 1;
+    if (breaker.fails >= BREAKER_FAILS) {
+      breaker.openUntil = Date.now() + BREAKER_COOLDOWN_MS;
+      breaker.trips += 1;
+      breaker.fails = 0;
+      logger.warn({ trips: breaker.trips, cooldownMs: BREAKER_COOLDOWN_MS }, 'db: circuit breaker OPEN — cooling down');
+    }
     state.lastError = String(e?.message || e).slice(0, 200);
     logger.warn({ err: state.lastError }, 'db: query failed');
     return null;
+  } finally {
+    if (released) releaseSlot();
   }
 }
 
 // ---- stats ------------------------------------------------------------------
 
-export async function stat(key, delta = 1) {
-  await query(
-    `INSERT INTO bot_stats (key, value) VALUES ($1, $2)
-     ON CONFLICT (key) DO UPDATE SET value = bot_stats.value + $2, updated_at = now()`,
-    [String(key).slice(0, 60), Number(delta) || 0],
-  );
+const statBuf = new Map(); // key -> buffered delta
+let statTimer = null;
+
+/** Buffered counter bump — coalesced into one batched UPSERT per 30 s. */
+export function stat(key, delta = 1) {
+  const k = String(key).slice(0, 60);
+  statBuf.set(k, (statBuf.get(k) || 0) + (Number(delta) || 0));
+  if (!statTimer) statTimer = setTimeout(() => { flushStats().catch(() => {}); }, STAT_FLUSH_MS);
+  statTimer.unref?.();
+}
+
+/** Force-flush buffered stat deltas (also called on an interval and in tests). */
+export async function flushStats() {
+  if (!statBuf.size) return 0;
+  const entries = [...statBuf.entries()];
+  statBuf.clear();
+  let n = 0;
+  for (const [key, delta] of entries) {
+    const res = await query(
+      `INSERT INTO bot_stats (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = bot_stats.value + $2, updated_at = now()`,
+      [key, delta],
+    );
+    if (res) n += 1;
+  }
+  return n;
 }
 
 export async function statsAll() {
@@ -276,6 +365,69 @@ export async function blacklistHas(target) {
     }
   }
   return blacklistCache.set.has(String(target));
+}
+
+// ---- guild settings (dashboard-controlled per-guild behaviour) ---------------
+
+const GUILD_TTL = 60_000;
+const guildCache = new Map(); // guildId -> { at, settings }
+
+export const GUILD_DEFAULTS = Object.freeze({
+  disabled: false,
+  deobf_enabled: true,
+  detect_enabled: true,
+  prefix: null,
+  note: null,
+});
+
+/** Cached per-guild settings (60 s TTL). Always resolves — defaults when the
+ *  DB is off. Owner/dispatch code must never await an error from here. */
+export async function getGuildSettings(guildId) {
+  if (!guildId || !dbUrl()) return { ...GUILD_DEFAULTS };
+  const now = Date.now();
+  const hit = guildCache.get(String(guildId));
+  if (hit && now - hit.at < GUILD_TTL) return hit.settings;
+  const res = await query('SELECT disabled, deobf_enabled, detect_enabled, prefix, note FROM guild_settings WHERE guild_id = $1', [String(guildId)]);
+  const settings = res?.rows?.[0]
+    ? {
+      disabled: Boolean(res.rows[0].disabled),
+      deobf_enabled: Boolean(res.rows[0].deobf_enabled),
+      detect_enabled: Boolean(res.rows[0].detect_enabled),
+      prefix: res.rows[0].prefix || null,
+      note: res.rows[0].note || null,
+    }
+    : { ...GUILD_DEFAULTS };
+  guildCache.set(String(guildId), { at: now, settings });
+  return settings;
+}
+
+/** Per-guild prefix for prefix commands (null → global PREFIX). */
+export async function guildPrefix(guildId) {
+  const s = await getGuildSettings(guildId);
+  return s.prefix || null;
+}
+
+/** Merge-patch one guild's settings (dashboard). Invalidates the cache. */
+export async function setGuildSettings(guildId, patch = {}) {
+  const id = String(guildId || '');
+  if (!id || !dbUrl()) return false;
+  const cur = await getGuildSettings(id);
+  const next = {
+    disabled: typeof patch.disabled === 'boolean' ? patch.disabled : cur.disabled,
+    deobf_enabled: typeof patch.deobf_enabled === 'boolean' ? patch.deobf_enabled : cur.deobf_enabled,
+    detect_enabled: typeof patch.detect_enabled === 'boolean' ? patch.detect_enabled : cur.detect_enabled,
+    prefix: patch.prefix !== undefined ? (String(patch.prefix || '').slice(0, 8) || null) : cur.prefix,
+    note: patch.note !== undefined ? String(patch.note || '').slice(0, 200) || null : cur.note,
+  };
+  const res = await query(
+    `INSERT INTO guild_settings (guild_id, disabled, deobf_enabled, detect_enabled, prefix, note)
+     VALUES ($1,$2,$3,$4,$5,$6)
+     ON CONFLICT (guild_id) DO UPDATE SET
+       disabled = $2, deobf_enabled = $3, detect_enabled = $4, prefix = $5, note = $6, updated_at = now()`,
+    [id, next.disabled, next.deobf_enabled, next.detect_enabled, next.prefix, next.note],
+  );
+  guildCache.delete(id);
+  return Boolean(res);
 }
 
 // ---- raw SQL (owner .db command) ----------------------------------------------
