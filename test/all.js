@@ -12,6 +12,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 const SUITES = [
   'static-peel.js',    // unconditional no-walls fallback (v1.7.0)
+  'harvest-chunks.js', // load()-chunk capture + Roblox env shaping (v1.8.0)
   'confirm-gate.js',   // L3 confirm gate (the "confirm cancels" regression)
   'owner-guard.js',    // L1/L2/L4/L5 + DB fallback + eval harness jail
   'dashboard.js',      // dashboard routes, brute-force guard, DB protection

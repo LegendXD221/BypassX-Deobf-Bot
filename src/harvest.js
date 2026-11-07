@@ -14,8 +14,8 @@ const workerPath = new URL('./harvester-worker.js', import.meta.url)
   .pathname.replace(/^\/([A-Za-z]:)/, '$1');
 
 /**
- * @returns {Promise<{ok:boolean, ran?:boolean, strings?:string[], log?:string[],
- *   runError?:string, error?:string}>}
+ * @returns {Promise<{ok:boolean, ran?:boolean, strings?:string[], chunks?:string[],
+ *   log?:string[], runError?:string, error?:string}>}
  */
 export async function harvestConstants(inputPath, { timeoutMs = 120_000 } = {}) {
   const r = await spawnHardened(process.execPath, [workerPath, inputPath], {
@@ -31,7 +31,14 @@ export async function harvestConstants(inputPath, { timeoutMs = 120_000 } = {}) 
   try {
     const data = JSON.parse(line);
     if (!data.ok) return { ok: false, error: data.error || 'harvest failed' };
-    return { ok: true, ran: data.ran, strings: data.strings || [], log: data.log || [], runError: data.runError };
+    return {
+      ok: true,
+      ran: data.ran,
+      strings: data.strings || [],
+      chunks: data.chunks || [],
+      log: data.log || [],
+      runError: data.runError,
+    };
   } catch (e) {
     logger.warn({ err: String(e.message || e).slice(0, 150) }, 'harvest: bad worker output');
     return { ok: false, error: 'harvest output parse failed' };

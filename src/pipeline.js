@@ -16,6 +16,7 @@ import { postprocessFile } from './postprocess.js';
 import { spawnHardened } from './security.js';
 import { harvestConstants, harvestToLua } from './harvest.js';
 import { verifyCode } from './validate.js';
+import { transformLuauToLua } from './luau-shim.js';
 import { parsePayload, captureKeyCarriers, looksLikeLuraphInventory, formatReport } from './luraph15.js';
 import { staticPeel } from './static-peel.js';
 
@@ -223,31 +224,60 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
       // the per-build key capture (carrier fingerprints + payload record
       // structure) and the jailed-VM harvest of the decrypted constant pool —
       // the pool rides along whenever the build's own key schedule replays
-      // cleanly inside the sandbox.
+      // cleanly inside the sandbox. v1.8.0: a captured load()-chunk (the
+      // decrypted payload handed to load() by the loader) REPLACES the
+      // inventory — that is full source recovery, the real devirtualization.
       let luraphNote = null;
-      if (detected.id === 'luraph' && !binaryOutput
-        && looksLikeLuraphInventory(data.toString('utf8'))
-        && (detected.version || '').startsWith('v15')) {
+      let chunkVerifyOverride = null;
+      if (detected.id === 'luraph' && !binaryOutput) {
         try {
-          const invText = data.toString('utf8');
-          const m = /payload_ascii85_decoded_b64\s*=\s*"([^"]*)"/.exec(invText);
-          const carriers = captureKeyCarriers(buffer.toString('utf8'));
-          let report = formatReport({ records: [], total: 0, trailing: 0 }, carriers, { version: detected.version || 'v15.x' });
-          if (m) {
-            const payloadBuf = Buffer.from(m[1], 'base64');
-            report = formatReport(parsePayload(payloadBuf), carriers, { version: detected.version || 'v15.x' });
-          }
-          stage('luraph15:key-capture', `${carriers.filter((c) => c.looksKeyish).length} key-like carriers of ${carriers.length}`);
           const h = await runHarvest(inputPath, detected, stage);
-          let poolSection = '';
-          if (h && h.strings.length >= 3) {
-            const poolText = harvestToLua(h, { detectedName: detected.name, version: detected.version });
-            poolSection = `\n\n-- ---- decrypted constant pool (jailed VM run, ${h.strings.length} strings) ----\n${poolText}`;
-            luraphNote = `Luraph ${detected.version || 'v15.x'} devirtualization: I recovered the **per-build key material** (${carriers.filter((c) => c.looksKeyish).length} key-like carriers) + full payload structure, and the jailed sandboxed VM replayed the build's key schedule to decrypt **${h.strings.length} constant-pool strings**. The VM bytecode itself stays behind Luraph's per-build VM — full bytecode lifting is engine-0.13 work.`;
-          } else {
-            luraphNote = `Luraph ${detected.version || 'v15.x'}: I recovered the **per-build key material** (${carriers.filter((c) => c.looksKeyish).length} key-like carriers) and the full payload structure (record headers, entropy, sizes). This build's loader diverges inside the sandbox before the constant pool decrypts — the payload inventory below is the complete static picture.`;
+          const art = h ? pickChunkArtifact(h) : null;
+          if (art) {
+            stage('luraph15:chunk-capture', `${art.kind} captured at load() — complete recovery`);
+            if (art.kind === 'source') {
+              data = Buffer.from(art.code, 'utf8');
+              chunkVerifyOverride = verifyCode(art.code, { lang: art.lang === 'js' ? 'js' : 'lua', filename: 'recovered.lua' });
+              luraphNote = `Luraph ${detected.version || 'v15.x'} devirtualization: **full source recovered** — the loader decrypted its payload inside the jailed VM and handed it to load()/loadstring(). The code below is the complete original script${art.lang === 'luau' ? ' (Luau syntax normalized)' : ''}; ${h.strings.length} pool strings were also decrypted.`;
+            } else {
+              const buf = Buffer.from(art.text, 'latin1');
+              return {
+                ok: true,
+                code: '',
+                binaryOutput: true,
+                outputBuffer: buf,
+                codeName: `recovered-${art.format === 'luau' ? 'luau' : 'lua'}bc.luac`,
+                detected, stages, durationMs: Date.now() - t0, lang,
+                verification: { status: 'unverifiable', lang: 'bytecode', detail: `Lua ${art.format} bytecode captured from load()` },
+                originalSize: buffer.length,
+                recoveredSize: buf.length,
+                how: `Luraph v15 — decrypted ${art.format} bytecode captured at load()`,
+                partialNote: `Luraph ${detected.version || 'v15.x'}: full bytecode recovered from the load()-hook — the ${buf.length}-byte ${art.format} chunk is attached.`,
+                engine: await engine.probe(),
+              };
+            }
+          } else if (!binaryOutput
+            && looksLikeLuraphInventory(data.toString('utf8'))
+            && (detected.version || '').startsWith('v15')) {
+            const invText = data.toString('utf8');
+            const m = /payload_ascii85_decoded_b64\s*=\s*"([^"]*)"/.exec(invText);
+            const carriers = captureKeyCarriers(buffer.toString('utf8'));
+            let report = formatReport({ records: [], total: 0, trailing: 0 }, carriers, { version: detected.version || 'v15.x' });
+            if (m) {
+              const payloadBuf = Buffer.from(m[1], 'base64');
+              report = formatReport(parsePayload(payloadBuf), carriers, { version: detected.version || 'v15.x' });
+            }
+            stage('luraph15:key-capture', `${carriers.filter((c) => c.looksKeyish).length} key-like carriers of ${carriers.length}`);
+            let poolSection = '';
+            if (h && h.strings.length >= 3) {
+              const poolText = harvestToLua(h, { detectedName: detected.name, version: detected.version });
+              poolSection = `\n\n-- ---- decrypted constant pool (jailed VM run, ${h.strings.length} strings) ----\n${poolText}`;
+              luraphNote = `Luraph ${detected.version || 'v15.x'} devirtualization: I recovered the **per-build key material** (${carriers.filter((c) => c.looksKeyish).length} key-like carriers) + full payload structure, and the jailed sandboxed VM replayed the build's key schedule to decrypt **${h.strings.length} constant-pool strings**. The VM bytecode itself stays behind Luraph's per-build VM — full bytecode lifting is engine-0.13 work.`;
+            } else {
+              luraphNote = `Luraph ${detected.version || 'v15.x'}: I recovered the **per-build key material** (${carriers.filter((c) => c.looksKeyish).length} key-like carriers) and the full payload structure (record headers, entropy, sizes). This build's loader diverges inside the sandbox before the constant pool decrypts — the payload inventory below is the complete static picture.`;
+            }
+            data = Buffer.from(invText + report + poolSection, 'utf8');
           }
-          data = Buffer.from(invText + report + poolSection, 'utf8');
         } catch (e) {
           stage('luraph15:augment:miss', String(e.message || e).slice(0, 120));
         }
@@ -264,7 +294,7 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
         outputBuffer: binaryOutput ? data : null,
         codeName: best.name,
         detected, stages, durationMs, lang,
-        verification: picked.verification,
+        verification: chunkVerifyOverride || picked.verification,
         originalSize: buffer.length,
         recoveredSize: data.length,
         how: outcome.how || 'engine',
@@ -298,16 +328,19 @@ const HARVEST_ELIGIBLE = new Set([
   'unknown',
 ]);
 
-/** Run the jailed harvester; returns the raw result or null (no stage output). */
+/** Run the jailed harvester; returns the raw result or null (no stage output).
+ *  A HIT is ≥3 recovered pool strings OR any captured load()-chunk. */
 async function runHarvest(inputPath, detected, stage) {
-  stage('harvest', 'jailed VM run — dynamic constant recovery');
+  stage('harvest', 'jailed VM run — dynamic constant + load()-chunk recovery');
   try {
     const h = await harvestConstants(inputPath, { timeoutMs: Math.min(CONFIG.engineTimeoutMs, 120_000) });
-    if (!h.ok || (h.strings || []).length < 3) {
-      stage('harvest:miss', h.error || `only ${(h.strings || []).length} strings`);
+    const nStrings = (h.strings || []).length;
+    const nChunks = (h.chunks || []).length;
+    if (!h.ok || (nStrings < 3 && nChunks === 0)) {
+      stage('harvest:miss', h.error || `only ${nStrings} strings, ${nChunks} chunks`);
       return null;
     }
-    stage('harvest:hit', `${h.strings.length} strings decrypted${h.ran ? '' : ' (VM init incomplete)'}`);
+    stage('harvest:hit', `${nStrings} strings decrypted, ${nChunks} load()-chunks captured${h.ran ? '' : ' (VM init incomplete)'}`);
     return h;
   } catch (e) {
     stage('harvest:miss', String(e.message || e).slice(0, 120));
@@ -315,11 +348,101 @@ async function runHarvest(inputPath, detected, stage) {
   }
 }
 
+// ---- load()-chunk artifacts (v1.8.0) ----------------------------------------
+// Decrypt-then-load obfuscators (Luraph LPH_ENCSTR wrappers, PSU, MoonSec V2
+// load-stage variants, IronBrew lines, WeAreDevs, slua) hand their FULL
+// DECRYPTED source (or bytecode) to load()/loadstring() during the jailed VM
+// run. Capturing that chunk is complete recovery — a real devirtualization
+// outcome, not a string pool.
+
+/** Classify one captured chunk: source (Lua/Luau/JS), bytecode, or data. */
+function classifyChunk(text) {
+  if (!text || typeof text !== 'string' || text.length < 12) return null;
+  if (text.charCodeAt(0) === 0x1b && text.startsWith('\x1bLua')) return { kind: 'bytecode', format: 'lua' };
+  if (text.startsWith('RSB1')) return { kind: 'bytecode', format: 'luau' };
+  const v = verifyCode(text, { lang: 'lua', filename: 'chunk.lua' });
+  if (v.status === 'verified') return { kind: 'source', lang: 'lua', code: text };
+  try {
+    const shimmed = transformLuauToLua(text);
+    if (shimmed && shimmed !== text && verifyCode(shimmed, { lang: 'lua', filename: 'chunk.lua' }).status === 'verified') {
+      return { kind: 'source', lang: 'luau', code: shimmed };
+    }
+  } catch { /* shim refused */ }
+  const vj = verifyCode(text, { lang: 'js', filename: 'chunk.js' });
+  if (vj.status === 'verified') return { kind: 'source', lang: 'js', code: text };
+  return { kind: 'data' };
+}
+
+/** Pick the best artifact from captured chunks: largest verified source, else
+ *  bytecode, else null. Data chunks are skipped for output. */
+function pickChunkArtifact(h) {
+  if (!h || !Array.isArray(h.chunks) || h.chunks.length === 0) return null;
+  let bestSource = null;
+  let bestBytecode = null;
+  const seen = new Set();
+  for (const raw of h.chunks) {
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+    const c = classifyChunk(raw);
+    if (!c) continue;
+    if (c.kind === 'source' && (!bestSource || c.code.length > bestSource.code.length)) bestSource = c;
+    if (c.kind === 'bytecode' && (!bestBytecode || raw.length > bestBytecode.length)) {
+      bestBytecode = { ...c, text: raw };
+    }
+  }
+  if (bestSource) return bestSource;
+  if (bestBytecode) return bestBytecode;
+  return null;
+}
+
+/** Build the pipeline result for a chunk artifact (source or bytecode). */
+function chunkArtifactResult(art, h, detected, stages, t0, inBuffer, lang) {
+  const durationMs = Date.now() - t0;
+  if (art.kind === 'bytecode') {
+    const buf = Buffer.from(art.text, 'latin1');
+    return {
+      ok: true,
+      code: '',
+      binaryOutput: true,
+      outputBuffer: buf,
+      codeName: `recovered-${art.format === 'luau' ? 'luau' : 'lua'}bc.luac`,
+      detected, stages, durationMs, lang,
+      verification: { status: 'unverifiable', lang: 'bytecode', detail: `Lua ${art.format} bytecode captured from load() — delivered as a binary artifact` },
+      originalSize: inBuffer.length,
+      recoveredSize: buf.length,
+      how: `jailed VM run — decrypted ${art.format} bytecode captured at load()`,
+      partialNote: `Full bytecode recovered: the obfuscator decrypted its compiled chunk and handed it to load() inside the jailed VM. The ${buf.length}-byte ${art.format} bytecode is attached (decompilation of raw bytecode is engine-0.13 work). ${h.strings.length} pool strings were also decrypted.`,
+      engine: null,
+    };
+  }
+  const verifyLang = art.lang === 'js' ? 'js' : 'lua';
+  return {
+    ok: true,
+    code: art.code,
+    binaryOutput: false,
+    outputBuffer: null,
+    codeName: art.lang === 'js' ? 'recovered.js' : 'recovered.lua',
+    detected, stages, durationMs, lang,
+    verification: verifyCode(art.code, { lang: verifyLang, filename: 'recovered.lua' }),
+    originalSize: inBuffer.length,
+    recoveredSize: art.code.length,
+    how: `jailed VM run — decrypted source captured at load() (${art.lang})`,
+    partialNote: `Full source recovered: the obfuscator decrypted its payload inside the jailed VM and handed it to load()/loadstring() — the code below is the complete original script${art.lang === 'luau' ? ' (Luau syntax normalized for delivery)' : ''}. ${h.strings.length} pool strings also decrypted and discarded (kept out of the paste to keep it pure source).`,
+    engine: null,
+  };
+}
+
 async function tryHarvest(inputPath, detected, lang, stage, stages, t0, inBuffer, filename) {
   const eligible = (lang === 'lua' && HARVEST_ELIGIBLE.has(detected.id)) || lang === 'unknown';
   if (!eligible) return null;
   const h = await runHarvest(inputPath, detected, stage);
   if (!h) return null;
+  // Chunk artifact first — full source/bytecode beats a string pool.
+  const art = pickChunkArtifact(h);
+  if (art) {
+    stage('chunk-capture', `${art.kind} (${art.kind === 'source' ? art.lang : art.format}) — complete recovery via load()-hook`);
+    return chunkArtifactResult(art, h, detected, stages, t0, inBuffer, lang);
+  }
   const luaText = harvestToLua(h, { detectedName: detected.name, version: detected.version });
   let data = Buffer.from(luaText, 'utf8');
   const post = postprocessFile('constants.lua', data);
@@ -457,7 +580,7 @@ const FAMILY_WALL_NOTES = {
   xhider: 'Xhider wraps code in a MoonSec-style VM. Detection is reliable; the current build is not statically devirtualizable yet.',
   '25ms': '25ms-branded builds route through VM obfuscators (often Luraph-family). This sample hit a VM wall — no static recovery path found.',
   moonsec_v3: 'This MoonSec V3 build derives its constant-pool keys at runtime (escrow/anti-tamper). Static-key V3 builds recover fully; this one cannot be lifted statically.',
-  moonsec_v2: 'This MoonSec V2 build derives its keys at runtime (escrow mode). The jailed VM now runs this dispatcher end-to-end and replays its key schedule — but the newest builds feed garbage keys when the environment is not genuine Roblox (anti-dump), so only fragments of the pool decrypt.',
+  moonsec_v2: 'This MoonSec V2 build derives its keys at runtime (escrow mode). The jailed VM now runs this dispatcher end-to-end against a production-shaped Roblox environment (Is* probes return production booleans, executor-only methods read nil, PlaceId/JobId real-shaped) and replays its key schedule — decrypt-then-load variants hand their full decrypted source to load(), which the load()-hook captures for complete recovery. The very newest anti-dump builds may still fragment.',
 };
 
 function familyWallNote(detected) {

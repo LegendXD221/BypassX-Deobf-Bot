@@ -8,12 +8,22 @@
  *   • io/os/require/loadfile/dofile/package removed; os = {clock,time,date}
  *   • bit32/bit implemented over Lua 5.3 native int ops
  *   • getfenv/setfenv/unpack/loadstring 5.1 compat shims
- *   • inert Roblox proxies (game/workspace/Instance/Enum/… chain to nothing)
+ *   • LOAD-CHUNK CAPTURE (v1.8.0): every chunk passed to load()/loadstring()
+ *     — text or bytecode — is recorded into _BX_CHUNKS. Decrypt-then-load
+ *     builds (Luraph LPH_ENCSTR wrappers, PSU, MoonSec V2 load-stage variants,
+ *     IronBrew lines, WeAreDevs, slua) hand their FULL DECRYPTED SOURCE to
+ *     load() at init — capturing it is complete source recovery.
+ *   • production-shaped Roblox env (v1.8.0): game.PlaceId/JobId/CreatorId are
+ *     real numbers, RunService-style Is* probes return production booleans
+ *     (IsStudio/IsEdit/IsRunMode → false, IsClient → true), executor-only
+ *     service methods (HttpGet/HttpPost/…) read nil. Anti-dump checks that
+ *     "see" an executor or a Studio env previously fed garbage keys — that
+ *     was the MoonSec escrow fragment wall.
  *   • string sinks: char/sub/rep/reverse/upper/lower/format/gsub/table.concat
  *     record every produced string into _BX_SINK
  *   • instruction budget via debug count hook (hard SIGKILL by spawnHardened)
  *
- * stdout: ONE JSON line { ok, ran, runError, strings[], log[] }
+ * stdout: ONE JSON line { ok, ran, runError, strings[], chunks[], log[] }
  * Never executes recovered code outside this jail; never touches the network.
  */
 import fs from 'node:fs';
@@ -27,6 +37,9 @@ const HOOK_INTERVAL = 2.5e6;
 const MAX_SINK = 60_000;
 const MAX_STR = 8192;
 const MAX_OUT = 20_000;
+const MAX_CHUNKS = 64;
+const MAX_CHUNK_BYTES = 2 * 1024 * 1024;
+const MAX_CHUNKS_TOTAL = 3 * 1024 * 1024;
 
 if (!INPUT) {
   console.error('usage: harvester-worker <input>');
@@ -71,9 +84,10 @@ function dumpAndExit(note) {
       strings.push(s);
       if (bytes > 4 * 1024 * 1024) break;
     }
-    console.log(JSON.stringify({ ok: true, ran, runError, budgetHit: budget <= 0, partial: Boolean(note), note: note || null, strings, log: logLines.slice(0, 50) }));
+    const chunks = readChunks();
+    console.log(JSON.stringify({ ok: true, ran, runError, budgetHit: budget <= 0, partial: Boolean(note), note: note || null, strings, chunks, log: logLines.slice(0, 50) }));
   } catch {
-    console.log(JSON.stringify({ ok: true, ran: false, strings: [], log: [] }));
+    console.log(JSON.stringify({ ok: true, ran: false, strings: [], chunks: [], log: [] }));
   }
   process.exit(0);
 }
@@ -110,7 +124,9 @@ const PRELUDE = `
 -- sink
 _BX_SINK = {}
 _BX_LOG = {}
+_BX_CHUNKS = {}
 local __N = 0
+local __C = 0
 function __bx_rec(v)
   if type(v) == 'string' then
     local n = #v
@@ -159,7 +175,49 @@ os = { clock = function() return 0 end, time = function() return 1762500000 end,
 getfenv = function() return _G end
 setfenv = function(f) return f end
 unpack = unpack or table.unpack
+
+-- LOAD-CHUNK CAPTURE (v1.8.0): record every chunk the sample hands to
+-- load()/loadstring(). Decrypt-then-load obfuscators pass their FULL
+-- decrypted source (or bytecode) here — capture is complete recovery.
+-- Function chunks are drained (capped); strings are taken as-is.
+local __bx_orig_load = load
+local __bx_chunk_bytes = 0
+load = function(chunk, chunkname, mode, env)
+  if type(chunk) == 'string' then
+    local n = #chunk
+    if n >= 8 and n <= ${MAX_CHUNK_BYTES} and __C < ${MAX_CHUNKS} and __bx_chunk_bytes < ${MAX_CHUNKS_TOTAL} then
+      __C = __C + 1
+      _BX_CHUNKS[__C] = chunk
+      __bx_chunk_bytes = __bx_chunk_bytes + n
+    end
+  elseif type(chunk) == 'function' then
+    local parts = {}
+    local total = 0
+    for _ = 1, 100000 do
+      local s = chunk()
+      if type(s) ~= 'string' or s == '' then break end
+      parts[#parts + 1] = s
+      total = total + #s
+      if total >= ${MAX_CHUNK_BYTES} or __bx_chunk_bytes + total >= ${MAX_CHUNKS_TOTAL} then break end
+    end
+    local src = table.concat(parts)
+    local n = #src
+    if n >= 8 and __C < ${MAX_CHUNKS} and __bx_chunk_bytes < ${MAX_CHUNKS_TOTAL} then
+      __C = __C + 1
+      _BX_CHUNKS[__C] = src
+      __bx_chunk_bytes = __bx_chunk_bytes + n
+    end
+  end
+  -- env=nil explicitly would bind _ENV=nil in fengari (loaded chunk loses
+  -- globals); omitting the arg gives the real global env — production shape.
+  if env == nil then return __bx_orig_load(chunk, chunkname, mode) end
+  return __bx_orig_load(chunk, chunkname, mode, env)
+end
 loadstring = load
+
+-- production Luau disables string.dump entirely — its presence is an
+-- executor tell and some anti-dump checks look for exactly that.
+string.dump = nil
 
 -- Lua 5.3 APIs fengari does not implement (MoonSec V2 binds math.ldexp at
 -- dispatcher init — its absence was the "attempt to call nil upvalue" wall)
@@ -252,19 +310,65 @@ local __NILPROBE = {
   identifyexecutor = true, getexecutorname = true,
 }
 
--- inert Roblox universe: any index/call chains to itself, produces nothing
-local __INERT
-__INERT = setmetatable({}, {
-  __index = function() return __INERT end,
+-- inert Roblox universe (v1.8.0 production-shaped):
+--   • executor-only service methods (HttpGet/HttpPost/websocket/…) read NIL —
+--     a truthy read used to make anti-dump think an executor was present.
+--   • calling an inert member returns production booleans for Is*/Has* probes
+--     (IsStudio/IsEdit/IsRunMode/IsServer/IsRemote/IsMobile → false,
+--     IsClient → true) instead of a truthy object — MoonSec escrow feeds
+--     garbage keys when IsStudio() reads truthy ("Studio env" path).
+--   • game exposes real-shaped identity fields (PlaceId/JobId/CreatorId/…).
+--   • PER-OBJECT keys (v1.8.0 fix): every member read yields a fresh object
+--     carrying ITS OWN key — a shared "last indexed key" went stale across
+--     statements (GetService after IsStudio returned false → "index a
+--     boolean" crash) and poisoned whole runs.
+local __NILSERVICE = {
+  HttpGet = true, HttpPost = true, HttpRequest = true, request = true,
+  websocket = true, WebSocket = true, RequestAsync = true,
+  GetAsync = true, PostAsync = true, execConsoleCommand = true,
+}
+local __INERTMT
+__INERTMT = {
+  __index = function(t, k)
+    if __NILSERVICE[k] then return nil end
+    local o = setmetatable({}, __INERTMT)
+    rawset(o, '__bx_key', k)
+    return o
+  end,
   __newindex = function() end,
-  __call = function() return __INERT end,
+  __call = function(t, ...)
+    local k = rawget(t, '__bx_key')
+    if type(k) == 'string' then
+      if k == 'IsClient' or k == 'IsRobloxClient' or k == 'IsLua' then return true end
+      if k:sub(1, 2) == 'Is' or k:sub(1, 2) == 'Has' then return false end
+    end
+    return setmetatable({}, __INERTMT) -- neutral object for further chaining
+  end,
+  __add = function() return 0 end, __sub = function() return 0 end, __mul = function() return 0 end,
+  __div = function() return 0 end, __mod = function() return 0 end, __pow = function() return 1 end,
+  __idiv = function() return 0 end, __band = function() return 0 end, __bor = function() return 0 end,
+  __bxor = function() return 0 end, __bnot = function() return -1 end, __shl = function() return 0 end,
+  __shr = function() return 0 end, __concat = function() return '' end, __len = function() return 0 end,
+  __unm = function() return 0 end,
   __tostring = function() return 'BypassXInert' end,
+  __eq = function() return false end, __lt = function() return false end, __le = function() return false end,
   __metatable = 'BypassX',
+}
+local __INERT = setmetatable({}, __INERTMT)
+game = setmetatable({}, {
+  __index = function(t, k)
+    if __NILSERVICE[k] then return nil end
+    if k == 'PlaceId' then return 18774239 end
+    if k == 'GameId' then return 9947321 end
+    if k == 'CreatorId' then return 1 end
+    if k == 'JobId' then return 'b1a2c3d4-e5f6-7890-abcd-ef1234567890' end
+    if k == 'Workspace' then return __INERT end
+    if k == 'Loaded' then return true end
+    return __INERT[k]
+  end,
+  __call = function() return __INERT end,
 })
-local function __inertfn() return __INERT end
-game = __INERT
 workspace = __INERT
-workspace = setmetatable({}, { __index = function() return __inertfn end, __call = __inertfn })
 script = __INERT
 shared = {}
 Enum = __INERT
@@ -417,5 +521,27 @@ function readStrings(name, cap) {
     lua.lua_pop(L, 1);
   }
   lua.lua_pop(L, 1);
+  return out;
+}
+
+/** Read captured load()/loadstring() chunks (byte-budgeted, deduped). */
+function readChunks() {
+  const out = [];
+  let total = 0;
+  try {
+    lua.lua_getglobal(L, to_luastring('_BX_CHUNKS'));
+    if (!lua.lua_istable(L, -1)) { lua.lua_pop(L, 1); return out; }
+    const n = lua.lua_rawlen(L, -1);
+    for (let i = 1; i <= Math.min(n, MAX_CHUNKS); i += 1) {
+      if (total >= MAX_CHUNKS_TOTAL) break;
+      lua.lua_rawgeti(L, -1, i);
+      if (lua.lua_isstring(L, -1)) {
+        const s = lua.lua_tojsstring(L, -1);
+        if (s && s.length >= 8 && !out.includes(s)) { out.push(s); total += s.length; }
+      }
+      lua.lua_pop(L, 1);
+    }
+    lua.lua_pop(L, 1);
+  } catch { /* sink missing — return what we have */ }
   return out;
 }

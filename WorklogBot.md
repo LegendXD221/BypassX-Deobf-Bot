@@ -4,6 +4,69 @@ Self-updating worklog. **Read before starting any work on the bot; update + push
 
 ---
 
+## 2026-11-07 — v1.8.0 "Luraph VM + MoonSec escrow: load()-chunk capture = full source recovery"
+
+### User ask driving this release
+> "I want every type of currently supported service to work perfectly — Luraph VM
+> and MoonSec escrow should also work fine. Do whatever you want, I just want success."
+
+### The big win: load()/loadstring() chunk capture (src/harvester-worker.js)
+Decrypt-then-load obfuscators — Luraph LPH_ENCSTR wrappers, PSU, MoonSec V2
+load-stage variants, IronBrew lines, WeAreDevs, slua — decrypt their payload at
+VM-init time and hand the FULL decrypted source (or bytecode) to load()/loadstring().
+The jail now records every chunk passed to load() into `_BX_CHUNKS`:
+- string chunks captured as-is (≤2 MB each, 64 chunks, 3 MB total);
+- function chunks drained (capped) — 5.1-style reader functions;
+- `loadstring` rebound to the hook; `env=nil` is OMITTED from the forwarded
+  call (fengari binds `_ENV=nil` for explicit nil → loaded chunk lost globals;
+  omitting the arg gives the real global env — production shape).
+The pipeline (src/pipeline.js) classifies each captured chunk
+(`classifyChunk`): verified Lua / Luau-via-shim / JS → SOURCE (the largest one
+wins) → delivered as `recovered.lua` — **complete source recovery**; `\x1bLua` /
+`RSB1` headers → bytecode → delivered as a `recovered-*.luac` binary
+attachment. `runHarvest` now hits on ≥3 pool strings OR any captured chunk;
+`tryHarvest` and the Luraph v15 augment both prefer chunk artifacts over
+string pools. The paste stays pure source — the pool strings ride only in the
+Discord card note.
+
+### MoonSec escrow anti-dump: production-shaped Roblox env
+The v1.6.0 "newest builds feed garbage keys when env isn't genuine Roblox"
+wall came from environment-shape mismatches. The inert Roblox universe is now
+production-shaped:
+- `Is*`/`Has*` probes return production booleans (IsStudio/IsEdit/IsRunMode/
+  IsServer/IsRemote/IsMobile → false, IsClient → true). Previously a truthy
+  inert object made builds take the Studio/debug path — garbage keys.
+- `game.PlaceId/GameId/CreatorId/JobId/Loaded` are real-shaped values.
+- executor-only service methods (HttpGet/HttpPost/websocket/RequestAsync/…)
+  read NIL — a truthy read used to flag "executor present".
+- `string.dump = nil` — production Luau disables it; presence = executor tell.
+- CRITICAL FIX: the Is* heuristic first used a shared `__bx_lastkey` on the
+  single inert object — it went STALE across statements (GetService after
+  IsStudio returned false → "attempt to index a boolean" crash). Every member
+  read now yields a fresh per-object key; arithmetic/concat/len/eq metamethods
+  added so inert values survive numeric contexts.
+
+### Verification (test/harvest-chunks.js, 5 cases — all pass)
+1. worker captures the decrypted chunk (keystream-XOR decrypt-then-loadstring);
+2. pipeline delivers it as the recovered source (ok, verified, marker found);
+3. captured bytecode → binary .luac artifact (binaryOutput, \x1bLua header);
+4. six anti-dump gates pass in-jail (IsStudio/IsClient/HttpGet/PlaceId/
+   string.dump/IsEdit) → gated pool decrypts;
+5. pool-only harvest (no chunks) still works.
+Full suite: 9 suites, all pass.
+
+### Files
+- MOD `src/harvester-worker.js` — load()-chunk hook, production-shaped env,
+  per-object-key fix, readChunks() byte-budgeted reader
+- MOD `src/harvest.js` — chunks pass-through
+- MOD `src/pipeline.js` — classifyChunk/pickChunkArtifact/chunkArtifactResult,
+  runHarvest chunk-aware hit, tryHarvest + Luraph v15 augment prefer chunk
+  artifacts, moonsec_v2 note updated
+- NEW `test/harvest-chunks.js` — 5-case suite
+- MOD `test/all.js`, `src/config.js` + `package.json` (1.8.0)
+
+---
+
 ## 2026-11-07 — v1.7.0 "No walls — every supported service always produces output"
 
 ### User ask driving this release
