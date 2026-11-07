@@ -24,8 +24,8 @@ Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) sta
 
 | Service | Versions | Notes |
 | --- | --- | --- |
-| **Luraph** | v11 → **v15.1** (latest) | wire-toolkit: quoted-carrier, BE ascii85, per-build constant-pool decryption; v15 odSQ path; older versions auto-handled too |
-| **MoonSec** | V1 / V2 / V3 | static-key builds fully; escrow/runtime-key builds fall back to the jailed-VM dynamic constant harvest |
+| **Luraph** | v11 → **v15.1** (latest) | wire-toolkit: quoted-carrier, BE ascii85, per-build constant-pool decryption; v15 odSQ path; **v1.6: v15.x payload-structure parse + per-build key-carrier capture + jailed-VM pool replay** |
+| **MoonSec** | V1 / V2 / V3 | static-key builds fully; **v1.6: the V2/V3 escrow dispatcher now runs end-to-end inside the jailed VM** (Luau shim: compound assigns + if-expressions, `math.ldexp`/`frexp`, full Luau bit32, exploit-probe globals read nil) — the newest anti-dump builds still poison their pool |
 | **IronBrew** | 1 (Aztup Brew) & 2 | IronBrew2 = full devirt |
 | **Prometheus** | latest, incl. **VMify** | AST + VM pipeline |
 | **Hercules** | V2.x (latest) | full devirt |

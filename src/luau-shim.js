@@ -2,9 +2,12 @@
  * BypassX Deobf Bot — Luau → plain Lua 5.x text-level shim.
  *
  * Roblox-targeted obfuscated files (MoonSec V2/V3 Luau builds, Luraph luau,
- * 25ms…) use Luau-only syntax that standard Lua VMs reject — most commonly
- * compound assignments (`o*=-1`, `h+=b`, `s..=t`, `x//=y`). The jailed fengari
- * VM (Lua 5.3) needs these rewritten to plain assignments before loading.
+ * 25ms…) use Luau-only syntax that standard Lua VMs reject:
+ *   • compound assignments (`o*=-1`, `h+=b`, `s..=t`, `x//=y`) — Luraph v15.1
+ *     emits ~200 per build,
+ *   • if-expressions (`x = if c then a else b`) — Luraph v15.1 emits 4–24 per
+ *     build, incl. elseif chains; MoonSec V3 uses them in loader prologues.
+ * The jailed fengari VM (Lua 5.3) needs both rewritten before loading.
  *
  * String/comment-aware scan (long strings & comments included); rewrites only
  * machine-generated-shaped LHS (identifier + .field / [expr] chains), which is
@@ -14,21 +17,97 @@
 
 const COMPOUND_OPS = ['..=', '//=', '*=', '/=', '%=', '+=', '-=', '^='];
 
-/** Does the source use Luau compound assignment? (quick pre-check) */
+/** Does the source use Luau-only syntax (compound assign / if-expressions)? */
 export function hasLuauCompoundAssign(src) {
   let out;
   try { out = stripForScan(src); } catch { return true; } // be safe, run transform
-  return COMPOUND_OPS.some((op) => scanForOp(out, op));
+  if (COMPOUND_OPS.some((op) => scanForOp(out, op))) return true;
+  return findIfExprs(out).length > 0;
 }
 
-/** Transform Luau compound assignments into plain Lua assignments. */
+/**
+ * Transform Luau-only syntax into plain Lua:
+ *   • compound assignments → `x = x + (rhs)`
+ *   • if-expressions → `(function() if c then return a else return b end end)()`
+ * Both are located on the same 1:1 stripped scan; edits are applied back to
+ * front with an overlap guard so a mis-scan can never double-rewrite.
+ */
 export function transformLuauToLua(src) {
   if (!src) return src;
-  // Build a stripped parallel string for locating ops, then rewrite the
-  // original by index. Stripped string keeps 1:1 length with the original
-  // (every char maps to itself; string/comment contents become spaces).
-  const stripped = stripForScan(src);
-  const edits = [];
+  const { ifEdits, compoundEdits } = collectLuauEdits(src);
+  if (!ifEdits.length && !compoundEdits.length) return src;
+
+  // PASS 1 — apply if-expression edits (positions are src-space)
+  let out = src;
+  if (ifEdits.length) {
+    ifEdits.sort((a, b) => b.start - a.start);
+    let lastStart = Infinity;
+    for (const e of ifEdits) {
+      if (e.end > lastStart) continue; // overlap guard
+      lastStart = e.start;
+      out = out.slice(0, e.start) + e.replacement + out.slice(e.end);
+    }
+  }
+
+  // PASS 2 — apply compound edits (positions are pass-1-output space)
+  if (compoundEdits.length) {
+    compoundEdits.sort((a, b) => b.start - a.start);
+    let lastStart = Infinity;
+    for (const e of compoundEdits) {
+      if (e.end > lastStart) continue; // overlap guard
+      lastStart = e.start;
+      out = out.slice(0, e.start) + e.replacement + out.slice(e.end);
+    }
+  }
+  return out;
+}
+
+/** Collect all Luau edits as { start, end, replacement } — if-expressions
+ *  first (rewritten into valid Lua so pass-2 scans see clean expressions),
+ *  then compound assignments re-scanned on the if-expr-rewritten source.
+ *  @internal exported for diagnostics/tests */
+export function collectLuauEdits(src) {
+  // PASS 1 — Luau if-expressions (expression position):
+  //   `x = if c then a else b` → `x = (function() if c then return a else return b end end)()`
+  const stripped1 = stripForScan(src);
+  const ifEdits = [];
+  // Branch bodies are expressions; prefix `=` so leading nested if-exprs are
+  // seen in expression position by the recursive pass, then strip the prefix.
+  const rw = (t) => (t && t.includes('if') ? transformLuauToLua(`=${t}`).slice(1) : t);
+  for (const ie of findIfExprs(stripped1)) {
+    if (src.slice(ie.start, ie.end).includes('...')) continue; // IIFE cannot capture `...`
+    let ok = true;
+    const parts = ie.branches.map((b) => ({
+      kw: b.kw,
+      cond: b.cond != null ? rw(src.slice(b.cond.start, b.cond.end)) : null,
+      body: rw(src.slice(b.body.start, b.body.end)),
+    }));
+    for (const p of parts) if (!p.body || !p.body.trim() || (p.kw !== 'else' && (!p.cond || !p.cond.trim()))) ok = false;
+    if (!ok) continue;
+    // Flatten to independent `if c then return body end` statements + final
+    // fallthrough `return elseBody`. (A single `if c then return a else return
+    // b end` as the whole IIFE body trips a fengari parser quirk when the
+    // function-body `end` immediately follows — verified against fengari 0.1.4.)
+    const elsePart = parts.find((p) => p.kw === 'else');
+    const ifParts = parts.filter((p) => p.kw !== 'else');
+    const lua = ifParts.map((p) => `if ${p.cond} then return ${p.body} end`).join(' ')
+      + ` return ${elsePart ? elsePart.body : 'nil'}`;
+    ifEdits.push({ start: ie.start, end: ie.end, replacement: `(function() ${lua} end)()` });
+  }
+
+  // PASS 2 — compound assignments → `x = x + (rhs)` (re-scanned post pass 1)
+  let pre = src;
+  if (ifEdits.length) {
+    ifEdits.sort((a, b) => b.start - a.start);
+    let lastStart = Infinity;
+    for (const e of ifEdits) {
+      if (e.end > lastStart) continue;
+      lastStart = e.start;
+      pre = pre.slice(0, e.start) + e.replacement + pre.slice(e.end);
+    }
+  }
+  const stripped = stripForScan(pre);
+  const compoundEdits = [];
   for (const op of COMPOUND_OPS) {
     let idx = 0;
     // eslint-disable-next-line no-constant-condition
@@ -36,28 +115,143 @@ export function transformLuauToLua(src) {
       const at = stripped.indexOf(op, idx);
       if (at === -1) break;
       idx = at + op.length;
-      // ignore `..=` overlap with `..` concat — verify char before is not '.'
       if (op === '..=' && stripped[at - 1] === '.') continue;
-      if (op === '-=' && stripped[at - 1] === '-') continue; // `x -= y` vs `--x =` impossible; safe
+      if (op === '-=' && stripped[at - 1] === '-') continue;
       const lhs = matchLhs(stripped, at);
       if (!lhs) continue;
-      // find end of the RHS expression: balanced scan until `,` `;` or newline at depth 0
       const rhs = matchRhs(stripped, at + op.length);
       if (!rhs) continue;
-      edits.push({ start: lhs.start, end: rhs.end, lhsText: src.slice(lhs.start, at), op, rhsText: src.slice(at + op.length, rhs.end) });
+      const lhsText = pre.slice(lhs.start, at);
+      const rhsText = pre.slice(at + op.length, rhs.end);
+      const luaOp = op === '..=' ? '..' : op === '//=' ? '//' : op.slice(0, 1);
+      compoundEdits.push({
+        start: lhs.start, end: rhs.end,
+        replacement: `${lhsText}= ${lhsText.trim()} ${luaOp} (${rhsText.trim()})`,
+      });
       idx = rhs.end;
     }
   }
-  if (!edits.length) return src;
-  // apply edits back-to-front
-  edits.sort((a, b) => b.start - a.start);
-  let out = src;
-  for (const e of edits) {
-    const luaOp = e.op === '..=' ? '..' : e.op === '//=' ? '//' : e.op.slice(0, 1);
-    const repl = `${e.lhsText}= ${e.lhsText.trim()} ${luaOp} (${e.rhsText.trim()})`;
-    out = out.slice(0, e.start) + repl + out.slice(e.end);
+  return { ifEdits, compoundEdits };
+}
+
+// ---- Luau if-expressions ------------------------------------------------------
+// Expression-position `if c then a else b` / `if c then a elseif c2 then d
+// else e`. Only matches when the preceding non-space token can START an
+// expression context (`=`, `(`, `,`, `{`, binary op, return/and/or) — never a
+// statement-position `if` (`;if`, `)if` after a param list, line start, …).
+
+const IFEXPR_PRECEDING_RE = /[[=(,{+\-*/%^~<>]$/;
+const IFEXPR_PRECEDING_WORD = /(?:\breturn|\band|\bor)[ \t]*$/;
+
+function findIfExprs(stripped) {
+  const out = [];
+  const re = /\bif\b/g;
+  let m;
+  while ((m = re.exec(stripped))) {
+    const at = m.index;
+    // preceding non-space char (manual scan — a `[ \t]+$` regex is super-linear
+    // on the huge blanked string-data regions these files contain)
+    let p = at;
+    while (p > 0 && (stripped[p - 1] === ' ' || stripped[p - 1] === '\t')) p -= 1;
+    if (p === 0) continue; // statement if at chunk start
+    const ch = stripped[p - 1];
+    let pass = IFEXPR_PRECEDING_RE.test(ch);
+    if (!pass) {
+      // word immediately before (`return`/`and`/`or` + space can precede an expr)
+      let w = p;
+      while (w > 0 && p - w < 12 && /[A-Za-z]/.test(stripped[w - 1])) w -= 1;
+      const word = stripped.slice(w, p);
+      pass = word === 'return' || word === 'and' || word === 'or';
+    }
+    if (!pass) continue; // statement-position if — not our target
+    const parsed = parseIfExpr(stripped, at);
+    if (!parsed) continue;
+    out.push(parsed);
+    re.lastIndex = parsed.end;
   }
   return out;
+}
+
+/** Balanced-scan helper: from `from`, stop when the text at a depth-0
+ *  position matches /^kw/ for one of `kws` (word-bounded). Strings and
+ *  comments are already blanked in the stripped copy; only structural
+ *  brackets are tracked. Scans at most `limit` chars (bounds false-positive
+ *  matches inside string-data regions — their keywords are blanked anyway,
+ *  so a limited scan can only ever produce a safe `null`).
+ *  With `nestedIf` = true, `if` keywords at depth 0 open a nested if-expression
+ *  whose own `else`/`elseif` are consumed instead of terminating the scan.
+ *  Returns { end, kw } or null. */
+function scanUntilKeyword(s, from, kws, limit = 4096, nestedIf = false) {
+  let depthSq = 0, depthCu = 0, depthPa = 0;
+  let depthIf = 0;
+  let i = from;
+  const stop = Math.min(s.length, from + limit);
+  while (i < stop) {
+    const c = s[i];
+    if (c === '[') depthSq += 1;
+    else if (c === ']') { if (depthSq === 0) return null; depthSq -= 1; }
+    else if (c === '{') depthCu += 1;
+    else if (c === '}') { if (depthCu === 0) return null; depthCu -= 1; }
+    else if (c === '(') depthPa += 1;
+    else if (c === ')') { if (depthPa === 0) return null; depthPa -= 1; }
+    else if (depthSq === 0 && depthCu === 0 && depthPa === 0) {
+      if (nestedIf && c === 'i' && s.startsWith('if', i) && !/[A-Za-z0-9_]/.test(s[i + 2] || '')) {
+        depthIf += 1;
+        i += 2;
+        continue;
+      }
+      for (const kw of kws) {
+        if (s.startsWith(kw, i) && !/[A-Za-z0-9_]/.test(s[i + kw.length] || '')) {
+          // keywords belonging to a nested if-expression are consumed instead
+          // of terminating the scan (`then`/`elseif` keep it open, `else`
+          // closes the innermost nested if)
+          if (depthIf > 0 && (kw === 'else' || kw === 'elseif' || kw === 'then')) {
+            if (kw === 'else') depthIf -= 1;
+            i += kw.length;
+            break;
+          }
+          return { end: i, kw };
+        }
+      }
+    }
+    i += 1;
+  }
+  return null;
+}
+
+/** Parse an if-expression starting at `at` (position of the `if` keyword).
+ *  Returns { start: at, end, branches: [{kw, cond?, body}] } or null.
+ *  The else-branch extent reuses matchRhs (expression terminator scan). */
+function parseIfExpr(s, at) {
+  const branches = [];
+  let pos = at + 2; // past `if`
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const kw = scanUntilKeyword(s, pos, ['then'], 4096, true);
+    if (!kw) return null;
+    const cond = { start: pos, end: kw.end };
+    pos = kw.end + 4; // past `then`
+    const brk = scanUntilKeyword(s, pos, ['elseif', 'else'], 65536, true);
+    if (!brk) return null;
+    branches.push({ kw: 'if', cond, body: { start: pos, end: brk.end } });
+    pos = brk.end + brk.kw.length;
+    if (brk.kw === 'elseif') continue; // next loop parses the elseif branch
+    // `else` — the final branch extends like any RHS expression
+    const fin = matchRhs(s, pos, 65536);
+    if (!fin) return null;
+    branches.push({ kw: 'else', body: { start: pos, end: fin.end } });
+    return { start: at, end: fin.end, branches };
+  }
+}
+
+/** @internal exported for diagnostics/tests */
+export function debugIfExprs(src) {
+  const stripped = stripForScan(src);
+  return findIfExprs(stripped).map((ie) => ({
+    start: ie.start,
+    end: ie.end,
+    text: src.slice(ie.start, ie.end),
+  }));
 }
 
 // ---- internals ---------------------------------------------------------------
@@ -171,7 +365,10 @@ function matchLhs(s, at) {
   }
   if (i <= 0) return { start: i }; // LHS at chunk start is valid
   const before = s[i - 1];
-  if (!hadSpace && /[A-Za-z0-9_)\]]/.test(before)) return null; // fused tokens
+  // fused-token reject: an identifier glued to alnum or `]` can't start a
+  // statement. `)` IS allowed — machine-generated Luau puts the first
+  // statement directly after the param list (`function(P)P%=4294967296`).
+  if (!hadSpace && /[A-Za-z0-9_\]]/.test(before)) return null;
   if (!hadSpace && (before === '=' || before === '<' || before === '>')) return null;
   return { start: i };
 }
@@ -179,15 +376,16 @@ function matchLhs(s, at) {
 /**
  * RHS: balanced scan from `from` until a top-level `,` `;` `then`/`do`/`end`
  * keyword, a statement boundary (space + identifier start at depth 0), or
- * EOF. Returns { end } (exclusive).
+ * EOF/`maxChars`. Returns { end } (exclusive).
  */
-function matchRhs(s, from) {
+function matchRhs(s, from, maxChars = 0) {
   let depthSq = 0;
   let depthCu = 0;
   let depthPa = 0;
   let i = from;
   while (i < s.length && s[i] === ' ') i += 1; // skip leading spaces
-  while (i < s.length) {
+  const stop = maxChars > 0 ? Math.min(s.length, from + maxChars) : s.length;
+  while (i < stop) {
     const c = s[i];
     if (c === '[') depthSq += 1;
     else if (c === ']') { if (depthSq === 0) break; depthSq -= 1; }

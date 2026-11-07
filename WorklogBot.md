@@ -4,6 +4,90 @@ Self-updating worklog. **Read before starting any work on the bot; update + push
 
 ---
 
+## 2026-11-07 — v1.6.0 "Luraph v15.1 devirtualization groundwork + MoonSec V2 escrow dispatcher compat"
+
+### User ask driving this release
+> "next roadmap items remain Luraph v15.1 devirtualization and MoonSec V2 escrow.
+> Complete this"
+
+The two open "Next" items from v1.1.0. Calibrated against the real
+terrorlua/obfuscator-samples corpus (4 × Luraph v15.1, 10 × MoonSec V2,
+1 × MoonSec V3 escrow) — every claim below was verified against real samples.
+
+### MoonSec V2 escrow — dispatcher now runs end-to-end in the harvest jail
+The `_msec` dispatcher used to die instantly (`attempt to call a nil value
+(upvalue 'J')`, 0 sink strings). Root causes found by instrumenting the jail
+(missing-key tracers, local dumps at the failing frame):
+1. **fengari does not implement `math.ldexp`/`math.frexp`** — Lua 5.3 APIs the
+   V2 dispatcher binds at init. Added real implementations to the prelude.
+2. **Luau-only stdlib** the dispatcher binds: `math.round/clamp/sign`,
+   `string.split`, `table.find/findLast/create/clear/clone`,
+   `bit32.countlz/countrz/extract/replace/byteswap/lrotate/rrotate/btest`,
+   `coroutine.close`. All implemented.
+3. **Exploit-probe globals must read nil** (`islclosure`, `getconstants`,
+   `debug.getconstants`, …): the old polyglot `_G` fallback made them truthy
+   → MoonSec's anti-tamper took a garbage-key path. They now read nil
+   (production-Roblox behavior) via a `__NILPROBE` denylist.
+4. **fengari rejects fractional numbers where Luau tolerates them** —
+   `string.char`/`string.rep` now truncate (Luraph v15.1 loaders hit this too).
+Result: V2 escrow samples went from instant crash / 0 strings → the VM runs to
+completion (`ran: true` on several) and captures the key-table + pool
+fragments (16–79 strings). The newest anti-dump builds still feed garbage keys
+when the env isn't genuine Roblox — the wall note now says exactly that.
+
+### Luau → Lua shim rewrite (`src/luau-shim.js`) — the big enabler
+Luraph v15.1 emits **Luau if-expressions** (`x = if c then a else b`, 4–24 per
+build) on top of ~200 compound assignments. Shim upgrades:
+- **If-expression rewrite** with a careful expression-position detector
+  (`= ( , {` + binary ops + return/and/or — never statement `if` after `;`/`)`)
+  and nested-if-aware branch scanning (`if`/`then`/`else` pairing).
+- **fengari parser quirk workaround**: a whole-body
+  `if c then return a else return b end` IIFE fails to parse in fengari 0.1.4
+  (verified minimally!) — the template is flattened to
+  `(function() if c then return a end return b end)()`.
+- **Nested if-expressions recurse** (inner-first, `=`-prefix trick for bodies
+  that start with `if`); `j[if …]` bracket position supported; vararg-bearing
+  if-exprs are skipped, never corrupted.
+- **`function(P)P%=4294967296`** — compound assign directly after the param
+  list is valid LHS position (fused-token reject list no longer blocks `)`).
+- **Performance**: the first draft regex-trimmed trailing spaces on 270 KB of
+  blanked string data → 99.5% of CPU in `/[ \t]+$/` (V8 profiler). Replaced
+  with a manual backward scan; full-file transform now ~100 ms, linear,
+  bounded scans everywhere.
+- All 4 corpus v15.1 builds + MoonSec V2 samples now compile in the jail.
+
+### Luraph v15.1 devirtualization groundwork (`src/luraph15.js`, new)
+The engine (0.12.0) peels the v15.x wire format into a chunk inventory + the
+raw ascii85 payload. The bot now enriches every v15.x result with:
+1. **Payload structure parse** — records split on the 4-zero separators, each
+   with its 12-byte per-build header (key seed + tag), size, Shannon entropy,
+   sha256 prefix, lzma-likeness flag.
+2. **Per-build key capture** — Luraph v15.1 derives build keys from long
+   string literals (quoted-carrier scheme). Key-like carriers (entropy ≥ 5.2
+   bits/byte, prose ≈ 4.2, binary ≈ 7+) are fingerprinted (offset, length,
+   entropy, sha256) so the exact key schedule can be replayed/offline-analyzed.
+3. **Jailed-VM pool replay** — the harvester runs the build's own loader in the
+   sandbox; when the key schedule replays cleanly the decrypted constant pool
+   rides along in the same output file.
+Pipeline (`src/pipeline.js`): luraph + v15 + inventory-shaped output →
+`luraph15:key-capture` stage → merged inventory + report (+ pool when
+available) + honest `partialNote` (e.g. "…full bytecode lifting is engine-0.13
+work"). Verified end-to-end on corpus v15.1 (2 key-like carriers captured on
+2153b; payload structure parsed on all).
+
+### MoonSec V2 honest-wall wording updated
+`FAMILY_WALL_NOTES.moonsec_v2` now describes the achieved dispatcher compat +
+the anti-dump poisoning instead of the old blanket "cannot be lifted".
+
+### Tests
+New suite `test/luau-shim.js` (16 tests): compound rewrites (incl. the
+param-list shape), if-expression semantics, statement-position safety, nesting,
+fengari-quirk template, vararg skip, 300 KB linearity (<2 s), prelude surface.
+`npm test` → **ALL 7 SUITES PASSED**. Version 1.5.1 → 1.6.0 (package.json +
+config.js).
+
+---
+
 ## 2026-11-07 — v1.5.1 "confirm-gate fix + full code scan"
 
 ### User asks driving this release

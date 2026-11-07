@@ -16,6 +16,7 @@ import { postprocessFile } from './postprocess.js';
 import { spawnHardened } from './security.js';
 import { harvestConstants, harvestToLua } from './harvest.js';
 import { verifyCode } from './validate.js';
+import { parsePayload, captureKeyCarriers, looksLikeLuraphInventory, formatReport } from './luraph15.js';
 
 // ---- global job semaphore ---------------------------------------------------
 const jobState = { active: 0, queue: [] };
@@ -169,9 +170,44 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
       }
 
       const best = { name: picked.name, path: picked.path };
-      const data = picked.data;
+      let data = picked.data;
       const binaryOutput = picked.binaryOutput;
       if (picked.post.passes.length) stage('post-process', picked.post.passes.join(', '));
+
+      // Luraph v15.x: the engine's peel yields a payload inventory + raw VM
+      // payload (the VM bytecode itself is engine-0.13 work). Enrich it with
+      // the per-build key capture (carrier fingerprints + payload record
+      // structure) and the jailed-VM harvest of the decrypted constant pool —
+      // the pool rides along whenever the build's own key schedule replays
+      // cleanly inside the sandbox.
+      let luraphNote = null;
+      if (detected.id === 'luraph' && !binaryOutput
+        && looksLikeLuraphInventory(data.toString('utf8'))
+        && (detected.version || '').startsWith('v15')) {
+        try {
+          const invText = data.toString('utf8');
+          const m = /payload_ascii85_decoded_b64\s*=\s*"([^"]*)"/.exec(invText);
+          const carriers = captureKeyCarriers(buffer.toString('utf8'));
+          let report = formatReport({ records: [], total: 0, trailing: 0 }, carriers, { version: detected.version || 'v15.x' });
+          if (m) {
+            const payloadBuf = Buffer.from(m[1], 'base64');
+            report = formatReport(parsePayload(payloadBuf), carriers, { version: detected.version || 'v15.x' });
+          }
+          stage('luraph15:key-capture', `${carriers.filter((c) => c.looksKeyish).length} key-like carriers of ${carriers.length}`);
+          const h = await runHarvest(inputPath, detected, stage);
+          let poolSection = '';
+          if (h && h.strings.length >= 3) {
+            const poolText = harvestToLua(h, { detectedName: detected.name, version: detected.version });
+            poolSection = `\n\n-- ---- decrypted constant pool (jailed VM run, ${h.strings.length} strings) ----\n${poolText}`;
+            luraphNote = `Luraph ${detected.version || 'v15.x'} devirtualization: I recovered the **per-build key material** (${carriers.filter((c) => c.looksKeyish).length} key-like carriers) + full payload structure, and the jailed sandboxed VM replayed the build's key schedule to decrypt **${h.strings.length} constant-pool strings**. The VM bytecode itself stays behind Luraph's per-build VM — full bytecode lifting is engine-0.13 work.`;
+          } else {
+            luraphNote = `Luraph ${detected.version || 'v15.x'}: I recovered the **per-build key material** (${carriers.filter((c) => c.looksKeyish).length} key-like carriers) and the full payload structure (record headers, entropy, sizes). This build's loader diverges inside the sandbox before the constant pool decrypts — the payload inventory below is the complete static picture.`;
+          }
+          data = Buffer.from(invText + report + poolSection, 'utf8');
+        } catch (e) {
+          stage('luraph15:augment:miss', String(e.message || e).slice(0, 120));
+        }
+      }
 
       // Output consumed — reap the engine workdir and temp artifacts.
       if (outcome.workDir) await engine.cleanupWorkDir(outcome.workDir);
@@ -188,6 +224,7 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
         originalSize: buffer.length,
         recoveredSize: data.length,
         how: outcome.how || 'engine',
+        partialNote: luraphNote,
         engine: await engine.probe(),
       };
     } finally {
@@ -217,22 +254,28 @@ const HARVEST_ELIGIBLE = new Set([
   'unknown',
 ]);
 
-async function tryHarvest(inputPath, detected, lang, stage, stages, t0, inBuffer, filename) {
-  const eligible = (lang === 'lua' && HARVEST_ELIGIBLE.has(detected.id)) || lang === 'unknown';
-  if (!eligible) return null;
+/** Run the jailed harvester; returns the raw result or null (no stage output). */
+async function runHarvest(inputPath, detected, stage) {
   stage('harvest', 'jailed VM run — dynamic constant recovery');
-  let h;
   try {
-    h = await harvestConstants(inputPath, { timeoutMs: Math.min(CONFIG.engineTimeoutMs, 120_000) });
+    const h = await harvestConstants(inputPath, { timeoutMs: Math.min(CONFIG.engineTimeoutMs, 120_000) });
+    if (!h.ok || (h.strings || []).length < 3) {
+      stage('harvest:miss', h.error || `only ${(h.strings || []).length} strings`);
+      return null;
+    }
+    stage('harvest:hit', `${h.strings.length} strings decrypted${h.ran ? '' : ' (VM init incomplete)'}`);
+    return h;
   } catch (e) {
     stage('harvest:miss', String(e.message || e).slice(0, 120));
     return null;
   }
-  if (!h.ok || (h.strings || []).length < 3) {
-    stage('harvest:miss', h.error || `only ${(h.strings || []).length} strings`);
-    return null;
-  }
-  stage('harvest:hit', `${h.strings.length} strings decrypted${h.ran ? '' : ' (VM init incomplete)'}`);
+}
+
+async function tryHarvest(inputPath, detected, lang, stage, stages, t0, inBuffer, filename) {
+  const eligible = (lang === 'lua' && HARVEST_ELIGIBLE.has(detected.id)) || lang === 'unknown';
+  if (!eligible) return null;
+  const h = await runHarvest(inputPath, detected, stage);
+  if (!h) return null;
   const luaText = harvestToLua(h, { detectedName: detected.name, version: detected.version });
   let data = Buffer.from(luaText, 'utf8');
   const post = postprocessFile('constants.lua', data);
@@ -370,7 +413,7 @@ const FAMILY_WALL_NOTES = {
   xhider: 'Xhider wraps code in a MoonSec-style VM. Detection is reliable; the current build is not statically devirtualizable yet.',
   '25ms': '25ms-branded builds route through VM obfuscators (often Luraph-family). This sample hit a VM wall — no static recovery path found.',
   moonsec_v3: 'This MoonSec V3 build derives its constant-pool keys at runtime (escrow/anti-tamper). Static-key V3 builds recover fully; this one cannot be lifted statically.',
-  moonsec_v2: 'This MoonSec V2 build derives its keys at runtime (escrow mode). Older static-key V2 builds recover fully; this one cannot be lifted statically.',
+  moonsec_v2: 'This MoonSec V2 build derives its keys at runtime (escrow mode). The jailed VM now runs this dispatcher end-to-end and replays its key schedule — but the newest builds feed garbage keys when the environment is not genuine Roblox (anti-dump), so only fragments of the pool decrypt.',
 };
 
 function familyWallNote(detected) {

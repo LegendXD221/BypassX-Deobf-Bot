@@ -17,6 +17,7 @@ const SUITES = [
   'v2-smoke.js',       // every Components V2 reply builder serializes
   'chunk-paste.js',    // pastefy chunking round-trips
   'links.js',          // url detection / normalization / SSRF guards
+  'luau-shim.js',      // Luau shim: compound assigns + if-expressions (v1.6.0)
 ];
 
 let failed = 0;
