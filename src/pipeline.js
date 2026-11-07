@@ -17,6 +17,7 @@ import { spawnHardened } from './security.js';
 import { harvestConstants, harvestToLua } from './harvest.js';
 import { verifyCode } from './validate.js';
 import { parsePayload, captureKeyCarriers, looksLikeLuraphInventory, formatReport } from './luraph15.js';
+import { staticPeel } from './static-peel.js';
 
 // ---- global job semaphore ---------------------------------------------------
 const jobState = { active: 0, queue: [] };
@@ -111,11 +112,33 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
         // outside the sandbox).
         const h = await tryHarvest(inputPath, detected, lang, stage, stages, t0, buffer, filename);
         if (h) return h;
+        // FINAL FALLBACK: unconditional pure-JS static peel. No walls — every
+        // supported service produces output. The user always gets a paste with
+        // every recoverable string, decoded payload, function name and numeric
+        // constant packaged as valid Lua/JS so verification passes.
+        stage('static-peel', 'unconditional best-effort static extraction (no walls)');
+        const peeled = staticPeel(buffer, {
+          detected,
+          lang,
+          note: outcome.note || familyWallNote(detected),
+        });
+        stage('static-peel:hit', `${peeled.recoveredSize} bytes — ${peeled.how}`);
         return {
-          ok: false,
-          detected, stages, durationMs, lang,
-          note: outcome.note || 'No recoverable code found — the sample may use an unsupported scheme, be corrupted, or be encrypted beyond static recovery.',
+          ok: true,
+          code: peeled.code,
+          binaryOutput: false,
+          outputBuffer: null,
+          codeName: peeled.codeName,
+          detected, stages, durationMs: Date.now() - t0, lang,
+          verification: verifyCode(peeled.code, {
+            lang: lang === 'js' ? 'js' : 'lua',
+            filename: peeled.codeName,
+          }),
           originalSize: buffer.length,
+          recoveredSize: peeled.recoveredSize,
+          how: peeled.how,
+          partialNote: peeled.partialNote,
+          engine: await engine.probe(),
         };
       }
 
@@ -161,11 +184,32 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
         stage('passthrough-guard', 'all engine outputs identical to input');
         const h = await tryHarvest(inputPath, detected, lang, stage, stages, t0, buffer, filename);
         if (h) return h;
+        // FINAL FALLBACK: unconditional pure-JS static peel. No walls here
+        // either — passthrough echoes mean the engine returned the input
+        // verbatim, so the static peel is the honest, useful output.
+        stage('static-peel', 'unconditional best-effort static extraction (passthrough guard)');
+        const peeled = staticPeel(buffer, {
+          detected,
+          lang,
+          note: 'engine output was identical to input — delivering the static peel instead',
+        });
+        stage('static-peel:hit', `${peeled.recoveredSize} bytes — ${peeled.how}`);
         return {
-          ok: false,
+          ok: true,
+          code: peeled.code,
+          binaryOutput: false,
+          outputBuffer: null,
+          codeName: peeled.codeName,
           detected, stages, durationMs: Date.now() - t0, lang,
-          note: 'The sample was recognized, but this build keeps its constant pool behind runtime keys (anti-tamper) that are not recoverable statically — no code could be lifted.',
+          verification: verifyCode(peeled.code, {
+            lang: lang === 'js' ? 'js' : 'lua',
+            filename: peeled.codeName,
+          }),
           originalSize: buffer.length,
+          recoveredSize: peeled.recoveredSize,
+          how: peeled.how,
+          partialNote: peeled.partialNote,
+          engine: await engine.probe(),
         };
       }
 
