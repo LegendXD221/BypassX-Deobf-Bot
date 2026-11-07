@@ -113,11 +113,12 @@ export function helpReply(prefix, client) {
   const highlights = SERVICES.slice(0, 10).map((s) => s.name).join(' • ');
   const card = container(BRAND.color, (c) => {
     brandHeader(c, '🧩 BypassX Deobf — help',
-      'Upload an obfuscated file — I return only the deobfuscated code. Auto-detects the obfuscator with a confidence %.', client);
+      'Send an obfuscated file or a link — I return only the deobfuscated code. Auto-detects the obfuscator with a confidence %.', client);
     c.addSeparatorComponents(SEP());
     c.addTextDisplayComponents(T([
-      `**\`${prefix}deobf\`** — attach a file (or reply to a message with one) → pure deobfuscated code via Pastefy + attachment. Slash: \`/deobf file:\``,
-      `**\`${prefix}detect\`** — identify the obfuscator + confidence %, no deobfuscation. Slash: \`/detect file:\``,
+      `**\`${prefix}deobf\`** — attach a file, paste a link, or reply to a message with one → pure deobfuscated code via Pastefy + attachment. Slash: \`/deobf file:\` or \`/deobf link:\``,
+      `**\`${prefix}detect\`** — identify the obfuscator + confidence %, no deobfuscation. Slash: \`/detect file:\` or \`/detect link:\``,
+      `**Link sources** — Pastefy • GitHub (blob/raw) • Gists • Pastebin • Discord message links • any direct URL`,
       `**\`${prefix}families\`** — every supported service, version range and recovery tier`,
       `**\`${prefix}ping\`** • **\`${prefix}invite\`** • **\`${prefix}help\`** — latency / invite / this panel`,
     ].join('\n')));
@@ -160,6 +161,12 @@ export function familiesReply(prefix) {
 
 // ---- detection report -------------------------------------------------------
 
+function sourceLine(meta) {
+  if (!meta?.sourceUrl) return '';
+  const kind = meta.sourceNote ? `${meta.sourceNote} — ` : 'link — ';
+  return `-# Fetched from ${kind}${clamp(meta.sourceUrl, 180)}`;
+}
+
 export function detectionReply(detected, meta, prefix) {
   const { sizeLabel, fileLabel } = meta || {};
   if (detected.id === 'unknown' || !detected.confidence) {
@@ -173,7 +180,8 @@ export function detectionReply(detected, meta, prefix) {
       c.addTextDisplayComponents(T([
         `**File:** ${clamp(fileLabel || '—', 60)}${sizeLabel ? ` • ${sizeLabel}` : ''} • language: ${detected.lang || '—'}`,
         `**Next step:** run \`${prefix}deobf\` on the same file — the auto pipeline handles unknown formats.`,
-      ].join('\n')));
+        sourceLine(meta),
+      ].filter(Boolean).join('\n')));
       footerButtons(c);
     });
     return v2([card]);
@@ -190,7 +198,8 @@ export function detectionReply(detected, meta, prefix) {
     c.addTextDisplayComponents(T([
       `**Recovery tier:** ${TIER_LABEL[detected.tier] || '◐ partial recovery'}`,
       `**Language:** ${detected.lang || '—'} • **File:** ${clamp(fileLabel || '—', 40)}${sizeLabel ? ` • ${sizeLabel}` : ''}`,
-    ].join('\n')));
+      sourceLine(meta),
+    ].filter(Boolean).join('\n')));
     if (detected.evidence?.length) {
       c.addTextDisplayComponents(T([
         '**Evidence**',
@@ -212,7 +221,7 @@ export function detectionReply(detected, meta, prefix) {
 
 // ---- success ----------------------------------------------------------------
 
-export function successReply(result, paste, filename) {
+export function successReply(result, paste, filename, sourceUrl, sourceNote) {
   const d = result.detected || {};
   const files = [];
   const card = container(BRAND.ok, (c) => {
@@ -226,8 +235,9 @@ export function successReply(result, paste, filename) {
     c.addTextDisplayComponents(T([
       `**Pipeline:** ${clamp((result.stages || []).map((s) => s.name).join(' → ') || 'engine', 400)}`,
       `**Size:** ${fmtBytes(result.originalSize)} → ${fmtBytes(result.recoveredSize)} • **Time:** ${((result.durationMs || 0) / 1000).toFixed(1)}s • **Engine:** ${result.engine?.version || 'core'}`,
-      `**Input:** ${clamp(filename || result.codeName || 'file', 60)}`,
-    ].join('\n')));
+      `**Input:** ${clamp(filename || result.codeName || 'file', 60)}${sourceUrl ? ' • **Source:** link' : ''}`,
+      sourceUrl ? sourceLine({ sourceUrl, sourceNote }) : '',
+    ].filter(Boolean).join('\n')));
 
     if (result.binaryOutput) {
       files.push(new AttachmentBuilder(result.outputBuffer, { name: result.codeName || 'unpacked.bin' }));

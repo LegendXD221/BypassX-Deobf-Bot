@@ -1,22 +1,25 @@
 /**
  * .deobf / /deobf — full pipeline: detect → deobfuscate → Pastefy (pure code).
+ * Accepts a file attachment, a link (Pastefy/GitHub/Pastebin/gist/Discord
+ * message/direct URL), or a reply to a message with a file.
  */
 import { deobfuscate } from '../pipeline.js';
 import { createPaste } from '../pastefy.js';
 import { checkCooldown } from '../rate-limit.js';
 import { successReply, failureReply, errorReply, cooldownReply } from '../replies.js';
-import { getAttachmentBuffer } from '../ctx.js';
+import { getInputBuffer } from '../ctx.js';
 import { CONFIG } from '../config.js';
 import { logger } from '../logger.js';
 import { bumpJob } from '../keepalive.js';
 
 export default {
   name: 'deobf',
-  description: 'Deobfuscate an attached file — auto-detect + pure code via Pastefy',
-  usage: '.deobf <attach file> (or reply to a message with a file)',
+  description: 'Deobfuscate a file or link — auto-detect + pure code via Pastefy',
+  usage: '.deobf <attach file | link>',
   slash: {
     options: [
-      { name: 'file', description: 'The obfuscated file (.lua/.js/.py/.exe…)', type: 'ATTACHMENT', required: true },
+      { name: 'file', description: 'The obfuscated file (.lua/.js/.py/.exe…)', type: 'ATTACHMENT', required: false },
+      { name: 'link', description: 'Or fetch it from a link (Pastefy, GitHub, Pastebin, gist, Discord message, direct)', type: 'STRING', required: false },
     ],
   },
   heavy: true,
@@ -28,11 +31,11 @@ export default {
 
     let att;
     try {
-      att = await getAttachmentBuffer(ctx, { maxBytes: CONFIG.maxUploadBytes });
+      att = await getInputBuffer(ctx, { maxBytes: CONFIG.maxUploadBytes });
     } catch (e) {
       return ctx.reply(errorReply('Download failed', String(e.message || e).slice(0, 300)));
     }
-    if (att.error) return ctx.reply(errorReply('No file', att.error));
+    if (att.error) return ctx.reply(errorReply('No input', att.error));
 
     try {
       const result = await deobfuscate({ buffer: att.buffer, filename: att.filename });
@@ -54,7 +57,7 @@ export default {
       }
       bumpJob(true);
       logger.info({ name: att.filename, size: result.recoveredSize, paste: paste?.id || null }, 'deobf: success');
-      return ctx.reply(successReply(result, paste, att.filename));
+      return ctx.reply(successReply(result, paste, att.filename, att.sourceUrl, att.note));
     } catch (e) {
       bumpJob(false);
       logger.error({ err: String(e?.stack || e).slice(0, 500) }, 'deobf: crashed');

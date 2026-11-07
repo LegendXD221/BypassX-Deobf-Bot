@@ -1,18 +1,20 @@
 /**
  * .detect / /detect — identify the obfuscator + confidence %, no deobfuscation.
+ * Accepts a file attachment or a link.
  */
 import { CONFIG } from '../config.js';
 import { detectService, guessLanguage } from '../detect.js';
 import { detectionReply, errorReply } from '../replies.js';
-import { getAttachmentBuffer } from '../ctx.js';
+import { getInputBuffer } from '../ctx.js';
 
 export default {
   name: 'detect',
-  description: 'Identify the obfuscator/packer of an attached file with a confidence percentage',
-  usage: '.detect <attach file>',
+  description: 'Identify the obfuscator/packer of a file or link with a confidence percentage',
+  usage: '.detect <attach file | link>',
   slash: {
     options: [
-      { name: 'file', description: 'The file to identify', type: 'ATTACHMENT', required: true },
+      { name: 'file', description: 'The file to identify', type: 'ATTACHMENT', required: false },
+      { name: 'link', description: 'Or fetch it from a link (Pastefy, GitHub, Pastebin, gist, Discord message, direct)', type: 'STRING', required: false },
     ],
   },
 
@@ -20,11 +22,11 @@ export default {
     await ctx.defer();
     let att;
     try {
-      att = await getAttachmentBuffer(ctx, { maxBytes: CONFIG.maxUploadBytes });
+      att = await getInputBuffer(ctx, { maxBytes: CONFIG.maxUploadBytes });
     } catch (e) {
       return ctx.reply(errorReply('Download failed', String(e.message || e).slice(0, 300)));
     }
-    if (att.error) return ctx.reply(errorReply('No file', att.error));
+    if (att.error) return ctx.reply(errorReply('No input', att.error));
 
     const det = detectService(att.buffer);
     const lang = guessLanguage(att.buffer);
@@ -33,6 +35,10 @@ export default {
       : { id: 'unknown', name: 'Unknown', confidence: 0, lang, candidates: [] };
 
     const sizeLabel = `${(att.buffer.length / 1024).toFixed(1)} KB`;
-    return ctx.reply(detectionReply(detected, { sizeLabel, fileLabel: att.filename || 'file' }, ctx.prefix));
+    return ctx.reply(detectionReply(
+      detected,
+      { sizeLabel, fileLabel: att.filename || 'file', sourceUrl: att.sourceUrl, sourceNote: att.note },
+      ctx.prefix,
+    ));
   },
 };

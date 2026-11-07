@@ -1,6 +1,6 @@
 # BypassX Deobf Bot
 
-**The best Discord bot for deobfuscating code.** Upload an obfuscated file — get back clean, readable source via [Pastefy](https://pastefy.app), with the obfuscator auto-detected and a **confidence percentage** shown for every guess.
+**The best Discord bot for deobfuscating code.** Send an obfuscated file or a link — get back clean, readable source via [Pastefy](https://pastefy.app), with the obfuscator auto-detected and a **confidence percentage** shown for every guess.
 
 Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) static analysis engine (64 Rust crates, engine 0.12.0) — the same engine behind the [web API](https://bypassx-deobf.onrender.com) — plus [webcrack](https://github.com/j4k0xb/webcrack) for JavaScript.
 
@@ -52,14 +52,23 @@ Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) sta
 
 | Prefix | Slash | What it does |
 | --- | --- | --- |
-| `.deobf` | `/deobf file:` | Detect + deobfuscate an attached file → Pastefy link (+ inline preview for small outputs) |
-| `.detect` | `/detect file:` | Detection report only: confidence bar, evidence, runner-up candidates |
+| `.deobf` | `/deobf file:` `/deobf link:` | Detect + deobfuscate an attached file or linked file → Pastefy link (+ inline preview for small outputs) |
+| `.detect` | `/detect file:` `/detect link:` | Detection report only: confidence bar, evidence, runner-up candidates |
 | `.families` | `/families` | Full support table with version ranges and recovery tiers |
 | `.help` | `/help` | Overview |
 | `.ping` | `/ping` | Latency |
 | `.invite` | `/invite` | Add the bot to your server |
 
-`.deobf` accepts the file attached to your message **or** as a reply to a message containing one. Size limit 10 MB (configurable). Results arrive as a Components V2 card with **paste + raw buttons**, an inline preview, and the recovered file attached.
+`.deobf` accepts the file attached to your message **or** as a reply to a message containing one. It also accepts **links** — paste any of these after the command:
+
+- `pastefy.app/<id>` — Pastefy pastes (fetched via the API)
+- `github.com/u/r/blob/…` / `/raw/…` — GitHub files (private repos work when the server has `GITHUB_TOKEN`)
+- `gist.github.com/u/<id>` — gists (first file)
+- `pastebin.com/<id>` — Pastebin (rewritten to `/raw/`)
+- `discord.com/channels/…/<message>` — Discord message links: I read the message's first attachment (or its text)
+- any direct URL to the raw obfuscated file
+
+Every redirect hop is DNS-checked and private/reserved/metadata addresses (127/8, 10/8, 169.254/16 including cloud metadata, …) are blocked — the link fetcher is SSRF-hardened like the rest of the pipeline. Size limit 10 MB (configurable). Results arrive as a Components V2 card with **paste + raw buttons**, an inline preview, and the recovered file attached.
 
 ## Quick start (self-host)
 
@@ -82,6 +91,8 @@ Local testing without Discord:
 npm run prepare-engine                 # fetch the engine
 node test/run.js path/to/obfuscated.lua        # detect + deobf + paste
 node test/run.js --detect-only file.lua        # detection report only
+node test/links.js                             # link support: unit + live fetch tests
+node test/e2e-links.js                         # link → deobf end-to-end (needs engine)
 ```
 
 ## Deploy on Render (free tier, 24/7)

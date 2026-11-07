@@ -4,6 +4,61 @@ Self-updating worklog. Read before work; update + push after every change.
 
 ---
 
+## 2026-11-07 — v1.2.0 "link support"
+
+### Added
+- **Link input everywhere** (`src/fetchurl.js` new): `.deobf <url>`, `.detect <url>`,
+  `/deobf link:`, `/detect link:` — plus reply-to-message now also picks a link
+  out of the referenced text. Host-aware resolvers:
+  - **Pastefy** `pastefy.app/<id>` → API raw content (title becomes filename,
+    extension sniffed from content)
+  - **GitHub** `blob|raw` → raw.githubusercontent rewrite; **private repos**
+    auto-retry with the server's `GITHUB_TOKEN` (note becomes
+    "GitHub file (private)")
+  - **Gists** via `api.github.com/gists/<id>` (token-aware), first file
+  - **Pastebin** `pastebin.com/<id>` → `/raw/<id>` rewrite
+  - **Discord message links** `discord.com/channels/…/<msg>` — bot resolves the
+    message and takes its first (largest) attachment, else the text content
+  - **any direct URL** — browser-UA fetch, extension guessed by content sniff
+    (lua/js/py/exe/gz/zip/elf/txt)
+- **SSRF-hardened fetcher** (`safeFetch`): manual redirect loop (≤5 hops),
+  every hop DNS-resolved and compared against a private/reserved blocklist
+  (127/8, 10/8, 172.16/12, 192.168/16, 169.254/16 incl. cloud metadata,
+  100.64/10, ULA/link-local/mapped v6, localhost/internal suffixes); plaintext
+  http is upgraded to https; bodies size-capped while streaming; non-http(s)
+  schemes rejected (`ftp://` friendly error). Fits the bot's RCE-protected
+  story: samples are never executed, and links can never probe the internal
+  network.
+- **Unified input resolution** (`getInputBuffer` in `src/ctx.js`): link →
+  attachment → referenced message (attachment or link inside its text), with
+  user-safe error strings.
+- Replies now show the fetched source: success card gets "• **Source:** link"
+  + `-# Fetched from <note> — <url>`; detection report same. Help panel lists
+  link sources. Success/detection cards pass `sourceUrl`/`sourceNote` through.
+- **Tests**: `test/links.js` (17 checks: URL parsing, scheme rejection, private
+  IP blocklist, SSRF blocks incl. loopback + cloud metadata + localhost,
+  content sniffing, live GitHub/direct/Pastefy round-trip) and
+  `test/e2e-links.js` (link → engine end-to-end). Both green locally.
+
+### Fixed
+- `normalizeUrl` silently rewrote `ftp://…` into `https://ftp://…` — now any
+  explicit non-http(s) scheme is rejected up front.
+
+### Verified (local, real samples)
+- Link e2e: Prometheus VMify 1,596 B fetched from a GitHub link (private-repo
+  token path) and from a Pastefy paste → **Prometheus 99% → full peel, 836 B
+  recovered**, both sources, pastes OK.
+- `node test/links.js` — 17 passed / 0 failed (includes live Pastefy
+  round-trip + GitHub blob fetch).
+- `node test/v2-smoke.js` — 13/13 Components V2 replies still pass.
+
+### Next
+- UptimeRobot external monitor (user-side, optional third-party layer).
+- Luraph v15.1 devirtualization roadmap (per-build key capture).
+- MoonSec V2 escrow dispatcher compatibility in the harvest jail.
+
+---
+
 ## 2026-11-07 — v1.1.0 "Components V2 + dynamic harvest + 24/7 deploy"
 
 ### Added

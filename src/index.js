@@ -10,6 +10,7 @@ import { CONFIG } from './config.js';
 import { logger } from './logger.js';
 import { COMMANDS, commandByName, toSlashJson } from './commands-index.js';
 import { makeCtx } from './ctx.js';
+import { looksLikeUrl } from './fetchurl.js';
 import { probe as probeEngine } from './engine.js';
 import { errorReply } from './replies.js';
 import { startKeepalive, markDiscordReady } from './keepalive.js';
@@ -89,11 +90,14 @@ client.on(Events.MessageCreate, async (message) => {
     if (!cmd) return; // silent for unknown commands
 
     const ctx = makeCtx({ message, client });
-    // Resolve a reply-target attachment so `.deobf` works as a reply.
-    if (!ctx.attachments.length && message.reference?.messageId) {
+    // First URL in the arguments → link input (`.deobf <url>`).
+    ctx.url = parts.find(looksLikeUrl) || null;
+    // Resolve a reply-target attachment or link so `.deobf` works as a reply.
+    if (!ctx.attachments.length && !ctx.url && message.reference?.messageId) {
       try {
         const ref = await message.channel.messages.fetch(message.reference.messageId);
         if (ref?.attachments?.size) ctx.attachments.push(...ref.attachments.values());
+        else if (ref?.content) ctx.url = ref.content.split(/\s+/).find(looksLikeUrl) || null;
       } catch { /* reference gone */ }
     }
     ctx.prefix = CONFIG.prefix;
