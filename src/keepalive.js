@@ -124,19 +124,20 @@ export function startKeepalive() {
   });
   server.listen(port, '0.0.0.0', () => logger.info({ port }, 'keepalive http listening'));
 
-  // Dashboard providers (live job counters + engine state, no import cycle)
-  initDashboardContext({
-    jobStats: () => jobStats(),
-    engine: () => state.engine,
-  });
-
-  // HTTP hardening: bound slow-client abuse (no dynamic input is served —
-  // only static /health, /ping and the status page — but be tidy anyway).
-  server.requestTimeout = 30_000;
+  // Dashboard power tools (deobf pipeline, engine rebuild, 300s shell) need
+  // long-lived responses — the old 30s requestTimeout killed them mid-run and
+  // made the tools look broken. Bounded to 5 min; headers stay tight.
+  server.requestTimeout = 300_000;
   server.headersTimeout = 15_000;
   server.keepAliveTimeout = 10_000;
   server.on('clientError', (err, socket) => {
     try { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); } catch { /* gone */ }
+  });
+
+  // Dashboard providers (live job counters + engine state, no import cycle)
+  initDashboardContext({
+    jobStats: () => jobStats(),
+    engine: () => state.engine,
   });
 
   // keep engine info fresh for /health + status page

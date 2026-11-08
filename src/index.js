@@ -28,7 +28,7 @@ import {
   acquireDanger, releaseDanger, audit, confirmGate,
 } from './owner-guard.js';
 import * as db from './db.js';
-import { setDashboardClient, announceDashboard } from './dashboard.js';
+import { setDashboardClient, announceDashboard, initDashboardToken } from './dashboard.js';
 import { startKeepalive, markDiscordReady } from './keepalive.js';
 
 // HTTP keep-alive server first — Render health checks can hit /health
@@ -67,6 +67,7 @@ client.once(Events.ClientReady, async (c) => {
   logger.info({ user: c.user.tag, guilds: c.guilds.cache.size }, 'bot ready');
   markDiscordReady(true);
   setDashboardClient(c);
+  await initDashboardToken(); // DB-backed token — survives Render redeploys
   announceDashboard();
   c.user.setPresence({
     activities: [{ name: '.deobf | /deobf — best deobf bot', type: 3 }], // 3 = WATCHING

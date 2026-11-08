@@ -1,6 +1,80 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.3.0 — dashboard fixed + redesigned: mission-control UI, 25+ owner tools
+
+**"Dashboard Isn't Working" — root-caused, fixed, redesigned. The v2.0/2.1/2.2
+dashboard served a client script that could not parse: every page loaded as
+dead HTML (no tabs, no state, no buttons). v2.3.0 rebuilds it end to end.**
+
+Root causes found (all fixed):
+
+- **Fatal client-script syntax error (the real breakage).** The old page was
+  one JS template literal; client code like `lines.join('\n')` had its `\n`
+  processed by the OUTER template literal, so the served script contained a
+  raw newline inside a string literal → `Unexpected token` → the whole
+  `<script>` block died at parse time. The page rendered (static HTML was
+  fine) but nothing worked: no state fetch, no tab switching, no tools.
+  Verified against the shipped build: `new Function(script)` → syntax error.
+  **Guard added:** `test/dashboard.js` now extracts and parse-checks the
+  served inline script on every run — this class of breakage can't pass CI.
+- **Owner self-lockout.** After 8 wrong guesses from an IP (e.g. an attacker
+  or a stale tab), even the CORRECT token returned 404 for 15 minutes — the
+  owner was locked out of their own dashboard with no recovery. Now a correct
+  timing-safe token match always passes and clears that IP's lockout, plus a
+  **Reset rate limits** tool wipes lockouts, API buckets and cooldowns.
+- **Token lost on every redeploy.** Render's filesystem is ephemeral, so
+  `var/dash-token` died on each deploy and the auto-generated token changed —
+  saved dashboard URLs 404'd forever. The token is now mirrored to the new
+  `dashboard_state` table (DB survives), priority: env > DB > file > fresh.
+- **30s requestTimeout killed long tools.** Host shell (90s cap) and any
+  engine run died mid-request and looked "broken". Raised to 300s (headers
+  timeout unchanged), shell allows `cmd %% 300` up to 300s.
+- **Stale version display.** `CONFIG.version` said 2.0.0 while the bot was on
+  2.2.0; now 2.3.0 in both config and package.json.
+
+Redesign (new `src/dashboard-page.js`, `src/dashboard.js` routes extended):
+
+- **Mission-control layout**: sidebar navigation (Monitor / Operate groups),
+  gradient topbar with live status pills, 7 tabs, mobile-responsive (sidebar
+  collapses to a chip bar), violet/cyan dark theme, zero external assets.
+- **Overview**: 8 KPI cards — bot, jobs (big numbers), engine, database
+  (breaker telemetry), guilds, host (node/platform/cpus/load/RSS/heap),
+  protection, stats counters.
+- **Power tools tab (25+ tools)**: shared code input (paste / URL / filename /
+  family hint) feeding the analyzers, then 14 tool cards — **deobfuscate**
+  (full pipeline from the browser), **detect**, **beautify**, **extract
+  strings**, **jailed eval**, **host shell**, **broadcast**, **DM user**,
+  **set presence**, **ID lookup** (guild/user/channel + blacklist state),
+  **invite generator**, **engine rebuild**, **reset rate limits**,
+  **restart/shutdown** — every output with meta line + copy + download;
+  danger actions use a two-step arm-confirm (no browser dialogs).
+- **New API routes** (all audited): `POST deobf|detect|beautify|strings` (SSRF-
+  hardened URL fetch or pasted code, hint pass-through), `POST dm|status|
+  lookup|engine-rebuild|reset-limits`, `GET env` (masked) | `history` |
+  `commands` | `invite` | `backup` (all-tables JSON download,
+  content-disposition). `readBody` limit raised to 4 MB, API cap 60→120/min.
+- **Database tab**: SQL runner, backup download, recent-jobs history viewer
+  (`historyTail`), blacklist manager. **Logs tab**: 120-line tail + optional
+  5s auto-refresh. **Audit tab**: 80 newest entries. **Bot commands tab**:
+  the full 26-command registry with owner/danger chips.
+- `stateData()` extended: host info (node/platform/cpus/load/pid), config
+  (prefix, masked owner id, upload cap, engine timeout, command count,
+  public URL), heap; db.js gains `dashboard_state` (kvGet/kvSet) +
+  `historyTail`; rate-limit.js gains `resetCooldowns()`.
+
+Verification: `test/dashboard.js` extended (client-script parse guard,
+tool-builder assertions, owner-unlock behavior) — **all 11 suites pass**;
+headless-browser E2E: all 7 tabs render with zero console errors, detect /
+eval / invite tools executed live from the browser, served script parses
+(30,475 chars), correct-token-after-lockout returns 200.
+
+Notes: the deobf/detect/beautify/strings tools reuse the exact Discord
+pipeline (same detection, same routes, same never-fail semantics); outputs
+clip at 120k chars with copy/download for the rest. eval/exec/backup/SQL
+remain owner-only behind the token URL and every call is audited.
+
+
 ## v2.2.0 — behaviour-trace source recovery + multi-proto devirtualization
 
 **The hybrid CPS-loader v15.1 layout — the one sample class no stage could

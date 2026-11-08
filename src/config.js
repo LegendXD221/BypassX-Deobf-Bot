@@ -42,7 +42,7 @@ export const CONFIG = {
   dangerMaxPerHour: Math.max(1, num('DANGER_MAX_PER_HOUR', 12)),
   confirmTimeoutS: Math.max(5, num('CONFIRM_TIMEOUT_S', 30)),
 
-  version: '2.0.0',
+  version: '2.3.0',
 };
 
 export function ensureVarDir(sub = '') {

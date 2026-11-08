@@ -127,6 +127,11 @@ export async function init() {
         note           TEXT,
         updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
       );
+      CREATE TABLE IF NOT EXISTS dashboard_state (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
       CREATE INDEX IF NOT EXISTS deobf_history_user_idx ON deobf_history (user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS owner_audit_time_idx ON owner_audit (created_at DESC);
     `);
@@ -434,6 +439,42 @@ export async function setGuildSettings(guildId, patch = {}) {
 }
 
 // ---- raw SQL (owner .db command) ----------------------------------------------
+
+/**
+ * Tiny key/value store (dashboard_state table) — survives Render's ephemeral
+ * filesystem, so e.g. the dashboard token is stable across redeploys.
+ */
+export async function kvGet(key) {
+  if (!describe().enabled) return null;
+  try {
+    const r = await gate.run(() => state.pool.query('SELECT value FROM dashboard_state WHERE key = $1', [String(key)]));
+    return r.rows?.[0]?.value ?? null;
+  } catch { return null; }
+}
+
+export async function kvSet(key, value) {
+  if (!describe().enabled) return false;
+  try {
+    await gate.run(() => state.pool.query(
+      `INSERT INTO dashboard_state (key, value, updated_at) VALUES ($1, $2, now())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [String(key), String(value)],
+    ));
+    return true;
+  } catch { return false; }
+}
+
+/** Recent deobfuscation jobs across ALL users — dashboard history viewer. */
+export async function historyTail(limit = 25) {
+  if (!describe().enabled) return [];
+  const n = Math.max(1, Math.min(100, Number(limit) || 25));
+  try {
+    const r = await gate.run(() => state.pool.query(
+      `SELECT created_at, command, family, confidence, success, filename, size, duration_ms, paste_url, source
+       FROM deobf_history ORDER BY created_at DESC LIMIT $1`, [n]));
+    return r.rows || [];
+  } catch { return []; }
+}
 
 export async function rawSql(text) {
   if (!dbUrl() || !state.pool) return { error: 'DATABASE_URL not configured — database is offline.' };

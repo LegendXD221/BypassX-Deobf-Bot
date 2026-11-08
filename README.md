@@ -120,7 +120,7 @@ Layer 0: owner commands are never listed in public help.
   dynamic input, hardened timeouts, 400 on malformed requests.
 - Blacklisted users/servers are refused every public command before dispatch.
 
-### Owner dashboard — one secret URL (v1.5.0)
+### Owner dashboard — one secret URL (v1.5.0, redesigned v2.3.0)
 
 The bot serves a full control panel at **`/dash/<DASHBOARD_TOKEN>`** — the URL
 itself is the credential:
@@ -129,29 +129,46 @@ itself is the credential:
   (recommended, stable across deploys) or leave it unset and the bot generates
   a 192-bit token at boot, prints it **once** in the private Render log
   (`dashboard: ready — private URL path`) and stores it in `var/dash-token`.
+  Since v2.3.0 the token is **mirrored into the database** (`dashboard_state`
+  table), so the saved URL keeps working across Render redeploys even though
+  the container filesystem is ephemeral.
 - **It is never leaked:** no link, ping, or mention anywhere in Discord
   messages, the status page, `/health`, robots.txt (which blocks everything),
   the README, or the repo. Wrong guesses return an identical 404, are
   timing-safe-compared, brute-force-blocked per IP (8 tries → 15 min), sent
-  `noindex`/`no-store`/`DENY`-framing headers, and never cached.
+  `noindex`/`no-store`/`DENY`-framing headers, and never cached. Since v2.3.0
+  a **correct token is lockout-immune** — presenting the right URL always
+  gets in and clears that IP's lockout (the owner can never lock themselves
+  out), and the **Reset rate limits** tool clears cooldowns, API buckets and
+  lockouts on demand.
 
-What's on it (dark one-page UI, no external assets):
+What's on it (v2.3.0 mission-control UI — sidebar layout, 7 tabs, 25+ tools,
+no external assets, mobile responsive):
 
-- **Overview** — bot/engine/database/gateway status, jobs this boot, all-time
-  DB counters, memory, per-guild totals, protection status.
+- **Overview** — bot/engine/database/gateway/host status cards, jobs this
+  boot, all-time DB counters, memory + load, guild totals, protection status.
+- **Power tools** — a shared code input (paste or URL, optional family hint)
+  feeding the analyzers, plus 14 tool cards: **deobfuscate** (full pipeline
+  from the browser), **detect**, **beautify**, **extract strings**, jailed
+  **eval**, **host shell**, **broadcast**, **DM user**, **set presence**,
+  **ID lookup** (guild/user/channel + blacklist state), **invite generator**,
+  **engine rebuild**, **reset rate limits**, **restart/shutdown** (two-step
+  confirm). Every output has copy + download.
 - **Guilds** — every server with **name, member count, id, join date, icon**
   and full per-guild control: disable the bot there entirely, turn `deobf`
   or `detect` on/off, set a **custom prefix** per server, send a message to
   any channel, leave the server (all enforced at dispatch, owner bypasses).
-- **Power** — broadcast to every guild, the jailed **eval** (same secret-free
-  child as `.eval`), **host shell** (same runner as `.exec`), restart / stop.
-- **Blacklist** — add/remove/list global blocks.
-- **Logs** — live tail of the in-process log ring.
+- **Database** — raw Neon **SQL runner** with `status` shortcut, **JSON
+  backup** download (all tables), **recent jobs** history viewer, and the
+  **blacklist** manager.
+- **Logs** — live tail of the in-process log ring with optional 5s auto-refresh.
 - **Audit** — every owner action from Discord **and** the dashboard.
-- **SQL** — raw Neon SQL runner with `status` shortcut.
+- **Bot commands** — the full command registry with owner/danger chips.
 
 Every dashboard mutation lands in the `owner_audit` table as
-`user_id = dashboard`.
+`user_id = dashboard`. The served client script is parse-checked by
+`test/dashboard.js` (the v2.0 dashboard shipped a dead script — that class of
+breakage can't pass CI again).
 
 ### Database — Neon Postgres (free tier)
 

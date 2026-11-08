@@ -19,3 +19,10 @@ export function checkCooldown(userId) {
   }
   return { ok: true, remainingMs: 0 };
 }
+
+/** Dashboard "reset rate limits" tool — clears every in-memory cooldown. */
+export function resetCooldowns() {
+  const n = lastUse.size;
+  lastUse.clear();
+  return n;
+}

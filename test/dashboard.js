@@ -54,12 +54,24 @@ assert.equal(r.headers.get('x-robots-tag'), 'noindex, nofollow, noarchive', 'aut
 r = await req(`/dash/${TOK}`);
 assert.equal(r.status, 200, 'auth: right token → dashboard');
 const page = await r.text();
-assert.ok(page.includes('Owner Dashboard'), 'page: dashboard renders');
-assert.ok(page.includes('control of how the bot works') || page.includes('Per-guild control'), 'page: guild control present');
+assert.ok(page.includes('mission control'), 'page: dashboard renders');
+assert.ok(page.includes('Per-guild control'), 'page: guild control present');
 assert.ok(!page.includes(TOK), 'page: token never echoed inside the page HTML');
 assert.ok(r.headers.get('cache-control').includes('no-store'), 'page: never cached');
 assert.ok(r.headers.get('x-frame-options') === 'DENY', 'page: clickjacking protection');
-console.log('dashboard auth + page: ok');
+// v2.3.0 regression guard: the v2.0 dashboard shipped a client script that
+// FAILED TO PARSE (template-literal escape bug) — page looked fine but every
+// button was dead. Parse the served inline script here so that can never
+// happen silently again.
+{
+  const script = page.split('<script>')[1].split('</scr' + 'ipt>')[0];
+  assert.ok(script.length > 10_000, 'page: inline client script extracted');
+  new Function(script); // throws on syntax error
+  // tool cards are built client-side — assert the builder data ships in the script
+  assert.ok(script.includes('Run full deobf') && script.includes('Detect obfuscator'), 'page: power tools builders present (deobf + detect)');
+  assert.ok(script.includes('Extract strings') && script.includes('Run shell'), 'page: analyzer + shell tools present');
+}
+console.log('dashboard auth + page + CLIENT SCRIPT PARSE: ok');
 
 // ---- guilds with names + member counts ------------------------------------------
 r = await req(`/dash/${TOK}/api/state`);
@@ -128,9 +140,14 @@ for (let i = 0; i < 10; i++) {
   r = await req('/dash/incorrect-guess');
   assert.equal(r.status, 404, `brute: guess ${i + 1} → 404`);
 }
+// v2.3.0 fix: the v2.0 behavior locked the OWNER out too (right token → 404
+// for 15 min after an attacker spammed wrong guesses). The correct token is
+// the credential — presenting it must always pass and clear the lockout.
 r = await req(`/dash/${TOK}`);
-assert.equal(r.status, 404, 'brute: after 8 fails even the RIGHT token is blocked from that IP');
-console.log('brute-force lockout: ok');
+assert.equal(r.status, 200, 'brute: correct token is IMMUNE to lockout (v2.3 owner-unlock fix)');
+r = await req(`/dash/${TOK}/api/state`);
+assert.equal(r.status, 200, 'brute: api works after lockout clearance');
+console.log('brute-force lockout + owner immunity: ok');
 
 server.close();
 console.log('\nALL DASHBOARD + DB PROTECTION TESTS PASSED');

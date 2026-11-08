@@ -1,20 +1,22 @@
 /**
- * BypassX Deobf Bot — SECRET owner dashboard.
+ * BypassX Deobf Bot — SECRET owner dashboard (v2.3 "mission control").
  *
  * ONE layer matters most: the URL itself is the credential.
  *   https://<service>.onrender.com/dash/<DASHBOARD_TOKEN>
  * The token is a ≥128-bit secret that:
- *   • comes from the DASHBOARD_TOKEN env var, or is auto-generated at boot
- *     (persisted to var/dash-token and printed ONCE to the private Render log);
+ *   • comes from the DASHBOARD_TOKEN env var, else auto-generated at boot and
+ *     persisted to var/dash-token AND the database (dashboard_state table) so
+ *     it SURVIVES Render redeploys (ephemeral filesystem) — the URL keeps working;
  *   • is compared timing-safely, and any wrong guess returns an identical 404;
- *   • is never linked, pinged, indexed, cached, or logged by anything public —
- *     the status page, /health, Discord cards and robots.txt never mention it.
+ *   • a CORRECT token always gets in and clears any brute-force lockout for
+ *     that IP — the owner can never lock themselves out;
+ *   • is never linked, pinged, indexed, cached, or logged by anything public.
  *
- * From here the owner (and only the owner) can: see every guild with member
- * counts, control per-guild behaviour (disable bot / deobf / detect, custom
- * prefix, message a channel, leave), broadcast, run the jailed eval + host
- * shell, raw SQL, blacklist management, live logs, audit trail, restart /
- * shutdown — every mutation audited to the owner_audit table.
+ * 25+ owner tools: deobfuscate / detect / beautify / strings straight from the
+ * browser, jailed eval, host shell, broadcast, DM, presence, ID lookup, invite
+ * generator, blacklist, per-guild control, SQL, backup, history, env, logs,
+ * audit, engine rebuild, rate-limit reset, restart / shutdown — every mutation
+ * audited to the owner_audit table.
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -23,7 +25,14 @@ import { CONFIG, ensureVarDir } from './config.js';
 import { logger, recentLogs } from './logger.js';
 import * as db from './db.js';
 import { runJailedEval, runShell, broadcastAll } from './runners.js';
-import { prettyEngine, esc, fmtBytes } from './pretty.js';
+import { resetCooldowns } from './rate-limit.js';
+import { deobfuscate } from './pipeline.js';
+import { detectService } from './detect.js';
+import { beautifyCode } from './postprocess.js';
+import { safeFetch } from './fetchurl.js';
+import { COMMANDS } from './commands-index.js';
+import { renderPage } from './dashboard-page.js';
+import os from 'node:os';
 
 let dashClient = null; // set from index.js once the Discord client exists
 let clientProvider = null; // injected by keepalive (jobStats, engine state)
@@ -37,29 +46,67 @@ function client() { return dashClient; }
 
 let cachedToken = null;
 
-function readToken() {
-  const env = (process.env.DASHBOARD_TOKEN || '').trim();
-  if (env) return env;
+function fileToken() {
   const dir = ensureVarDir();
   const file = path.join(dir, 'dash-token');
   try {
     const v = fs.readFileSync(file, 'utf8').trim();
     if (v.length >= 24) return v;
   } catch { /* first boot */ }
+  return null;
+}
+
+function saveFileToken(t) {
+  try {
+    const dir = ensureVarDir();
+    fs.writeFileSync(path.join(dir, 'dash-token'), t, { mode: 0o600 });
+  } catch { /* best effort — DB + log still carry it */ }
+}
+
+function computeToken() {
+  const env = (process.env.DASHBOARD_TOKEN || '').trim();
+  if (env) return env;
   const gen = crypto.randomBytes(24).toString('base64url'); // 192-bit
-  try { fs.writeFileSync(file, gen, { mode: 0o600 }); } catch { /* best effort */ }
+  saveFileToken(gen);
   return gen;
 }
 
 function token() {
-  if (!cachedToken) cachedToken = readToken();
+  if (!cachedToken) cachedToken = computeToken();
   return cachedToken;
+}
+
+/**
+ * Keep the dashboard token STABLE across redeploys: Render's filesystem is
+ * ephemeral, so the var/dash-token file dies on every deploy and the saved
+ * dashboard URL would 404 forever. Fix: mirror the token in the database
+ * (dashboard_state) and adopt the stored one when env/file are absent.
+ * Priority: DASHBOARD_TOKEN env > database > var file > fresh generation.
+ */
+export async function initDashboardToken() {
+  if (process.env.DASHBOARD_TOKEN?.trim()) {
+    await db.kvSet('dash-token', process.env.DASHBOARD_TOKEN.trim()).catch(() => {});
+    return token();
+  }
+  const stored = await db.kvGet('dash-token').catch(() => null);
+  if (stored && stored.length >= 24) {
+    cachedToken = stored;
+    const ft = fileToken();
+    if (ft !== stored) saveFileToken(stored); // heal the local file from DB
+    return stored;
+  }
+  const ft = fileToken();
+  if (ft) { cachedToken = ft; await db.kvSet('dash-token', ft).catch(() => {}); return ft; }
+  const fresh = token();
+  await db.kvSet('dash-token', fresh).catch(() => {});
+  return fresh;
 }
 
 /** Log the private dashboard path once at boot (Render logs are owner-only). */
 export function announceDashboard() {
   const t = token();
   logger.info({ dashboardPath: `/dash/${t}` }, 'dashboard: ready — private URL path (owner-only logs)');
+  logger.info({}, 'dashboard: if the URL stopped working, set DASHBOARD_TOKEN in Render env to pin it forever');
   return t;
 }
 
@@ -109,6 +156,20 @@ function blocked(ip) {
   return Boolean(st?.until && st.until > Date.now());
 }
 
+function clearFails(ip) { fails.delete(ip); }
+
+/** Owner tool: clear every lockout + API rate bucket (fixes self-lockouts). */
+export function resetDashboardLimits() {
+  let lockouts = 0;
+  const now = Date.now();
+  for (const [, st] of fails) if (st.until > now) lockouts += 1;
+  const apiBuckets = apiHits.size;
+  fails.clear();
+  apiHits.clear();
+  const cooldowns = resetCooldowns();
+  return { lockouts, apiBuckets, cooldowns };
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const [ip, st] of fails) if (st.until < now && st.count === 0) fails.delete(ip);
@@ -134,7 +195,7 @@ function html(res, status, body) {
   res.end(body);
 }
 
-async function readBody(req, limit = 200_000) {
+async function readBody(req, limit = 4_000_000) {
   const chunks = [];
   let n = 0;
   for await (const c of req) {
@@ -149,14 +210,43 @@ async function readBody(req, limit = 200_000) {
 // ---- rate limit the API (protect the DB + host) -----------------------------------
 
 const apiHits = new Map(); // ip -> timestamps[]
-const API_LIMIT = 60; // per minute
+const API_LIMIT = 120; // per minute — raised: the power-tools grid fires several calls
 
 function apiAllowed(ip) {
   const now = Date.now();
   const arr = (apiHits.get(ip) || []).filter((t) => now - t < 60_000);
+  if (arr.length >= API_LIMIT) { apiHits.set(ip, arr); return false; }
   arr.push(now);
   apiHits.set(ip, arr);
-  return arr.length <= API_LIMIT;
+  return true;
+}
+
+// ---- input resolution for the code tools -------------------------------------------
+
+/** Accept raw code, or an SSRF-hardened URL fetch. Returns { buffer, filename, error }. */
+async function resolveInput(body) {
+  const url = String(body.url || '').trim();
+  const code = typeof body.code === 'string' ? body.code : '';
+  if (url) {
+    // safeFetch THROWS on any failure (SSRF guard, redirects, size caps) and
+    // resolves { buffer, contentType, finalUrl }.
+    try {
+      const r = await safeFetch(url, { maxBytes: CONFIG.maxUploadBytes, timeoutMs: 30_000 });
+      let filename = 'fetched';
+      try { filename = decodeURIComponent(new URL(r.finalUrl || url).pathname.split('/').pop() || 'fetched').slice(0, 80) || 'fetched'; } catch { /* keep */ }
+      return { buffer: r.buffer, filename };
+    } catch (e) {
+      return { error: String(e?.message || e).slice(0, 250) };
+    }
+  }
+  if (code.trim()) return { buffer: Buffer.from(code, 'utf8'), filename: String(body.filename || 'pasted.lua').slice(0, 80) };
+  return { error: 'paste code or give a URL' };
+}
+
+function clip(text, max = 120_000) {
+  const s = String(text ?? '');
+  if (s.length <= max) return { text: s, clipped: false, total: s.length };
+  return { text: s.slice(0, max), clipped: true, total: s.length };
 }
 
 // ---- main handler -------------------------------------------------------------------
@@ -164,7 +254,8 @@ function apiAllowed(ip) {
 /**
  * Route /dash/* — called from keepalive for every request that starts with /dash.
  * Everything the public internet may send lands here; wrong tokens see a plain
- * 404 indistinguishable from any other unknown path.
+ * 404 indistinguishable from any other unknown path. A CORRECT token always
+ * passes and clears any brute-force state for the caller.
  */
 export async function handleDashboard(req, res, rawUrl) {
   const ip = ipOf(req);
@@ -182,15 +273,14 @@ export async function handleDashboard(req, res, rawUrl) {
 
   // Expected: ['dash', token] or ['dash', token, 'api', ...]
   const supplied = decodeURIComponent(parts[1] || '');
-  if (parts[0] !== 'dash' || !supplied || !safeEq(supplied, token())) {
+  const good = parts[0] === 'dash' && Boolean(supplied) && safeEq(supplied, token());
+  if (!good) {
     if (supplied) registerFail(ip);
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', ...SECURITY_HEADERS });
     return res.end('Not Found');
   }
-  if (blocked(ip)) {
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', ...SECURITY_HEADERS });
-    return res.end('Not Found');
-  }
+  // Correct token ⇒ trusted owner: wipe any lockout recorded for this IP.
+  clearFails(ip);
 
   const rest = parts.slice(2); // e.g. ['api', 'state']
 
@@ -203,13 +293,13 @@ export async function handleDashboard(req, res, rawUrl) {
     return res.end('Not Found');
   }
 
-  if (!apiAllowed(ip)) return json(res, 429, { ok: false, error: 'slow down (60 req/min cap)' });
+  if (!apiAllowed(ip)) return json(res, 429, { ok: false, error: 'slow down (120 req/min cap)' });
 
   try {
     return await routeApi(req, res, rest.slice(1).join('/'), search);
   } catch (e) {
     logger.warn({ err: String(e?.message || e).slice(0, 160) }, 'dashboard: api error');
-    return json(res, 500, { ok: false, error: 'internal error' });
+    return json(res, 500, { ok: false, error: 'internal error: ' + String(e?.message || e).slice(0, 160) });
   }
 }
 
@@ -222,13 +312,66 @@ async function routeApi(req, res, route, search = new URLSearchParams()) {
   if (req.method === 'GET') {
     if (route === 'state') return json(res, 200, { ok: true, data: await stateData() });
     if (route === 'logs') {
-      const n = Math.max(5, Math.min(300, Number(search.get('n')) || 80));
+      const n = Math.max(5, Math.min(400, Number(search.get('n')) || 120));
       return json(res, 200, { ok: true, data: { lines: recentLogs(n) } });
     }
     if (route === 'audit') {
       if (!db.describe().enabled) return json(res, 200, { ok: true, data: { rows: [], note: 'database not configured' } });
-      const rows = await db.auditTail(50);
+      const rows = await db.auditTail(80);
       return json(res, 200, { ok: true, data: { rows } });
+    }
+    if (route === 'history') {
+      if (!db.describe().enabled) return json(res, 200, { ok: true, data: { rows: [], note: 'database not configured' } });
+      const rows = await db.historyTail(search.get('n') || 30);
+      return json(res, 200, { ok: true, data: { rows } });
+    }
+    if (route === 'env') {
+      const SECRET = /TOKEN|SECRET|PASSWORD|PASSWD|KEY|PIN|DATABASE_URL|URL$/i;
+      const INTERESTING = [
+        'DISCORD_TOKEN', 'CLIENT_ID', 'GUILD_ID', 'PREFIX', 'OWNER_ID', 'OWNER_PIN',
+        'DATABASE_URL', 'PASTEFY_TOKEN', 'GITHUB_TOKEN', 'PUBLIC_URL', 'RENDER_EXTERNAL_URL',
+        'MAX_UPLOAD_MB', 'ENGINE_TIMEOUT_S', 'PASTEFY_EXPIRE_DAYS', 'DANGER_COOLDOWN_S',
+        'DANGER_MAX_PER_HOUR', 'CONFIRM_TIMEOUT_S', 'LOG_LEVEL', 'NODE_VERSION', 'PORT',
+        'DASHBOARD_TOKEN', 'ENGINE_URL', 'ENGINE_PATH',
+      ];
+      const mask = (k, v) => {
+        if (v === undefined || v === '') return '— (unset)';
+        if (SECRET.test(k)) return '•••••••• (set, hidden)';
+        return String(v).slice(0, 60);
+      };
+      return json(res, 200, { ok: true, data: { rows: INTERESTING.map((k) => ({ key: k, value: mask(k, process.env[k]) })) } });
+    }
+    if (route === 'commands') {
+      return json(res, 200, {
+        ok: true,
+        data: {
+          rows: COMMANDS.map((c) => ({ name: c.name, description: c.description || '', usage: c.usage || '', owner: Boolean(c.owner), danger: Boolean(c.danger) })),
+        },
+      });
+    }
+    if (route === 'backup') {
+      if (!db.describe().enabled) return json(res, 200, { ok: false, error: 'database not configured' });
+      const dump = {};
+      for (const t of ['bot_stats', 'deobf_history', 'owner_audit', 'blacklist', 'guild_settings', 'dashboard_state']) {
+        try {
+          const r = await db.rawSql(`SELECT * FROM ${t} ORDER BY 1 DESC LIMIT 5000`);
+          dump[t] = r.rows || [];
+        } catch { dump[t] = { error: 'unreadable' }; }
+      }
+      await audit('dash-backup', Object.entries(dump).map(([k, v]) => `${k}:${Array.isArray(v) ? v.length : 'err'}`).join(' '));
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'content-disposition': `attachment; filename="bypassx-backup-${new Date().toISOString().slice(0, 10)}.json"`,
+        ...SECURITY_HEADERS,
+      });
+      return res.end(JSON.stringify({ exportedAt: new Date().toISOString(), version: CONFIG.version, tables: dump }, null, 1));
+    }
+    if (route === 'invite') {
+      const id = client()?.user?.id || CONFIG.clientId;
+      const url = id
+        ? `https://discord.com/oauth2/authorize?client_id=${id}&permissions=8&scope=bot%20applications.commands`
+        : null;
+      return json(res, 200, { ok: Boolean(url), data: { url, botId: id || null } });
     }
   }
 
@@ -236,6 +379,83 @@ async function routeApi(req, res, route, search = new URLSearchParams()) {
 
   const body = await readBody(req);
 
+  // ---- code power tools (deobf / detect / beautify / strings) ----------------------
+  if (route === 'deobf') {
+    const inp = await resolveInput(body);
+    if (inp.error) return json(res, 200, { ok: false, error: inp.error });
+    await audit('dash-deobf', `${inp.filename} ${inp.buffer.length}B hint=${body.hint || '-'}`, { args: inp.filename });
+    try {
+      const result = await deobfuscate({ buffer: inp.buffer, filename: inp.filename, hintId: body.hint || null });
+      const out = clip(result.code || '');
+      return json(res, 200, {
+        ok: true,
+        data: {
+          detected: result.detected, lang: result.lang, stages: result.stages,
+          originalSize: result.originalSize, recoveredSize: result.recoveredSize,
+          durationMs: result.durationMs, note: result.note || '',
+          output: out.text, clipped: out.clipped, totalChars: out.total,
+          codeName: result.codeName || `deobf-${inp.filename}`,
+        },
+      });
+    } catch (e) {
+      return json(res, 200, { ok: false, error: 'pipeline failed: ' + String(e?.message || e).slice(0, 200) });
+    }
+  }
+  if (route === 'detect') {
+    const inp = await resolveInput(body);
+    if (inp.error) return json(res, 200, { ok: false, error: inp.error });
+    await audit('dash-detect', `${inp.filename} ${inp.buffer.length}B`, { args: inp.filename });
+    const d = detectService(inp.buffer);
+    return json(res, 200, {
+      ok: true,
+      data: {
+        filename: inp.filename, size: inp.buffer.length,
+        best: d.best ? {
+          name: d.best.service?.name, id: d.best.service?.id, version: d.best.version,
+          confidence: d.best.confidence, evidence: (d.best.evidence || []).slice(0, 8),
+        } : null,
+        candidates: (d.candidates || []).slice(0, 6).map((c) => ({ name: c.service?.name, confidence: c.confidence })),
+      },
+    });
+  }
+  if (route === 'beautify') {
+    const inp = await resolveInput(body);
+    if (inp.error) return json(res, 200, { ok: false, error: inp.error });
+    await audit('dash-beautify', `${inp.filename} ${inp.buffer.length}B`, { args: inp.filename });
+    try {
+      const r = beautifyCode(inp.filename, inp.buffer);
+      const out = clip(r?.data ?? String(r ?? ''));
+      return json(res, 200, { ok: true, data: { output: out.text, clipped: out.clipped, totalChars: out.total, codeName: `pretty-${inp.filename}` } });
+    } catch (e) {
+      return json(res, 200, { ok: false, error: String(e?.message || e).slice(0, 200) });
+    }
+  }
+  if (route === 'strings') {
+    const inp = await resolveInput(body);
+    if (inp.error) return json(res, 200, { ok: false, error: inp.error });
+    await audit('dash-strings', `${inp.filename} ${inp.buffer.length}B`, { args: inp.filename });
+    const text = inp.buffer.toString('utf8');
+    const found = [];
+    const seen = new Set();
+    const push = (s) => {
+      s = s.trim();
+      if (s.length < 4 || s.length > 300) return;
+      if (seen.has(s)) return;
+      seen.add(s);
+      found.push(s);
+    };
+    for (const line of text.split(/\r?\n/)) {
+      for (const m of line.matchAll(/"((?:[^"\\\n]|\\.){4,300})"/g)) push(m[1]);
+      for (const m of line.matchAll(/'((?:[^'\\\n]|\\.){4,300})'/g)) push(m[1]);
+      for (const m of line.matchAll(/\[\[([^\]\n]{4,300})\]\]/g)) push(m[1]);
+      if (found.length >= 5000) break;
+    }
+    const table = found.map((s, i) => `${String(i + 1).padStart(4)} | ${s.replace(/\n/g, '\\n').slice(0, 200)}`).join('\n');
+    const out = clip(table);
+    return json(res, 200, { ok: true, data: { count: found.length, output: out.text, clipped: out.clipped, totalChars: out.total, codeName: `strings-${inp.filename}.txt` } });
+  }
+
+  // ---- existing + new mutation tools ------------------------------------------------
   if (route === 'guild') return guildAction(req, res, body, audit);
   if (route === 'exec') {
     const r = await runShell(body.cmd || '');
@@ -253,6 +473,49 @@ async function routeApi(req, res, route, search = new URLSearchParams()) {
     const r = await broadcastAll(client(), text, { isBlacklisted: (id) => db.blacklistHas(id) });
     await audit('dash-broadcast', `${r.sent}/${r.total} delivered`, { args: text.slice(0, 100) });
     return json(res, 200, { ok: true, data: r });
+  }
+  if (route === 'dm') {
+    const userId = String(body.userId || '').trim();
+    const text = String(body.text || '').trim();
+    if (!/^\d{5,25}$/.test(userId)) return json(res, 200, { ok: false, error: 'numeric user id required' });
+    if (!text) return json(res, 200, { ok: false, error: 'text required' });
+    try {
+      const u = await client().users.fetch(userId);
+      await u.send(text.slice(0, 1900));
+      await audit('dash-dm', `sent to ${u.tag} (${userId})`, { args: text.slice(0, 100) });
+      return json(res, 200, { ok: true, data: { sent: true, tag: u.tag } });
+    } catch (e) {
+      return json(res, 200, { ok: false, error: String(e?.message || e).slice(0, 200) });
+    }
+  }
+  if (route === 'status') {
+    const text = String(body.text || '').trim();
+    if (!text) return json(res, 200, { ok: false, error: 'text required' });
+    try {
+      await client().user.setPresence({ activities: [{ name: text.slice(0, 120), type: 3 }], status: 'online' });
+      await audit('dash-status', text.slice(0, 120));
+      return json(res, 200, { ok: true, data: { set: text.slice(0, 120) } });
+    } catch (e) {
+      return json(res, 200, { ok: false, error: String(e?.message || e).slice(0, 200) });
+    }
+  }
+  if (route === 'lookup') {
+    const id = String(body.id || '').trim();
+    if (!/^\d{5,25}$/.test(id)) return json(res, 200, { ok: false, error: 'numeric id required' });
+    const c = client();
+    const out = { id, found: [] };
+    const g = c?.guilds?.cache?.get(id);
+    if (g) out.found.push({ kind: 'guild', name: g.name, members: g.memberCount ?? null, owner: g.ownerId, created: g.createdAt?.toISOString?.()?.slice(0, 10) || null });
+    try {
+      const u = await c?.users?.fetch(id);
+      if (u) out.found.push({ kind: 'user', tag: u.tag, bot: u.bot, created: u.createdAt?.toISOString?.()?.slice(0, 10) || null, avatar: u.displayAvatarURL?.({ size: 64 }) || null });
+    } catch { /* not a user */ }
+    try {
+      const ch = await c?.channels?.fetch(id);
+      if (ch) out.found.push({ kind: 'channel', name: ch.name, type: ch.type, guild: ch.guild?.name || null });
+    } catch { /* not a channel */ }
+    const bl = db.describe().enabled ? await db.blacklistHas(id) : false;
+    return json(res, 200, { ok: true, data: { ...out, blacklisted: bl } });
   }
   if (route === 'blacklist') {
     if (!db.describe().enabled) return json(res, 200, { ok: false, error: 'database not configured' });
@@ -281,6 +544,16 @@ async function routeApi(req, res, route, search = new URLSearchParams()) {
     const r = await db.rawSql(sql);
     await audit('dash-sql', r.error ? `error: ${r.error}` : `${r.rowCount ?? 0} rows in ${r.ms}ms`, { args: sql.slice(0, 120) });
     return json(res, 200, { ok: !r.error, data: r });
+  }
+  if (route === 'engine-rebuild') {
+    await audit('dash-engine-rebuild', 'prepare-engine started');
+    const r = await runShell('node bin/prepare-engine.js', 300_000);
+    return json(res, 200, { ok: true, data: r });
+  }
+  if (route === 'reset-limits') {
+    const r = resetDashboardLimits();
+    await audit('dash-reset-limits', `lockouts ${r.lockouts}, api buckets ${r.apiBuckets}, cooldowns ${r.cooldowns}`);
+    return json(res, 200, { ok: true, data: r });
   }
   if (route === 'power') {
     const action = String(body.action || '');
@@ -372,6 +645,7 @@ async function stateData() {
     botId: c?.user?.id || null,
     pingMs: Math.round(c?.ws?.ping || 0),
     memoryMb: mem.rss / 1024 / 1024,
+    heapMb: mem.heapUsed / 1024 / 1024,
     jobs,
     engine: clientProvider?.engine ? clientProvider.engine() : { available: false, version: null },
     db: d,
@@ -381,209 +655,20 @@ async function stateData() {
     guildSettings,
     blacklist: d.enabled ? await db.blacklistList() : [],
     pinArmed: Boolean(process.env.OWNER_PIN),
+    host: {
+      node: process.version,
+      platform: `${os.platform()} ${os.arch()}`,
+      cpus: os.cpus()?.length || 0,
+      load1: os.loadavg?.()[0] ?? 0,
+      pid: process.pid,
+    },
+    config: {
+      prefix: CONFIG.prefix,
+      ownerId: CONFIG.ownerId ? String(CONFIG.ownerId).replace(/\d(?=\d{4})/g, '•') : null,
+      maxUploadMb: Math.round(CONFIG.maxUploadBytes / 1024 / 1024),
+      engineTimeoutS: Math.round(CONFIG.engineTimeoutMs / 1000),
+      commandCount: COMMANDS.length,
+      publicUrl: (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, '') || null,
+    },
   };
-}
-
-// ---- the single-page UI -----------------------------------------------------------------
-
-function renderPage() {
-  return `<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow">
-<title>•</title>
-<style>
-:root{--bg:#0b0b12;--panel:#14141f;--panel2:#1a1a2a;--line:#2d2d44;--txt:#e5e7eb;--dim:#9ca3af;--vio:#a78bfa;--vio2:#7c3aed;--ok:#4ade80;--warn:#fbbf24;--err:#f87171}
-*{box-sizing:border-box}
-body{background:var(--bg);color:var(--txt);font-family:ui-sans-serif,system-ui,sans-serif;margin:0;padding:24px}
-a{color:var(--vio)}
-header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px}
-h1{font-size:20px;margin:0;color:var(--vio)}
-.pill{padding:3px 12px;border-radius:99px;font-size:12px;border:1px solid var(--line);background:var(--panel)}
-.up{color:var(--ok);border-color:#1d4a2c}.down{color:var(--err);border-color:#4a1d1d}
-nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
-nav button{background:var(--panel);color:var(--txt);border:1px solid var(--line);padding:8px 14px;border-radius:10px;cursor:pointer;font-size:13px}
-nav button.on{background:var(--vio2);border-color:var(--vio)}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
-.card h3{margin:0 0 10px;font-size:14px;color:var(--vio)}
-.kv{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}
-.kv b{color:var(--dim);font-weight:500}
-.gcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
-.ghead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
-.ghead img{width:36px;height:36px;border-radius:10px}
-.gname{font-weight:600}.gid{color:var(--dim);font-size:11px;font-family:ui-monospace,monospace}
-.tog{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
-.tog button,.rowbtn button{border:1px solid var(--line);background:var(--panel2);color:var(--txt);padding:5px 10px;border-radius:8px;cursor:pointer;font-size:12px}
-.tog button.on{background:#12331f;border-color:var(--ok);color:var(--ok)}
-.tog button.off{background:#331216;border-color:var(--err);color:var(--err)}
-.danger{background:#331216!important;border-color:var(--err)!important;color:var(--err)}
-input,textarea,select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:7px 10px;font-size:13px;width:100%}
-textarea{min-height:90px;font-family:ui-monospace,monospace;resize:vertical}
-.rowbtn{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-pre{background:#0d0d16;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:12px;overflow:auto;max-height:340px;white-space:pre-wrap;word-break:break-word}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left}
-th{color:var(--dim);font-weight:500}
-.mut{color:var(--dim);font-size:12px}
-.ok{color:var(--ok)}.err{color:var(--err)}.warn{color:var(--warn)}
-.tab{display:none}.tab.on{display:block}
-#toast{position:fixed;bottom:18px;right:18px;background:var(--panel);border:1px solid var(--vio);padding:10px 16px;border-radius:10px;display:none;font-size:13px;max-width:340px}
-.spin{display:inline-block;animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
-</style></head><body>
-<header>
-<h1>🧩 BypassX Deobf — Owner Dashboard</h1>
-<span class="pill" id="p-disc">…</span><span class="pill" id="p-engine">…</span>
-<span class="pill" id="p-db">…</span><span class="pill" id="p-ver">…</span>
-<span class="pill" id="p-up">…</span><span class="pill" id="p-pin">…</span>
-</header>
-<nav>
-<button data-t="ov" class="on">Overview</button><button data-t="gu">Guilds</button>
-<button data-t="pw">Power</button><button data-t="bl">Blacklist</button>
-<button data-t="lg">Logs</button><button data-t="au">Audit</button><button data-t="sq">SQL</button>
-</nav>
-
-<div class="tab on" id="t-ov"><div class="grid" id="ov-cards"></div></div>
-
-<div class="tab" id="t-gu"><p class="mut">Per-guild control: toggles are enforced at dispatch (bot disabled / deobf off / detect off), the custom prefix replaces the global one for prefix commands. DB required.</p><div id="guilds"></div></div>
-
-<div class="tab" id="t-pw">
-<div class="gcard"><h3>⚡ Broadcast to every guild</h3><input id="bc-text" placeholder="Message text (max 1500)"><div class="rowbtn"><button id="bc-go">Send broadcast</button><span class="mut" id="bc-out"></span></div></div>
-<div class="gcard"><h3>🧠 eval — jailed sandbox (secret-free child, 12s kill)</h3><textarea id="ev-code" placeholder="return 6 * 7;"></textarea><div class="rowbtn"><button id="ev-go">Run eval</button></div><pre id="ev-out" style="display:none"></pre></div>
-<div class="gcard"><h3>🖥 exec — host shell (bash, 90s cap)</h3><textarea id="sh-cmd" placeholder="echo hello && ls -la"></textarea><div class="rowbtn"><button id="sh-go">Run shell</button></div><pre id="sh-out" style="display:none"></pre></div>
-<div class="gcard"><h3>⏻ Process</h3><div class="rowbtn"><button class="danger" id="pw-restart">Restart bot</button><button class="danger" id="pw-stop">Shutdown</button><span class="mut">Render reboots the service automatically.</span></div></div>
-</div>
-
-<div class="tab" id="t-bl">
-<div class="gcard"><h3>🚫 Global blacklist (users/guilds)</h3>
-<div class="rowbtn"><input id="bl-target" placeholder="id" style="max-width:220px"><input id="bl-reason" placeholder="reason" style="max-width:280px"><button id="bl-add">Add</button><button id="bl-del">Remove</button></div>
-<table id="bl-table"><thead><tr><th>target</th><th>kind</th><th>reason</th><th>by</th><th>added</th></tr></thead><tbody></tbody></table>
-</div></div>
-
-<div class="tab" id="t-lg"><div class="rowbtn"><button id="lg-ref">Refresh</button><span class="mut">last 80 lines (newest last)</span></div><pre id="lg-out">loading…</pre></div>
-
-<div class="tab" id="t-au"><p class="mut">Every owner action (Discord + dashboard) with the protection layer that fired.</p><table id="au-table"><thead><tr><th>time</th><th>cmd</th><th>who</th><th>result</th><th>layer</th></tr></thead><tbody></tbody></table></div>
-
-<div class="tab" id="t-sq"><p class="mut">Raw SQL on the Neon database — every statement is audited.</p><textarea id="sq-sql" placeholder="SELECT * FROM deobf_history ORDER BY created_at DESC LIMIT 10"></textarea><div class="rowbtn"><button id="sq-go">Run</button><button id="sq-st">DB status</button></div><pre id="sq-out" style="display:none"></pre></div>
-
-<div id="toast"></div>
-<script>
-const BASE = location.pathname.replace(/\\/+$/,'');
-const $ = (s) => document.querySelector(s);
-function toast(msg, ok=true){ const t=$('#toast'); t.textContent=msg; t.style.borderColor= ok?'var(--ok)':'var(--err)'; t.style.display='block'; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',3500); }
-async function api(path, body){
-  const opt = body ? {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)} : {};
-  const r = await fetch(BASE+'/api/'+path, opt);
-  if (r.status === 404) throw new Error('token invalid');
-  return r.json();
-}
-function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function fmtUp(s){ const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60); return (d?d+'d ':'')+ (h?h+'h ':'') + m+'m'; }
-
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on'));
-  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on'); $('#t-'+b.dataset.t).classList.add('on');
-  if (b.dataset.t==='lg') loadLogs(); if (b.dataset.t==='au') loadAudit();
-});
-
-let STATE=null;
-async function refresh(){
-  try{
-    const r = await api('state');
-    if(!r.ok){ toast('state failed','x'); return; }
-    STATE = r.data; renderHeader(); renderOverview(); renderGuilds(); renderBlacklist();
-  }catch(e){ $('#p-disc').textContent='offline'; $('#p-disc').className='pill down'; }
-}
-function renderHeader(){
-  const s=STATE;
-  $('#p-disc').textContent = s.discordReady ? ('🟢 '+ (s.botTag||'discord')) : '🔴 connecting';
-  $('#p-disc').className = 'pill '+(s.discordReady?'up':'down');
-  $('#p-engine').textContent = s.engine.available ? ('⚙ '+s.engine.version) : '⚙ preparing';
-  $('#p-db').textContent = s.db.enabled ? (s.db.breaker.open ? '🟠 db breaker OPEN' : (s.db.connected?'🗄 db connected':'🟠 db retrying')) : '🗄 db off';
-  $('#p-db').className = 'pill '+(s.db.enabled ? (s.db.breaker.open||!s.db.connected?'down':'up') : '');
-  $('#p-ver').textContent = 'v'+s.version;
-  $('#p-up').textContent = '⏱ '+fmtUp(s.uptimeS);
-  $('#p-pin').textContent = s.pinArmed ? '🔐 PIN armed' : '🔓 no PIN';
-  $('#p-pin').className = 'pill '+(s.pinArmed?'up':'down');
-}
-function card(title, rows){
-  return '<div class="card"><h3>'+title+'</h3>'+rows.map(r=>'<div class="kv"><b>'+r[0]+'</b><span>'+r[1]+'</span></div>').join('')+'</div>';
-}
-function renderOverview(){
-  const s=STATE, g=s.guilds||[];
-  const all = s.allTime;
-  $('#ov-cards').innerHTML =
-    card('Bot', [['Version','v'+s.version],['Uptime',fmtUp(s.uptimeS)],['Gateway ping',s.pingMs+'ms'],['Memory',s.memoryMb.toFixed(0)+' MB'],['Bot id',esc(s.botId||'—')]]) +
-    card('Jobs (this boot)', [['Succeeded','<span class="ok">'+s.jobs.ok+'</span>'],['Failed','<span class="err">'+s.jobs.fail+'</span>'],['Total',s.jobs.total]]) +
-    card('Database', [['Status', s.db.enabled?(s.db.connected?'<span class="ok">connected</span>':'retrying'):'off'],['Host',esc(s.db.host||'—')],['Latency',(s.db.latencyMs??'—')+'ms'],['Breaker', s.db.breaker?(s.db.breaker.open?'<span class="err">OPEN</span>':'closed • trips '+s.db.breaker.trips+' • queue '+s.db.breaker.queued):'—'],['All-time', all?(all.ok+' ok / '+all.total):'—']]) +
-    card('Guilds', [['Count',g.length],['Members',g.reduce((a,x)=>a+(x.memberCount||0),0)],['Biggest', g[0]?esc(g[0].name):'—']]) +
-    card('Stats counters', Object.entries(s.stats||{}).map(([k,v])=>[k,String(v)]).slice(0,8)) +
-    card('Protection', [['Owner PIN', s.pinArmed?'armed':'off'],['DB audit', s.db.enabled?'on':'off'],['Dashboard','this page • token-gated'],['Engine', esc(s.engine.version||'—')]]);
-}
-function renderGuilds(){
-  const s=STATE, g=s.guilds||[];
-  $('#guilds').innerHTML = g.map((x,i)=>{
-    const st = (s.guildSettings||[])[i] || {};
-    const chs = (x.channels||[]).map(c=>'<option value="'+c.id+'">#'+esc(c.name)+'</option>').join('');
-    return '<div class="gcard" data-id="'+x.id+'">'
-      +'<div class="ghead">'+(x.icon?'<img src="'+x.icon+'" alt="">':'<img alt="" style="background:var(--panel2)">')
-      +'<div><div class="gname">'+esc(x.name)+'</div><div class="gid">'+x.id+' • '+(x.memberCount??'?')+' members • joined '+(x.joinedAt||'?')+'</div></div></div>'
-      +'<div class="tog">'
-      +'<button class="'+(st.disabled?'off':'on')+'" data-a="disabled">'+(st.disabled?'⛔ bot DISABLED':'✅ bot enabled')+'</button>'
-      +'<button class="'+(st.deobf_enabled?'on':'off')+'" data-a="deobf_enabled">'+(st.deobf_enabled?'deobf on':'deobf off')+'</button>'
-      +'<button class="'+(st.detect_enabled?'on':'off')+'" data-a="detect_enabled">'+(st.detect_enabled?'detect on':'detect off')+'</button>'
-      +'</div>'
-      +'<div class="rowbtn"><input class="gp" placeholder="custom prefix" value="'+esc(st.prefix||'')+'" style="max-width:130px"><button data-a="prefix">Save prefix</button></div>'
-      +'<div class="rowbtn"><select class="gc">'+chs+'</select><input class="gm" placeholder="message text" style="flex:1"><button data-a="message">Send</button></div>'
-      +'<div class="rowbtn"><button class="danger" data-a="leave">Leave server</button></div>'
-      +'</div>';
-  }).join('') || '<p class="mut">Not in any guild yet.</p>';
-
-  document.querySelectorAll('#guilds .gcard').forEach(card=>{
-    const id = card.dataset.id;
-    card.querySelectorAll('.tog button, .rowbtn button').forEach(b=>{
-      b.onclick = async ()=>{
-        const a=b.dataset.a;
-        try{
-          if(a==='leave'){ if(!confirm('Leave this server?')) return; const r=await api('guild',{id,action:'leave'}); toast(r.ok?('left '+r.data.left):r.error, r.ok); refresh(); return; }
-          if(a==='message'){ const cid=card.querySelector('.gc').value, text=card.querySelector('.gm').value; const r=await api('guild',{id,action:'message',channelId:cid,text}); toast(r.ok?'sent':r.error, r.ok); return; }
-          if(a==='prefix'){ const p=card.querySelector('.gp').value; const r=await api('guild',{id,action:'settings',prefix:p}); toast(r.ok?'prefix saved':r.error, r.ok); refresh(); return; }
-          // toggles: class 'off' ⇒ the setting is currently false → flip it
-          const cur = b.classList.contains('off');
-          const r=await api('guild',{id,action:'settings',[a]:!cur});
-          toast(r.ok?'saved':r.error, r.ok); refresh();
-        }catch(e){ toast(String(e.message||e),false); }
-      };
-    });
-  });
-}
-function renderBlacklist(){
-  const rows=(STATE.blacklist||[]);
-  $('#bl-table tbody').innerHTML = rows.map(r=>'<tr><td>'+esc(r.target)+'</td><td>'+esc(r.kind)+'</td><td>'+esc(r.reason||'')+'</td><td>'+esc(r.added_by||'')+'</td><td>'+esc((r.created_at||'').slice(0,10))+'</td></tr>').join('') || '<tr><td colspan="5" class="mut">empty</td></tr>';
-}
-$('#bl-add').onclick=async()=>{ try{ const r=await api('blacklist',{action:'add',target:$('#bl-target').value.trim(),reason:$('#bl-reason').value.trim()}); toast(r.ok?'added':(r.error||'failed'),r.ok); refresh(); }catch(e){ toast(e.message,false); } };
-$('#bl-del').onclick=async()=>{ try{ const r=await api('blacklist',{action:'remove',target:$('#bl-target').value.trim()}); toast(r.ok?'removed':(r.error||'failed'),r.ok); refresh(); }catch(e){ toast(e.message,false); } };
-
-$('#bc-go').onclick=async()=>{ $('#bc-out').textContent='sending…'; try{ const r=await api('broadcast',{text:$('#bc-text').value}); $('#bc-out').textContent = (r.ok&&r.data)? ('delivered '+r.data.sent+'/'+r.data.total+' (failed '+r.data.failed+', skipped '+r.data.skipped+')') : ('✗ '+(r.error||'failed')); }catch(e){ $('#bc-out').textContent='✗ '+e.message; } };
-$('#ev-go').onclick=async()=>{ const o=$('#ev-out'); o.style.display='block'; o.textContent='running…'; try{ const r=await api('eval',{code:$('#ev-code').value}); o.textContent=(r.ok&&r.data)?r.data.output:('✗ '+(r.error||'eval failed')); }catch(e){ o.textContent='✗ '+e.message; } };
-$('#sh-go').onclick=async()=>{ const o=$('#sh-out'); o.style.display='block'; o.textContent='running…'; try{ const r=await api('exec',{cmd:$('#sh-cmd').value}); o.textContent=(r.ok&&r.data)?r.data.output:('✗ '+(r.error||'shell failed')); }catch(e){ o.textContent='✗ '+e.message; } };
-$('#pw-restart').onclick=async()=>{ if(!confirm('Restart the bot?')) return; try{ await api('power',{action:'restart'}); toast('restarting…'); }catch(e){ toast(e.message,false); } };
-$('#pw-stop').onclick=async()=>{ if(!confirm('Shut down the bot? Render will reboot it.')) return; try{ await api('power',{action:'shutdown'}); toast('shutting down…'); }catch(e){ toast(e.message,false); } };
-
-async function loadLogs(){ try{ const r=await api('logs?n=80'); const lines=(r.ok&&r.data&&r.data.lines)?r.data.lines:[]; $('#lg-out').textContent = lines.length? lines.join('\n') : ('(no logs)'+(r.error?(' — '+r.error):'')); }catch(e){ $('#lg-out').textContent='✗ '+e.message; } }
-$('#lg-ref').onclick=loadLogs;
-async function loadAudit(){
-  try{
-    const r=await api('audit');
-    const rows=(r.ok&&r.data&&r.data.rows)?r.data.rows:[];
-    $('#au-table tbody').innerHTML = rows.map(x=>'<tr><td>'+esc((x.created_at||'').replace('T',' ').slice(0,16))+'</td><td>'+esc(x.command)+'</td><td>'+esc(x.username||x.user_id||'')+'</td><td class="'+(x.allowed?'ok':'err')+'">'+esc(x.result||'')+'</td><td>'+esc(x.layer||'')+'</td></tr>').join('') || '<tr><td colspan="5" class="mut">no audit entries</td></tr>';
-  }catch(e){ toast(e.message,false); }
-}
-$('#sq-go').onclick=async()=>{ const o=$('#sq-out'); o.style.display='block'; o.textContent='running…'; try{ const r=await api('db',{sql:$('#sq-sql').value}); if(r.ok&&r.data&&r.data.rows!==undefined){ const f=(r.data.fields||[]).join(' | '); const rows=(r.data.rows||[]).slice(0,30).map(x=>Object.values(x).map(v=>v===null?'∅':String(v instanceof Date? v.toISOString():v).slice(0,80)).join(' | ')); o.textContent=[f,...rows].join('\n')+'\n['+(r.data.rowCount??0)+' rows, '+r.data.ms+'ms]'; } else { o.textContent=r.ok?JSON.stringify(r.data,null,1).slice(0,3000):('✗ '+r.error); } }catch(e){ o.textContent='✗ '+e.message; } };
-$('#sq-st').onclick=async()=>{ const o=$('#sq-out'); o.style.display='block'; try{ const r=await api('db',{sql:'status'}); o.textContent=r.data?JSON.stringify(r.data,null,1).slice(0,2000):('✗ '+(r.error||'failed')); }catch(e){ o.textContent='✗ '+e.message; } };
-
-refresh(); setInterval(refresh, 15000);
-</script></body></html>`;
 }
