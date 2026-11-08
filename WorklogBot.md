@@ -1,6 +1,64 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.1.0 — vendored Luraph v15 full-source devirtualizer (external engine stage)
+
+**The bot now ships a second, independent devirtualization engine for Luraph
+v15 — and for the standard v15 layout it recovers the complete original
+source, not a disassembly.**
+
+Origin: the user pointed at caomod2077/Deobfuscator-Luraph-V15 (public,
+MIT-licensed). Evaluation against our corpus:
+
+- **On its own samples (standard Luraph v15 closure-maker layout): full
+  source, verified.** `5ae248d6527b5c01.lua` (170 KB) → `print("hello")` in
+  ~4 s; `+1 Speed Keyboard Escape.lua` (543 KB, 316 functions) → 6,297 lines
+  of clean Luau in 23 s; `9eccab05cff67267.lua` (222 KB) → 10,769 lines
+  (168 s). Outputs carry the original preamble, `task.wait()` loops, Roblox
+  service calls — real recovered code, committed under MIT.
+- **On our hybrid v15.1 fixture (CPS loader + register VM, the shape v2.0.0
+  reverse-engineered): clean miss.** Its `findDispatchers` requires the
+  dispatcher inside a vararg closure under a ≥2-arg closure maker; our
+  fixture builds protos through the CPS deserializer instead, so it reports
+  "method-based state-machine VM" and exits non-zero. The two engines are
+  complementary, not competing.
+
+Integration (this release):
+
+- **Vendored** the engine under `vendor/luraph-v15/` (sources + MIT LICENSE +
+  TECHNICAL.md; sample scripts, research scripts and image assets excluded).
+  Linux `luau` + `luau-ast` binaries bundled in `vendor/luraph-v15/bin/`
+  (stock luau-lang release; our own `bin/luau` is byte-identical, kept as-is).
+  Zero npm dependencies — Node builtins + stdlib Python only.
+- **`src/luraph15-ext.js`** — hardened runner around the vendored CLI:
+  - `probeExtEngine()` (cached): vendor files + exec bits + python3 probe;
+    unavailable hosts skip the stage with a logged reason, never an error.
+  - `runExtDeobf()`: runs `node deob.js` via `spawnHardened` (env-allowlist
+    sandbox, wall-clock kill, 64 MB output cap) inside a throwaway temp dir;
+    `--timeout`/`--budget` derived from our engine timeout; accepts the
+    result only if an output file exists, has no NUL trace-internals, differs
+    from the input, and parses (fengari + Luau shim via `verifyCode`).
+    Any miss returns `null` — the pipeline falls through.
+- **Pipeline wiring** (`src/pipeline.js`): for `detected.id === 'luraph'` with
+  a `v15*` version, after the load()-chunk capture attempt and before the
+  behavioral lift, the chain now runs
+  chunk-capture → **vendored full-source lift (new)** → behavioral VM lift →
+  real-Luau devirtualization → key-capture inventory → static peel. Full
+  source wins the moment any stage can produce it; "never fails" semantics
+  untouched (the ext stage can only add a success path).
+- **`test/luraph-ext.js`** — probe, full-source recovery on a real
+  closure-maker sample (new fixture `luraph-v15-closure-maker-sample.lua`,
+  asserts ground truth `print("hello")` in verified output), and a fast clean
+  miss on the hybrid fixture (guards the fall-through). Registered in
+  `test/all.js` with a per-suite timeout override (now 11 suites).
+- **End-to-end verified**: `node test/run.js` on the closure-maker sample →
+  detect (95%) → peel → chunk miss → `luraph15:ext-attempt` →
+  `luraph15:ext` (3.3 s) → paste, 15 bytes of real source. On the hybrid
+  v15.1 fixture → ext miss in ~9 s → v2.0 devirt chain → paste, no failure.
+- **Version 1.7.0's "no walls" guarantee preserved**: `test/all.js` —
+  11/11 suites green.
+
+
 ## v2.0.0 — real-Luau devirtualization for Luraph v15.1
 
 **The obfuscated file now runs inside a bundled REAL Luau runtime with its own

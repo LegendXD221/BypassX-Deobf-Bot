@@ -257,7 +257,45 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
                 engine: await engine.probe(),
               };
             }
-          } else if (h && h.lift && h.lift.snap) {
+          } else {
+            // v2.1.0: vendored full-source devirtualizer (MIT engine, CFG+SSA
+            // lift) — true readable source for the standard Luraph v15
+            // closure-maker layout; our own chain below covers the hybrid
+            // CPS-loader layout it cannot read. Any miss falls through.
+            if (!binaryOutput && (detected.version || '').startsWith('v15')) {
+              stage('luraph15:ext-attempt', 'vendored v15 devirtualizer (full-source lift)');
+              let ext = null;
+              try {
+                const { runExtDeobf } = await import('./luraph15-ext.js');
+                ext = await runExtDeobf(buffer.toString('utf8'), {
+                  timeoutMs: Math.min(CONFIG.engineTimeoutMs, 150_000),
+                  version: detected.version || 'v15',
+                });
+              } catch (e) {
+                stage('luraph15:ext:miss', String(e.message || e).slice(0, 120));
+              }
+              if (ext) {
+                stage('luraph15:ext', ext.how);
+                const post = postprocessFile('recovered.lua', Buffer.from(ext.code, 'utf8'));
+                if (outcome.workDir) await engine.cleanupWorkDir(outcome.workDir);
+                return {
+                  ok: true,
+                  code: post.data.toString('utf8'),
+                  binaryOutput: false,
+                  outputBuffer: null,
+                  codeName: 'recovered.lua',
+                  detected, stages, durationMs: Date.now() - t0, lang,
+                  verification: ext.verification,
+                  originalSize: buffer.length,
+                  recoveredSize: post.data.length,
+                  how: 'Luraph v15 devirtualization (vendored CFG+SSA full-source lift)',
+                  partialNote: `Luraph ${detected.version || 'v15.x'}: **full source recovered** by the vendored devirtualization engine — control flow, closures and constants reconstructed (${ext.how}).`,
+                  engine: await engine.probe(),
+                };
+              }
+              stage('luraph15:ext:miss', 'vendored engine could not lift this layout');
+            }
+            if (h && h.lift && h.lift.snap) {
             // v1.9.0: VM state captured — behavioral lift REPLACES the inventory
             const lift = liftFromHarvest(h.lift, { detectedName: detected.name, version: detected.version || '' });
             if (lift.ok) {
@@ -337,6 +375,7 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
               luraphNote = `Luraph ${detected.version || 'v15.x'}: I recovered the **per-build key material** (${carriers.filter((c) => c.looksKeyish).length} key-like carriers) and the full payload structure (record headers, entropy, sizes). This build's loader diverges inside the sandbox before the constant pool decrypts — the payload inventory below is the complete static picture.`;
             }
             data = Buffer.from(invText + report + poolSection, 'utf8');
+          }
           }
         } catch (e) {
           stage('luraph15:augment:miss', String(e.message || e).slice(0, 120));
