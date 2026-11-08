@@ -44,6 +44,7 @@ const writeOut = (obj) => {
   }
 };
 import fengari from 'fengari';
+import { safeToJsString } from './fengari-safe.js';
 import * as jail from './jail-prelude.js';
 
 const { lua, lauxlib, lualib, to_luastring, to_jsstring } = fengari;
@@ -694,13 +695,13 @@ function freshState(budget) {
 
 function runLua(state, src, label) {
   const rc = lauxlib.luaL_dostring(state.L, to_luastring(src));
-  if (rc !== lua.LUA_OK) throw new Error(`${label}: ${lua.lua_tojsstring(state.L, -1).slice(0, 200)}`);
+  if (rc !== lua.LUA_OK) throw new Error(`${label}: ${safeToJsString(state.L, -1, 'error').slice(0, 200)}`);
 }
 
 function loadSample(state, source) {
   const chunk = to_luastring(source, true);
   const rc = lauxlib.luaL_loadbuffer(state.L, chunk, chunk.length, to_luastring('@bypassx'));
-  if (rc !== lua.LUA_OK) return { loaded: false, err: lua.lua_tojsstring(state.L, -1).slice(0, 200) };
+  if (rc !== lua.LUA_OK) return { loaded: false, err: safeToJsString(state.L, -1, 'error').slice(0, 200) };
   lua.lua_setglobal(state.L, to_luastring('_BX_F'));
   return { loaded: true };
 }
@@ -713,7 +714,7 @@ function readStrings(L, name, cap) {
   for (let i = 1; i <= Math.min(n, cap); i += 1) {
     lua.lua_rawgeti(L, -1, i);
     if (lua.lua_isstring(L, -1)) {
-      const s = lua.lua_tojsstring(L, -1);
+      const s = safeToJsString(L, -1);
       if (s) out.push(s);
     }
     lua.lua_pop(L, 1);
@@ -733,7 +734,7 @@ function readChunks(L) {
       if (total >= jail.MAX_CHUNKS_TOTAL) break;
       lua.lua_rawgeti(L, -1, i);
       if (lua.lua_isstring(L, -1)) {
-        const s = lua.lua_tojsstring(L, -1);
+        const s = safeToJsString(L, -1);
         if (s && s.length >= 8 && !out.includes(s)) { out.push(s); total += s.length; }
       }
       lua.lua_pop(L, 1);
@@ -757,7 +758,7 @@ function dumpState(state, { withLift }) {
     ran = lua.lua_toboolean(L, -1);
     lua.lua_pop(L, 1);
     lua.lua_getfield(L, -1, to_luastring('err'));
-    if (lua.lua_isstring(L, -1)) runError = lua.lua_tojsstring(L, -1).slice(0, 200);
+    if (lua.lua_isstring(L, -1)) runError = safeToJsString(L, -1, 'run error').slice(0, 200);
     lua.lua_pop(L, 2);
   } else {
     lua.lua_pop(L, 1);
@@ -766,7 +767,7 @@ function dumpState(state, { withLift }) {
     try {
       lua.lua_getglobal(L, to_luastring('_BX_LIFT_JSON'));
       if (lua.lua_isstring(L, -1)) {
-        const raw = lua.lua_tojsstring(L, -1);
+        const raw = safeToJsString(L, -1);
         try {
           lift = JSON.parse(raw);
         } catch (pe) {

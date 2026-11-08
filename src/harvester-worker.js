@@ -36,6 +36,7 @@ const writeOut = (obj) => {
   }
 };
 import fengari from 'fengari';
+import { safeToJsString } from './fengari-safe.js';
 import * as jailPrelude from './jail-prelude.js';
 
 const { lua, lauxlib, lualib, to_luastring, to_jsstring } = fengari;
@@ -73,7 +74,7 @@ function dumpAndExit(note) {
         ran = lua.lua_toboolean(L, -1);
         lua.lua_pop(L, 1);
         lua.lua_getfield(L, -1, to_luastring('err'));
-        if (lua.lua_isstring(L, -1)) runError = lua.lua_tojsstring(L, -1).slice(0, 200);
+        if (lua.lua_isstring(L, -1)) runError = safeToJsString(L, -1, 'run error').slice(0, 200);
         lua.lua_pop(L, 2);
       } else {
         lua.lua_pop(L, 1);
@@ -168,7 +169,7 @@ function usableCount() {
 function runOnce(source) {
   const chunk = to_luastring(source, true);
   let rc = lauxlib.luaL_loadbuffer(L, chunk, chunk.length, to_luastring('@bypassx'));
-  if (rc !== lua.LUA_OK) return { loaded: false, err: lua.lua_tojsstring(L, -1).slice(0, 200) };
+  if (rc !== lua.LUA_OK) return { loaded: false, err: safeToJsString(L, -1, 'load error').slice(0, 200) };
   lua.lua_setglobal(L, to_luastring('_BX_F'));
   rc = lauxlib.luaL_dostring(L, to_luastring(`
     _BX_RESULT = {}
@@ -176,12 +177,12 @@ function runOnce(source) {
     _BX_RESULT.ok = __ok
     if not __ok then _BX_RESULT.err = tostring(__e) end
   `));
-  if (rc !== lua.LUA_OK) return { loaded: true, err: `runner: ${lua.lua_tojsstring(L, -1).slice(0, 160)}` };
+  if (rc !== lua.LUA_OK) return { loaded: true, err: `runner: ${safeToJsString(L, -1, 'runner error').slice(0, 160)}` };
   return { loaded: true, err: null };
 }
 
 let rcPrelude = lauxlib.luaL_dostring(L, to_luastring(PRELUDE));
-if (rcPrelude !== lua.LUA_OK) fail(`prelude failed: ${lua.lua_tojsstring(L, -1)}`);
+if (rcPrelude !== lua.LUA_OK) fail(`prelude failed: ${safeToJsString(L, -1, 'prelude error')}`);
 
 // Luau builds (MoonSec V2/V3 Luau targets, Luraph luau) use Luau-only syntax
 // Lua 5.3 rejects — rewrite first, original second. Then a two-tier run:
@@ -236,7 +237,7 @@ function readStrings(name, cap) {
   for (let i = 1; i <= Math.min(n, cap); i += 1) {
     lua.lua_rawgeti(L, -1, i);
     if (lua.lua_isstring(L, -1)) {
-      const s = lua.lua_tojsstring(L, -1);
+      const s = safeToJsString(L, -1);
       if (s) out.push(s);
     }
     lua.lua_pop(L, 1);
@@ -257,7 +258,7 @@ function readChunks() {
       if (total >= MAX_CHUNKS_TOTAL) break;
       lua.lua_rawgeti(L, -1, i);
       if (lua.lua_isstring(L, -1)) {
-        const s = lua.lua_tojsstring(L, -1);
+        const s = safeToJsString(L, -1);
         if (s && s.length >= 8 && !out.includes(s)) { out.push(s); total += s.length; }
       }
       lua.lua_pop(L, 1);

@@ -368,11 +368,17 @@ script = __INERT
 shared = {}
 Enum = __INERT
 Instance = { new = function() return __INERT end }
+-- v2.8.0 exploit upgrade: YIELDING PRIMITIVES RESOLVE INSTANTLY.
+-- Hard-erroring on wait/spawn used to KILL builds whose init yields (MoonSec
+-- V2/V3 escrow gates on game.Loaded/wait before decrypting the constant pool)
+-- — the jail then captured only pre-decryption garbage. wait() returns 0 and
+-- spawn/defer/delay run their function immediately; runaway yield-loops are
+-- still bounded by the instruction budget (count hook → partial capture).
 task = {
-  wait = function() error('bx: wait not permitted', 0) end,
-  spawn = function() error('bx: spawn not permitted', 0) end,
-  defer = function() error('bx: defer not permitted', 0) end,
-  delay = function() error('bx: delay not permitted', 0) end,
+  wait = function() return 0 end,
+  spawn = function(f, ...) if type(f) == 'function' then local ok, err = pcall(f, ...) if not ok and _BX_LOG and #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = 'spawn-error: ' .. tostring(err) end return end end,
+  defer = function(f, ...) if type(f) == 'function' then local ok, err = pcall(f, ...) if not ok and _BX_LOG and #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = 'defer-error: ' .. tostring(err) end return end end,
+  delay = function(_, f, ...) if type(f) == 'function' then local ok, err = pcall(f, ...) if not ok and _BX_LOG and #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = 'delay-error: ' .. tostring(err) end return end end,
 }
 wait = task.wait
 spawn = task.spawn

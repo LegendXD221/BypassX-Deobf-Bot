@@ -16,6 +16,7 @@
 import vm from 'node:vm';
 import fengari from 'fengari';
 import { transformLuauToLua } from './luau-shim.js';
+import { safeBytesToJsString } from './fengari-safe.js';
 
 const { lua, lauxlib, to_luastring, to_jsstring } = fengari;
 
@@ -28,7 +29,10 @@ function checkLuaParse(code) {
     const status = lauxlib.luaL_loadbuffer(L, chunk, chunk.length, to_luastring('verify'));
     if (status === lua.LUA_OK) return { ok: true };
     const errRaw = lua.lua_tostring(L, -1);
-    const msg = errRaw ? to_jsstring(errRaw) : 'syntax error';
+    // v2.8.0: to_jsstring THROWS on non-UTF8 error bytes (binary string
+    // literals in the verified chunk) — that RangeError used to escape
+    // verifyCode and crash the whole pipeline. latin1 mapping never throws.
+    const msg = errRaw ? safeBytesToJsString(errRaw, 'syntax error') : 'syntax error';
     return { ok: false, error: msg };
   } finally {
     lua.lua_close(L);

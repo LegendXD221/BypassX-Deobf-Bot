@@ -25,6 +25,7 @@ const SUITES = [
   { name: 'layers.js', timeoutMs: 420_000 },     // multi-layer peel loop + readability (v2.4.0)
   { name: 'luraph14.js', timeoutMs: 420_000 },   // Luraph v14 runtime-state devirtualizer (v2.6.0)
   { name: 'deobf-ack.js', timeoutMs: 120_000 },  // .deobf mention-status + background delivery (v2.7.1)
+  { name: 'final-scan-fixes.js', timeoutMs: 120_000 }, // utf8-safe conversion + pool reconstruction (v2.8.0)
 ];
 
 let failed = 0;

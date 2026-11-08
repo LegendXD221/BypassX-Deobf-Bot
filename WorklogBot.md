@@ -1,6 +1,89 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.8.0 — The Final Scan: 45-sample, 26-family exploit audit + 3 exploits landed
+
+**User directive: "Do A Last And Final Biggest Scan On All The Services Find
+anything on them anything that will help us and exploit that vulnerability so
+hard that it deobfuscats it. Your A Deobfuscator And Exploiting Expert."**
+
+### The scan (reproducible)
+
+- `scripts/build-corpus.sh` pulls a **45-sample corpus across 26 families**
+  from two public labeled corpora (terrorlua/obfuscator-samples — 43,282
+  samples by obfuscator+version; Xyraniz/Obfuscator-Samples), 2 samples per
+  family, ≤360 KB each, into `var/corpus/`. Coverage: 77fuscator, Boronide,
+  Hercules, IronBrew2, Ironbrew1, Ironbrew3, LPS, LuaObfuscator, Luraph
+  (v14.4.2 + v15.1 fixtures + v15.x corpus), MoonSec V2, MoonSec V3, MoonVeil
+  (2.0.26 + 2023), SynapseXen, Prometheus, PSU, wYnFuscate, WeAreDevs,
+  GoofyScator, catph, devlyx, dexfuscator, realvux, asteria.
+- `scripts/final-scan.js` drives every sample through the LIVE pipeline
+  (detect → peel loop → readability → verification) and emits a verdict
+  matrix: `var/final-scan-report.{json,md}` (CLEAN = ok + readability ≥85 +
+  zero VM artifacts; PARTIAL = recovered but lossy; FAIL = no recovery).
+
+### Findings — the exploitable weaknesses
+
+1. **[CRASH] invalid-UTF8 RangeError killed the whole pipeline.** A
+   wYnFuscate sample with binary bytes inside string literals made
+   `verifyCode → checkLuaParse → to_jsstring` THROW
+   ("cannot convert invalid utf8") — fengari's `lua_tojsstring` has no
+   replacement-char escape and every program-controlled conversion was a
+   latent crash: `deobfuscate()` itself threw, the FAIL of the scan.
+2. **[JUNK] Escrow sinks captured the encrypted pool.** MoonSec V2 emitted
+   9,065 fragments — the string sinks record everything string.char/concat
+   produce INCLUDING the still-encrypted pool blob and 1–3-byte bytecode
+   chunks; output was CJK noise that EXPANDED 56 KB → 148 KB (read 65).
+3. **[ABORT] `wait()` hard-error killed yielding builds.** The jail's
+   `task.wait = error(...)` aborted MoonSec V3 mid-init ("bx: wait not
+   permitted") — its pool never decrypted, only ~43-79 pre-decryption
+   library-name fragments were ever captured.
+
+### The exploits (all landed)
+
+- **`src/fengari-safe.js`** — `safeToJsString` / `safeBytesToJsString`:
+  valid UTF-8 behaves exactly as before; invalid UTF-8 falls back to a
+  lossless latin1 byte mapping (never throws). Hardened at EVERY
+  program-controlled conversion: validate.js error path (the crash),
+  harvester-worker sink + error paths, vm-lift-worker sink + error paths.
+  wYnFuscate FAIL → graceful verified output.
+- **`reconstructPool()` (src/harvest.js)** — escrow pool reconstruction:
+  drops strings that are <90% printable (encrypted blobs, bytecode
+  fragments), the bot's own instrumentation noise
+  (`[string "…`, `bx:`, `spawn-error:`, `__BUD`…), and duplicates; emits
+  only the real printable pool with honest counts in the header
+  ("Recovered N pool strings (M binary/encrypted/duplicate fragments
+  filtered)"). MoonSec V2: 148 KB CJK junk (read 65) → **356 B clean pool
+  (read 85)**; MoonSec V3 small: read 65 → **read 100**; asteria output
+  31 KB → 6.7 KB of pure signal.
+- **Yield primitives resolve instantly (src/jail-prelude.js)** —
+  `task.wait → return 0`, `spawn/defer/delay → run f immediately (pcall,
+  errors logged to _BX_LOG)`. MoonSec V3's init no longer aborts
+  (runError cleared; captures the real pool start — library constants —
+  instead of dying). Runaway yield-loops stay bounded by the instruction
+  budget (partial capture, never a hang).
+
+### Before → after (same corpus, same code path)
+
+- Verdicts: **16 CLEAN / 27 PARTIAL / 1 FAIL → 21 CLEAN / 24 PARTIAL /
+  0 FAIL** (45 samples, 26 families). The never-fail invariant now holds
+  across the entire corpus — zero pipeline crashes.
+- Family flips: wYnFuscate FAIL→CLEAN+PARTIAL, moonsec-v2 junk→CLEAN,
+  moonsec-v3 →CLEAN (read 100), Boronide →CLEAN, GoofyScator →CLEAN,
+  LuaObfuscator →CLEAN (read 100), realvux →CLEAN.
+- Remaining PARTIALs are the true VM families (Hercules, IronBrew 1/2/3,
+  77fuscator, MoonSec V2-large, MoonVeil ≤2.0.23): honest, verified,
+  non-crashing partials — full devirtualization for each is a dedicated
+  per-VM ISA project (as Luraph v14 was for v2.6.0+v2.7.0).
+
+### Verification
+
+- New suite `test/final-scan-fixes.js` (6 checks): latin1 fallback,
+  binary-string-on-stack, verifyCode crash repro (exact scan crash),
+  reconstructPool filtering + self-noise, harvestToLua header honesty,
+  yield-shim semantics. **ALL 15 TEST SUITES PASSED.** Version 2.7.1 → 2.8.0.
+
+
 ## v2.7.1 — ".deobf now answers instantly: @user mention, then background delivery
 
 **User directive: "In Bot When Someone Type .Deobf with file or link make the
