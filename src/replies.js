@@ -208,6 +208,15 @@ export function detectionReply(detected, meta, prefix) {
       { label: 'File', value: `${clamp(fileLabel || '—', 40)}${sizeLabel ? ` • ${sizeLabel}` : ''}` },
       sourceRow,
     ]);
+    if (meta?.layers?.multi) {
+      c.addSeparatorComponents(SEP());
+      c.addTextDisplayComponents(T([
+        '**🧅 Multi-layer obfuscation detected**',
+        `${clamp(meta.layers.summary, 300)}`,
+        '',
+        `The deobf pipeline peels these one at a time — run \`${prefix}deobf\` and each layer is stripped until plain code remains.`,
+      ].join('\n')));
+    }
     if (detected.evidence?.length) {
       c.addSeparatorComponents(SEP());
       c.addTextDisplayComponents(T([
@@ -251,6 +260,8 @@ export function successReply(result, paste, filename, sourceUrl, sourceNote) {
     facts(c, [
       { label: 'Detected', value: `${d.name || 'Unknown'}${d.version ? ` ${d.version}` : ''} — **${d.confidence ?? 0}%** confidence` },
       { label: 'Recovery tier', value: TIER_LABEL[d.tier] || '◐ partial recovery' },
+      result.layerSummary ? { label: (result.layers || []).length > 1 ? 'Layers peeled' : 'Layer stack', value: clamp(result.layerSummary, 180) } : null,
+      result.readability ? { label: 'Readability', value: `**${result.readability.score}/100** — ${result.readability.grade}` } : null,
       verifiedFact(result.verification),
       { label: 'Size', value: `${fmtBytes(result.originalSize)} → ${fmtBytes(result.recoveredSize)} in ${((result.durationMs || 0) / 1000).toFixed(1)}s` },
       { label: 'Engine', value: result.engine?.version ? prettyEngine(result.engine.version) : 'core' },

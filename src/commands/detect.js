@@ -4,6 +4,7 @@
  */
 import { CONFIG } from '../config.js';
 import { detectService, guessLanguage } from '../detect.js';
+import { detectLayers } from '../layers.js';
 import { detectionReply, errorReply } from '../replies.js';
 import { getInputBuffer } from '../ctx.js';
 import { describe as dbDescribe, logDeobf } from '../db.js';
@@ -34,6 +35,8 @@ export default {
     const detected = det.best
       ? { ...det.best, lang, candidates: det.candidates }
       : { id: 'unknown', name: 'Unknown', confidence: 0, lang, candidates: [] };
+    let layers = null;
+    try { layers = detectLayers(att.buffer); } catch { /* advisory */ }
 
     const sizeLabel = `${(att.buffer.length / 1024).toFixed(1)} KB`;
     try {
@@ -53,7 +56,7 @@ export default {
     } catch { /* db optional */ }
     return ctx.reply(detectionReply(
       detected,
-      { sizeLabel, fileLabel: att.filename || 'file', sourceUrl: att.sourceUrl, sourceNote: att.note },
+      { sizeLabel, fileLabel: att.filename || 'file', sourceUrl: att.sourceUrl, sourceNote: att.note, layers },
       ctx.prefix,
     ));
   },

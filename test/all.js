@@ -20,8 +20,9 @@ const SUITES = [
   { name: 'chunk-paste.js' },    // pastefy chunking round-trips
   { name: 'links.js' },          // url detection / normalization / SSRF guards
   { name: 'luau-shim.js' },      // Luau shim: compound assigns + if-expressions (v1.6.0)
-  { name: 'vm-lift.js' },        // VM devirtualization engine (v1.9.0)
+  { name: 'vm-lift.js', timeoutMs: 300_000 },        // VM devirtualization engine (v1.9.0)
   { name: 'luraph-ext.js', timeoutMs: 300_000 }, // vendored v15 full-source lift (v2.1.0)
+  { name: 'layers.js', timeoutMs: 420_000 },     // multi-layer peel loop + readability (v2.4.0)
 ];
 
 let failed = 0;

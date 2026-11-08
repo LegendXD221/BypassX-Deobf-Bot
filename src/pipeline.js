@@ -20,6 +20,16 @@ import { transformLuauToLua } from './luau-shim.js';
 import { parsePayload, captureKeyCarriers, looksLikeLuraphInventory, formatReport } from './luraph15.js';
 import { staticPeel } from './static-peel.js';
 import { liftFromHarvest } from './vm-lift.js';
+import { residualObfuscation, detectLayers, peelSummary } from './layers.js';
+import { makeReadableLua, makeReadableJs, readabilityScore } from './readable.js';
+
+// v2.4.0 "Total Deobf": the pipeline is a PEEL LOOP. Each pass strips one
+// obfuscation layer (VM, escrow, string-array, loader wrapper — whatever the
+// engines recover); the recovered code is then re-scanned by the multi-layer
+// detector and peeled AGAIN while progress continues. Max 4 layers per job;
+// every pass is readability-processed before it is judged or delivered.
+const MAX_PEEL_LAYERS = 4;
+const VERIFY_RANK = { failed: 0, unverifiable: 1, verified: 2 };
 
 // ---- global job semaphore ---------------------------------------------------
 const jobState = { active: 0, queue: [] };
@@ -37,14 +47,143 @@ async function withJobSlot(fn) {
 }
 
 /**
- * Full pipeline over an uploaded buffer.
- * Returns result document:
- * { ok, code, codeName, detected{...}, stages[], originalSize, recoveredSize,
- *   durationMs, note, lang }
+ * Full pipeline over an uploaded buffer — the v2.4.0 PEEL LOOP.
+ * Repeatedly runs the single-pass core until the recovered code stops looking
+ * obfuscated (or passes stop making progress), stacking a layer report:
+ * { ok, code, layers[], inputLayers, layerSummary, readability, ... }
  */
 export async function deobfuscate({ buffer, filename = 'input.lua', hintId = null }) {
-  const t0 = Date.now();
+  const staticLayers = detectLayers(buffer);
+  const layerStack = [];
+  const mergedStages = [];
+  const loopT0 = Date.now();
+  let current = buffer;
+  let best = null;
+  let bestResConf = Infinity;
+  let totalMs = 0;
+
   return withJobSlot(async () => {
+    for (let i = 1; i <= MAX_PEEL_LAYERS; i++) {
+      const bytesIn = current.length;
+      let r = null;
+      try {
+        r = await deobfuscateOnce({ buffer: current, filename: i === 1 ? filename : `layer${i}.lua`, hintId: i === 1 ? hintId : null });
+      } catch (e) {
+        if (best) {
+          best.stages = mergedStages;
+          break; // a later layer failing never loses an earlier win
+        }
+        throw e;
+      }
+
+      totalMs += r.durationMs || 0;
+      for (const s of r.stages || []) mergedStages.push(i > 1 ? { ...s, name: `L${i}:${s.name}` } : s);
+      r.stages = mergedStages;
+      r.durationMs = totalMs;
+      r.originalSize = buffer.length; // the user's upload, not the intermediate layer
+
+      // Readability processing + residual-obfuscation scoring for this layer.
+      const res = augmentIteration(r, i, bytesIn, layerStack);
+
+      // Keep the best iteration (least-obfuscated, then verified-smaller).
+      const improved = !best
+        || (res != null && res.confidence < bestResConf - 5)
+        || (r.verification?.status === 'verified'
+          && best.verification?.status !== 'verified');
+      if (improved) { best = r; bestResConf = res ? res.confidence : bestResConf; }
+
+      // Plain-code exit: this layer's output shows no obfuscation signals —
+      // the stack is fully peeled, no further passes needed.
+      if (res && !res.obfuscated) break;
+
+      const peelable = !r.binaryOutput && r.code && r.code.trim().length > 0
+        && Date.now() - loopT0 < CONFIG.engineTimeoutMs;
+      if (!peelable) break;
+
+      // Progress guards: the next peel must SHRINK the code or DROP the
+      // residual score — otherwise we are looping on a report, not peeling.
+      const shrink = r.code.length < current.length * 0.95;
+      const confDrop = res != null && res.confidence < bestResConf - 8;
+      if (!shrink && !confDrop) {
+        if (res && res.obfuscated && best === r) annotateResidual(r, layerStack.length, res);
+        break;
+      }
+      current = Buffer.from(r.code, 'utf8');
+    }
+
+    if (!best) throw new Error('deobfuscation produced no result');
+    best.layers = layerStack;
+    best.inputLayers = staticLayers;
+    best.layerSummary = layerStack.length > 1
+      ? peelSummary(layerStack)
+      : (staticLayers.multi ? staticLayers.summary : null);
+    return best;
+  });
+}
+
+/** Readability pass + residual scoring + layer-stack record for one peel iteration. */
+function augmentIteration(r, i, bytesIn, layerStack) {
+  let res = null;
+  const lang = r.lang === 'js' ? 'js' : 'lua';
+  if (!r.binaryOutput && r.code && r.code.trim()) {
+    // Readability engine — every internal pass is verify-gated; the outer
+    // gate re-verifies the combined result and reverts on any regression.
+    try {
+      const mk = lang === 'js' ? makeReadableJs : makeReadableLua;
+      const readable = mk(r.code);
+      if (readable.code !== r.code && readable.passes.length) {
+        const v = verifyCode(readable.code, { lang, filename: r.codeName || 'readable.lua' });
+        if ((VERIFY_RANK[v.status] ?? 1) >= (VERIFY_RANK[r.verification?.status] ?? 1)) {
+          r.code = readable.code;
+          r.recoveredSize = Buffer.byteLength(readable.code, 'utf8');
+          r.verification = v;
+          r.stages.push({ name: i > 1 ? `L${i}:readability` : 'readability', detail: readable.passes.join(', ') });
+        }
+      }
+    } catch { /* readability never fails a job */ }
+    try { r.readability = readabilityScore(r.code, lang); } catch { /* advisory */ }
+    try { res = residualObfuscation(r.code, lang); } catch { res = null; }
+  }
+  layerStack.push({
+    index: i,
+    id: r.detected?.id || 'unknown',
+    family: r.detected?.name && r.detected.id !== 'unknown' ? r.detected.name : layerLabelFromHow(r.how),
+    version: r.detected?.version || null,
+    confidence: r.detected?.confidence ?? 0,
+    how: r.how || null,
+    bytesIn,
+    bytesOut: r.recoveredSize ?? null,
+    residual: res ? res.confidence : null,
+    residualFamily: res?.residualFamily?.name || null,
+  });
+  return res;
+}
+
+/** Human label for a layer recovered without a family banner (loader wrappers). */
+function layerLabelFromHow(how) {
+  const h = String(how || '');
+  if (/captured at load/i.test(h)) return 'runtime loader layer';
+  if (/static peel/i.test(h)) return 'static peel layer';
+  if (/behavioral opcode/i.test(h)) return 'VM layer (behavioral lift)';
+  if (/vendored|CFG\+SSA|devirtualiz/i.test(h)) return 'VM layer (devirtualized)';
+  if (/engine/i.test(h)) return 'engine-peeled layer';
+  return 'peeled layer';
+}
+
+/** Append an honest residual-obfuscation note when the loop stopped early. */
+function annotateResidual(r, passes, res) {
+  const sig = res.signals.slice(0, 3).map((s) => s.label).join('; ');
+  const extra = `Multi-layer engine: after ${passes} peel pass${passes === 1 ? '' : 'es'} the output still reads ${res.confidence}% obfuscated (${sig}) — passes stopped when they stopped shrinking the code.`;
+  r.partialNote = r.partialNote ? `${r.partialNote} ${extra}` : extra;
+}
+
+/**
+ * Single peel pass — one detect → route → engine run → fallbacks cycle over
+ * the CURRENT buffer. Returns the same result document as v2.3.0.
+ */
+async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null }) {
+  const t0 = Date.now();
+  return (async () => {
     const stages = [];
     const stage = (name, detail) => { stages.push({ name, detail }); logger.info({ detail }, `stage: ${name}`); };
 
@@ -408,7 +547,7 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
     } finally {
       try { await fsp.rm(inDir, { recursive: true, force: true }); } catch { /* best effort */ }
     }
-  });
+  })();
 }
 
 function pickRoute(detected, lang, buffer) {

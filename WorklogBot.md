@@ -1,6 +1,74 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.4.0 — Total Deobf: multi-layer peel loop + readability engine
+
+**"Upgrade our deobf — everything deobf'd by the bot, even VM and escrows, readable
+code, and detect multi-layer obfuscation." v2.4.0 rebuilds the pipeline around
+exactly that: the bot now PEELS obfuscation layer by layer until plain, readable
+code remains — and proves readability with a score instead of promising it.**
+
+The architectural upgrade — the pipeline is now a **peel loop** (`src/pipeline.js`):
+
+- **One pass became a loop.** v2.3.0 ran detect → route → engines → fallbacks once
+  and delivered whatever came out — even when the "recovered" source was itself
+  still obfuscated (a loader wrapper around MoonSec, a chunk capture that is
+  another Luraph build). The new `deobfuscate()` wraps the single-pass core
+  (`deobfuscateOnce`) in an up-to-4-iteration loop: each pass recovers one layer,
+  the layer-agnostic scanner re-judges the output, and peeling continues while it
+  keeps making progress (code shrinks ≥5% or residual score drops). Guards stop
+  the loop on no-progress, binary outputs, and the job time budget — a later
+  layer failing never loses an earlier win, and the best iteration wins.
+- **Layer stack rides every result.** Each iteration records
+  `{family, version, how, bytesIn→bytesOut, residual%}`; the Discord reply now
+  shows **"Layers peeled: runtime loader layer (residual 53%) → Luraph v15.1
+  (residual 0%)"** so multi-layer uploads are visibly understood, not guessed.
+- **Static multi-layer detection** (`src/layers.js` `detectLayers`): co-existing
+  family banners in one file (Luraph macros AND a MoonSec header), plus
+  wrapper-generation counting, produce a layer summary before any work starts.
+  `.detect` shows a "🧅 Multi-layer obfuscation detected" panel with the stack.
+- **Residual-obfuscation scanner** (`src/layers.js` `residualObfuscation`) — the
+  expert question "is this still obfuscated?" answered with 9 weighted signals:
+  one-liner payloads, giant lines, string-escape floods, base64 blobs, numeric
+  bytecode floods, **encoded numeric payload runs (byte-code-as-text loaders at
+  any file size)**, machine-identifier floods, VM dispatcher shapes (while-true
+  dispatch, opcode compares, bit-op density, coroutine/metatable wiring,
+  `load(<runtime-built>)` markers, Lua/RSB1 bytecode magic), keyword starvation,
+  and a still-present family banner. Calibrated on the real corpus: ground truth
+  `print("blah blah")` scores 0; the real Luraph v15.1 sample scores 97; honest
+  plugin code calling `load(src)` stays clean. Threshold ≥45 = keep peeling.
+
+The readability engine (`src/readable.js`) — "give a readable code", enforced:
+
+- **P1 string-escape decode**: `"\104\101\108\108\111"` → `"hello"` (printable-only,
+  string/comment/long-string aware scanner; strings hiding `\0`/non-printables
+  keep their escapes — they carry meaning).
+- **P2 literal concat fold**: `"Hel" .. "lo, " .. "wor" .. "ld!"` → `"Hello, world!"`
+  — works across the scanner's segment boundaries, to fixpoint for long chains.
+- **P3 small-arith fold**: `(3 + 4)` → `7`, `(6 - 9)` → `(-3)` (signed results stay
+  parenthesized; code segments only).
+- **P4 machine-name rename**: `v0, l_2_5, IlIlI, _0x1f3d` → `a, b, c …` —
+  luaparse-gated (Luau/unsupported syntax refuses the pass), engages only at ≥15
+  machine names, collision-checked against every existing identifier, keywords
+  and globals (`print`, `game`, …) never move, single combined replacement pass
+  so nothing cascades.
+- **Every pass is verify-gated twice**: each transform must re-parse at the SAME
+  OR BETTER level (fengari real-grammar check), and the combined result is
+  re-verified again in the pipeline before it can replace the engine's output.
+- **Readability score** 0–100 (line length, indentation, mangled-name density,
+  escape density, numeric flood, keyword starvation) with a grade
+  (clean / readable / rough / machine-grade) — shown in every success reply as
+  `Readability **92/100** — clean`.
+
+Tests: new `test/layers.js` (18 checks) including a genuine end-to-end 2-layer
+sample — a numeric byte-code loader wrapped around a second loader wrapped
+around plain source — that must come back as the innermost source with a 2-entry
+layer stack and verified syntax, plus clean-code single-pass behavior. Full
+suite now **12 suites, all green**.
+
+Version 2.4.0 in package.json + config.
+
+
 ## v2.3.0 — dashboard fixed + redesigned: mission-control UI, 25+ owner tools
 
 **"Dashboard Isn't Working" — root-caused, fixed, redesigned. The v2.0/2.1/2.2
