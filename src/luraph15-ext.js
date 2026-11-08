@@ -65,12 +65,12 @@ export function probeExtEngine() {
 }
 
 /**
- * Run the vendored devirtualizer on one sample.
+ * Run one vendored-engine phase.
  * @param {string} sampleText full obfuscated source
- * @param {{ timeoutMs?: number, detectedName?: string, version?: string }} opts
- * @returns {Promise<null | { code, seconds, how, verification }>} null on any miss
+ * @param {{ timeoutMs?: number, version?: string, extraArgs?: string[], label?: string }} opts
+ * @returns {Promise<null | { code, seconds, how, verification, phase }>} null on any miss
  */
-export async function runExtDeobf(sampleText, { timeoutMs = 150_000, detectedName = 'Luraph', version = 'v15' } = {}) {
+async function runExtPhase(sampleText, { timeoutMs = 150_000, version = 'v15', extraArgs = [], label = 'luraph-ext' } = {}) {
   const probe = probeExtEngine();
   if (!probe.available) return null;
 
@@ -85,6 +85,7 @@ export async function runExtDeobf(sampleText, { timeoutMs = 150_000, detectedNam
     '--timeout', String(Math.max(15, Math.floor(totalS * 0.55))),
     '--budget', String(Math.max(10, Math.floor(totalS * 0.35))),
     '--max-runs', '6',
+    ...extraArgs,
   ];
   const t0 = Date.now();
   try {
@@ -92,7 +93,7 @@ export async function runExtDeobf(sampleText, { timeoutMs = 150_000, detectedNam
       cwd: dir,
       timeoutMs,
       maxBuffer: 64 * 1024 * 1024,
-      label: 'luraph-ext',
+      label,
     });
     const seconds = Math.round((Date.now() - t0) / 100) / 10;
     const stdout = (r.stdout || '').toString('utf8');
@@ -111,15 +112,44 @@ export async function runExtDeobf(sampleText, { timeoutMs = 150_000, detectedNam
 
     const fnM = /(\d+) functions?, \d+ unlifted/.exec(stdout);
     const fns = fnM ? Number(fnM[1]) : null;
+    const stmtM = /(\d+) statements recorded/.exec(stdout);
+    const stmts = stmtM ? Number(stmtM[1]) : null;
+    const trace = extraArgs.includes('--no-devirt');
     return {
       code,
       seconds,
-      how: `full source via vendored Luraph v15 devirtualizer (CFG+SSA lift${fns ? `, ${fns} functions` : ''}, ${seconds}s)`,
+      phase: trace ? 'trace' : 'devirt',
+      how: trace
+        ? `full source via vendored Luraph ${version} engine — behaviour-trace recovery${stmts ? `, ${stmts} statements recorded` : ''} (${seconds}s)`
+        : `full source via vendored Luraph v15 devirtualizer (CFG+SSA lift${fns ? `, ${fns} functions` : ''}, ${seconds}s)`,
       verification,
     };
   } catch {
-    return null; // hard timeout / crash — fall through to our own chain
+    return null; // hard timeout / crash — caller decides next step
   } finally {
     try { await fsp.rm(dir, { recursive: true, force: true }); } catch { /* tmp */ }
   }
+}
+
+/**
+ * Run the vendored devirtualizer on one sample — two phases:
+ *
+ *   1. CFG+SSA devirt lift — true full-source reconstruction for the standard
+ *      v15 closure-maker layout.
+ *   2. behaviour-trace recovery (--no-devirt) — for the hybrid CPS-loader
+ *      layout the lifter cannot read ("no closure makers / dispatchers
+ *      found"): the sample still runs in the offline emulator and its
+ *      executed statements are recorded and re-emitted as real source.
+ *
+ * Phase 2 splits the remaining time budget with phase 1.
+ * @param {string} sampleText full obfuscated source
+ * @param {{ timeoutMs?: number, detectedName?: string, version?: string }} opts
+ * @returns {Promise<null | { code, seconds, how, verification, phase }>} null on any miss
+ */
+export async function runExtDeobf(sampleText, { timeoutMs = 150_000, version = 'v15' } = {}) {
+  const first = Math.floor(timeoutMs * 0.6);
+  const devirt = await runExtPhase(sampleText, { timeoutMs: first, version, label: 'luraph-ext' });
+  if (devirt) return devirt;
+  const rest = Math.max(20_000, timeoutMs - first);
+  return runExtPhase(sampleText, { timeoutMs: rest, version, extraArgs: ['--no-devirt'], label: 'luraph-ext-trace' });
 }

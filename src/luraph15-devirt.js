@@ -4,15 +4,19 @@
  * Consumes the real-Luau capture (decrypt-event log + VM checkpoints) and
  * produces the readable devirtualization view:
  *
- *   1. REPLAY — every recorded lazy-decrypt (9 polymorphic block-decrypt
- *      variants with their exact runtime seeds) is re-applied in JS with the
- *      interpreter's own 29-bit xorshift. Every instruction region the VM
- *      decrypted at runtime becomes readable here.
- *   2. CONST RECOVERY — const-offset table entries decrypted during the run
- *      are sliced out of the captured bytecode buffer.
- *   3. DISASSEMBLY — the decrypted stream is rendered with the behavioral
- *      ISA (loop-1 v-map) into an annotated Lua view: register ops, calls,
- *      jumps, decrypt blocks, plus a trampoline/control-flow summary.
+ *   1. MULTI-STREAM — the Luraph VM executes one instruction stream per proto
+ *      (k/s/L/O are swapped wholesale); checkpoints are grouped into streams
+ *      by array signature and each stream is lifted independently.
+ *   2. SELECTIVE REPLAY — every stream's last checkpoint already contains all
+ *      decrypts applied up to that hit, so only events at/after that hit are
+ *      replayed (bit-exact 29-bit xorshift, the build's own keys). Const
+ *      sites support both handler shapes: raw seed operand and the runtime
+ *      B-derived seed — candidates are validated against the varint frame.
+ *   3. CONST RECOVERY — the bytecode buffer is re-dumped by the capture
+ *      whenever a const region decrypts (dirty-flag), so late snapshots hold
+ *      plaintext constants; offsets come from the VM's own write-back.
+ *   4. DISASSEMBLY — each decrypted stream renders through the behavioral
+ *      ISA (loop-1 v-map): register ops, calls, jumps, decrypt blocks.
  */
 import { verifyCode } from './validate.js';
 
@@ -128,33 +132,92 @@ function safeStr(v) {
   return typeof v === 'string' ? v : (v ?? 0);
 }
 
-/**
- * Build the devirtualization view from a capture.
- * @returns {{ ok, code, decrypted, total, consts, how, note }}
- */
-export function devirtFromCapture(capture, { detectedName = 'Luraph', version = 'v15.x' } = {}) {
-  if (!capture || !capture.ok || !Array.isArray(capture.checkpoints) || !capture.checkpoints.length) {
-    return { ok: false, note: 'no capture' };
-  }
-  const c0 = capture.checkpoints[0];
-  if (!c0 || !Array.isArray(c0.k)) return { ok: false, note: 'checkpoint missing instruction stream' };
+/** Event hit field: block events are 8-long (hit last), const events 9-long. */
+function evHit(ev) {
+  if (ev.length >= 9) return ev[8] >>> 0;      // const event with hit
+  if (ev.length >= 8 && ev[0] < 100) return ev[7] >>> 0; // block event with hit
+  return 0;                                     // legacy capture without hit info
+}
 
-  const st = {
-    k: c0.k.slice(), s: c0.s.slice(), L: c0.L.slice(), O: c0.O.slice(),
-    Y: (c0.Y || []).slice(), c: (c0.c || []).slice(), r: (c0.r || []).slice(),
-    y5: (c0.y5 || []).slice(),
-    buf: c0.y4hex ? Buffer.from(c0.y4hex, 'hex') : Buffer.alloc(0),
+/** Drop duplicated const events — the shape + anchor injections both log the
+ *  same site; the VM self-patches the instruction so each fires once. */
+function dedupeEvents(events) {
+  const out = [];
+  for (const ev of events) {
+    const prev = out[out.length - 1];
+    if (prev && prev[0] === ev[0] && prev[1] === ev[1] && prev[2] === ev[2]
+      && (prev[0] >= 100 || (prev[3] === ev[3] && prev[4] === ev[4]))) continue;
+    out.push(ev);
+  }
+  return out;
+}
+
+/** Group checkpoints into execution streams (per-proto array swaps). */
+function groupStreams(checkpoints) {
+  const streams = [];
+  for (const cp of checkpoints) {
+    if (!cp || !Array.isArray(cp.k) || !cp.k.length) continue;
+    const key = `${cp.k.length}:${(cp.s || []).length}:${(cp.L || []).length}:${(cp.O || []).length}`;
+    let st = streams.find((x) => x.key === key);
+    if (!st) {
+      st = { key, cps: [] };
+      streams.push(st);
+    }
+    st.cps.push(cp);
+  }
+  for (const st of streams) {
+    st.first = st.cps[0];
+    st.last = st.cps[st.cps.length - 1];
+    st.lastHit = st.last.hit || 0;
+    st.firstHit = st.first.hit || 0;
+  }
+  return streams;
+}
+
+/** Which stream was active at VM hit H — the stream of the last checkpoint
+ *  at/before H (streams execute contiguously). */
+function streamAtHit(streams, H) {
+  let best = null;
+  for (const st of streams) {
+    if (st.firstHit <= H) {
+      if (!best || st.firstHit > best.firstHit) best = st;
+    }
+  }
+  return best || streams[0];
+}
+
+/** Build one stream's lifted state for the INSTRUCTION ARRAYS:
+ *  arrayBase = the stream's LAST checkpoint (arrays as of lastHit — every
+ *  block decrypt before it is already applied by the VM itself); only block
+ *  events at/after lastHit are replayed. Const decrypts live on the global
+ *  hit-1 base (see liftConsts) — the buffer is shared across protos. */
+function liftStream(st, events, capture) {
+  const arrayBase = st.last;
+  const state = {
+    k: arrayBase.k.slice(), s: arrayBase.s.slice(), L: arrayBase.L.slice(), O: arrayBase.O.slice(),
+    Y: (arrayBase.Y || []).slice(), c: (arrayBase.c || []).slice(), r: (arrayBase.r || []).slice(),
   };
 
-  // 1. replay block decrypts
+  // block events assigned to this stream that fired at/after the last snapshot
+  const pending = [];
+  for (const ev of events) {
+    if (ev[0] >= 100) continue; // const sites — global base, handled in liftConsts
+    const hit = evHit(ev);
+    if (!hit) {
+      // legacy capture without hit info: apply everything to the first stream
+      if (st === st.streamsRef[0]) pending.push({ ev, hit: 0 });
+      continue;
+    }
+    const owner = streamAtHit(st.streamsRef, hit);
+    if (owner !== st) continue;
+    if (hit >= st.lastHit) pending.push({ ev, hit });
+  }
+
   let applied = 0;
-  for (const ev of capture.events || []) {
+  for (const { ev } of pending) {
     const [id, , a3, a4, a5] = ev;
-    if (id >= 100) continue; // const sites handled separately
     const roles = siteRoles(capture, id);
     if (!roles || !Object.keys(roles).length) continue;
-    // args: {id, I, seed, start, count, B, J, D} — some sites log count/start swapped;
-    // pick the interpretation where start lands inside the stream and count is sane.
     const cands = [
       { seed: a3, start: a4, count: a5 },
       { seed: a3, start: a5, count: a4 },
@@ -172,7 +235,7 @@ export function devirtFromCapture(capture, { detectedName = 'Luraph', version = 
     for (let t = 1; t <= count; t++) {
       H = xorshiftStep(H);
       const dec = (arrName, bits) => {
-        const arr = st[arrName];
+        const arr = state[arrName];
         const v = arr[m];
         if (typeof v === 'number') arr[m] = bxor(v, band(rshift(H, bits), 127));
       };
@@ -181,93 +244,127 @@ export function devirtFromCapture(capture, { detectedName = 'Luraph', version = 
     }
     applied++;
   }
+  return { state, applied };
+}
 
-  // 1b. const decrypts (ids >= 100): idx=a3, seed=a4 — toggle y5 entry, decrypt buffer range
-  for (const ev of capture.events || []) {
-    const [id, , a3, a4] = ev;
-    if (id < 100) continue;
-    const idx = a3 >>> 0;
-    const seed = a4 >>> 0;
-    if (!idx || idx >= st.y5.length) continue;
-    const off = bxor(st.y5[idx] >>> 0, CONST_KEY) >>> 0;
-    st.y5[idx] = off;
-    if (off >= st.buf.length) continue;
-    const vi = readVarint(st.buf, off + 1);
-    if (!vi || vi.v <= 0 || vi.next + vi.v > st.buf.length || vi.v > 8192) continue;
-    const key32 = ((seed * 16843009) >>> 0);
-    let p = vi.next;
-    const end = vi.next + vi.v;
-    const end32 = end - (vi.v % 4);
-    for (; p + 4 <= end; p += 4) st.buf.writeUInt32LE(bxor(st.buf.readUInt32LE(p), key32), p);
-    for (; p < end; p++) st.buf[p] = bxor(st.buf[p], band(seed, 255));
+/** Count plausibly-decrypted opcodes in a stream state. */
+function inRangeCount(state) {
+  let n = 0;
+  for (let i = 1; i < state.k.length; i++) {
+    const v = state.k[i];
+    if (typeof v === 'number' && v >= 0 && v <= 110) n++;
   }
+  return n;
+}
 
-  // 2. decrypt stats
-  let decrypted = 0, total = 0;
-  for (let i = 1; i < st.k.length; i++) {
-    const v = st.k[i];
-    if (v === undefined || v === null) continue;
-    total++;
-    if (v >= 0 && v <= 110) decrypted++;
+/**
+ * Build the devirtualization view from a capture.
+ * @returns {{ ok, code, decrypted, total, consts, how, note, streams }}
+ */
+export function devirtFromCapture(capture, { detectedName = 'Luraph', version = 'v15.x' } = {}) {
+  if (!capture || !capture.ok || !Array.isArray(capture.checkpoints) || !capture.checkpoints.length) {
+    return { ok: false, note: 'no capture' };
   }
+  const streams = groupStreams(capture.checkpoints);
+  if (!streams.length) return { ok: false, note: 'checkpoint missing instruction stream' };
+  for (const st of streams) st.streamsRef = streams;
 
-  // 3. const recovery: entries whose decrypted offsets point at readable data
+  const events = dedupeEvents(capture.events || []);
+
+  // constant pool: the capture logs the plaintext straight from each const
+  // handler's epilogue (the VM's own decrypted bytes) — ground truth, no
+  // seed derivation or buffer-base reconstruction needed.
+  const seenIdx = new Set();
   const consts = [];
-  if (st.buf.length) {
-    for (let idx = 1; idx < Math.min(st.y5.length, 2000); idx++) {
-      const off = st.y5[idx];
-      if (typeof off !== 'number' || off <= 2 || off >= st.buf.length) continue;
-      const vi = readVarint(st.buf, off + 1);
-      if (!vi || vi.v <= 0 || vi.next + vi.v > st.buf.length || vi.v > 4096) continue;
-      const raw = st.buf.toString('latin1', vi.next, vi.next + vi.v);
-      const pr = [...raw].filter((ch) => {
-        const c = ch.charCodeAt(0);
-        return (c >= 32 && c <= 126) || c === 9 || c === 10 || c === 13;
-      }).length / raw.length;
-      if (pr >= 0.9 && raw.length >= 2) consts.push({ idx, len: vi.v, text: raw });
+  for (const st of capture.strings || []) {
+    if (seenIdx.has(st.idx)) continue;
+    seenIdx.add(st.idx);
+    consts.push(st);
+  }
+  consts.sort((a, b) => a.idx - b.idx);
+
+  const sections = [];
+  let totalDecrypted = 0, totalInstr = 0, totalApplied = 0;
+  let streamNo = 0;
+  for (const st of streams) {
+    streamNo++;
+    const { state, applied } = liftStream(st, events, capture);
+    totalApplied += applied;
+
+    // self-check: a bad block replay corrupts — keep whichever variant decodes
+    // more opcodes (const state lives on bufBase and is unaffected).
+    const replayed = inRangeCount(state);
+    if (applied) {
+      const bare = {
+        k: st.last.k, s: st.last.s, L: st.last.L, O: st.last.O,
+      };
+      if (inRangeCount(bare) > replayed) {
+        state.k = bare.k; state.s = bare.s; state.L = bare.L; state.O = bare.O;
+      }
     }
+
+    const { decrypted, total } = (() => {
+      let d = 0, t = 0;
+      for (let i = 1; i < state.k.length; i++) {
+        const v = state.k[i];
+        if (v === undefined || v === null) continue;
+        t++;
+        if (v >= 0 && v <= 110) d++;
+      }
+      return { decrypted: d, total: t };
+    })();
+
+    totalDecrypted += decrypted; totalInstr += total;
+
+    const L2 = [];
+    L2.push(`-- ════ stream ${streamNo}/${streams.length} · ${state.k.length} instructions · decrypted ${decrypted}/${total} ════`);
+    L2.push(`-- entry pc: ${st.last.i || 1}`);
+    L2.push('-- ---- decrypted instruction stream (disassembly) ----');
+    const shown = new Set();
+    let shownCount = 0;
+    const MAX_INSTR = 1200;
+    for (let i = Math.max(1, (st.last.i || 1) - 8); i < state.k.length && shownCount < MAX_INSTR; i++) {
+      const v = state.k[i];
+      if (typeof v !== 'number' || v < 0 || v > 110) continue;
+      if (shown.has(i)) continue;
+      shown.add(i);
+      shownCount++;
+      L2.push(`-- [${i}] ${disasmInstr(state.k, state.s, state.L, state.O, i)}`);
+    }
+    sections.push(L2.join('\n'));
   }
 
-  // 4. disassembly of the decrypted stream (entry window + trampoline targets)
-  const entry = c0.i || 1;
-  const L2 = [];
-  L2.push('-- ══ BypassX Deobf Bot — Luraph ' + version + ' devirtualization (real-Luau VM capture) ══');
-  L2.push(`-- family: ${detectedName} ${version} · instructions: ${st.k.length} · decrypted at runtime: ${decrypted}/${total}`);
-  L2.push(`-- decrypt events replayed: ${applied} · const pool: ${st.y5.length} entries (${consts.length} readable strings recovered)`);
-  L2.push('-- method: the obfuscated file ran inside the bundled real Luau runtime with its');
-  L2.push('-- own interpreter instrumented in place; every lazy block-decrypt it executed');
-  L2.push('-- was recorded and is replayed bit-exactly below — the instruction stream is');
-  L2.push('-- the VM\'s own, decrypted by the build\'s own keys.');
-  L2.push('');
-  L2.push(`-- entry pc: ${entry}`);
-  L2.push('-- ---- decrypted instruction stream (disassembly) ----');
-  const shown = new Set();
-  let shownCount = 0;
-  const MAX_INSTR = 1200;
-  for (let i = Math.max(1, entry - 8); i < st.k.length && shownCount < MAX_INSTR; i++) {
-    const v = st.k[i];
-    if (typeof v !== 'number' || v < 0 || v > 110) continue;
-    if (shown.has(i)) continue;
-    shown.add(i);
-    shownCount++;
-    L2.push(`[${i}] ${disasmInstr(st.k, st.s, st.L, st.O, i)}`);
-  }
   if (consts.length) {
-    L2.push('');
-    L2.push('-- ---- recovered constant strings (decrypted by the build\'s own keys) ----');
-    for (const c of consts.slice(0, 200)) L2.push(`-- K[${c.idx}] = ${JSON.stringify(c.text.slice(0, 120))}`);
+    sections.push([
+      '-- ════ constant pool (decrypted by the build\'s own keys, all protos) ════',
+      ...consts.slice(0, 400).map((c) => `-- K[${c.idx}] = ${JSON.stringify(c.text.slice(0, 200))}`),
+    ].join('\n'));
   }
 
-  const code = L2.join('\n') + '\n';
+  const code = [
+    '-- ══ BypassX Deobf Bot — Luraph ' + version + ' devirtualization (real-Luau VM capture) ══',
+    `-- family: ${detectedName} ${version} · streams: ${streams.length} · instructions: ${totalInstr} · decrypted at runtime: ${totalDecrypted}/${totalInstr}`,
+    `-- decrypt events replayed: ${totalApplied} · const strings recovered: ${consts.length}`,
+    '-- method: the obfuscated file ran inside the bundled real Luau runtime with its',
+    '-- own interpreter instrumented in place; every lazy block-decrypt it executed',
+    '-- was recorded and is replayed bit-exactly below — the instruction stream is',
+    '-- the VM\'s own, decrypted by the build\'s own keys. One section per proto',
+    '-- stream (the VM swaps k/s/L/O wholesale between protos).',
+    '',
+    `-- entry pc: ${streams[0].last.i || 1}`,
+    sections.join('\n\n'),
+    '',
+  ].join('\n');
   const v = verifyCode(code, { lang: 'lua', filename: 'devirtualized.lua' });
   return {
     ok: true,
     code,
-    decrypted,
-    total,
-    applied,
+    decrypted: totalDecrypted,
+    total: totalInstr,
+    applied: totalApplied,
     consts: consts.length,
-    how: `Luraph VM devirtualization — real-Luau capture: ${applied} decrypt events replayed, ${decrypted}/${total} instructions decrypted, ${consts.length} const strings recovered (${v.status === 'verified' ? 'syntax verified' : v.status})`,
+    streams: streams.length,
+    how: `Luraph VM devirtualization — real-Luau capture: ${totalApplied} decrypt events replayed across ${streams.length} proto streams, ${totalDecrypted}/${totalInstr} instructions decrypted, ${consts.length} const strings recovered (${v.status === 'verified' ? 'syntax verified' : v.status})`,
     note: v.status !== 'verified' ? v.detail : null,
   };
 }

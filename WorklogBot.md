@@ -1,6 +1,86 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.2.0 — behaviour-trace source recovery + multi-proto devirtualization
+
+**The hybrid CPS-loader v15.1 layout — the one sample class no stage could
+turn into readable source — now recovers its real executed source, and our
+own devirt chain learned to lift every proto stream separately.**
+
+Origin: continued evaluation of caomod2077/Deobfuscator-Luraph-V15 (vendored
+in v2.1.0). The vendored engine's devirt lift still misses the hybrid layout
+("no closure makers / dispatchers found — likely a method-based state-machine
+VM"), but running it with `--no-devirt` proved decisive:
+
+- **Trace recovery works.** The engine's offline emulator (envlog) runs the
+  sample, records the payload's executed statements, and re-emits them as
+  real source. On our hybrid fixture: 6 statements in ~4.7 s —
+  `Instance.new("Folder")`, ScreenGui/Frame/Path2D setup, `.Parent` wiring —
+  byte-identical across 4 runs (md5-stable), syntax-verified, and confirmed
+  against the raw sample's own behavior (bare `bin/luau` run dies on
+  `Instance.new` exactly as the payload's first statement predicts).
+- **Ground-truth correction.** The old fixture ground truth
+  (`print("blah blah")`) was stale — the payload's real executed behavior is
+  the GUI setup; `test/fixtures/luraph-v15.1-real-groundtruth.lua` now holds
+  the recovered payload. The string pool (via the harness's ENVLOG-STRINGS)
+  also shows the unexecuted surface: an ASCII-art banner, a debug-library
+  error message, `identifyexecutor`/`islclosure` checks and
+  `Path2DControlPoint` — i.e. the trace covers executed statements, and
+  unexecuted branches stay with the disassembly.
+
+Integration (this release):
+
+- **`src/luraph15-ext.js` — two-phase engine runner.** Phase 1: CFG+SSA
+  devirt lift (60% of the budget). Phase 2 on miss: `--no-devirt`
+  behaviour-trace recovery (remaining budget). The phase is surfaced in
+  `how`/`partialNote` ("behaviour-trace recovery, N statements recorded").
+- **Pipeline** (`src/pipeline.js`): the ext return path now distinguishes
+  the two phases; the hybrid fixture flows detect → peel → vm-lift →
+  `luraph15:ext` (trace) → verified source paste, ~14 s end-to-end.
+- **`src/luau-capture.js` — capture layer upgraded:**
+  - every decrypt event now logs its VM hit number (9th field; the dump
+    prints all fields) — events are assignable to proto streams;
+  - the bytecode buffer (`y[4]`) is re-dumped at the first VM-loop checkpoint
+    after any const-decrypt site fires (`__BX_Y4DIRTY`), not only at hit 1 —
+    late snapshots carry post-decrypt regions;
+  - **const-text dump**: each const handler's self-patch epilogue
+    (`s[I]=141…` / `s[I]=140…` / `s[I]=54…`, one occurrence each, verified)
+    is instrumented to log `<idx>:<hex>` of the region it just decrypted —
+    the VM hands over its own plaintext, no seed derivation needed;
+  - `y[6]` (lazy string pool) serialized per checkpoint (probe: stays empty
+    on this build — the v15 string layer decrypts off-table; noted for
+    future work);
+  - fixed an injection-loop bug where a longer injection string re-found its
+    own site forever (build hang), and a Lua lexer fusion (`truelocal`)
+    syntax break.
+- **`src/luraph15-devirt.js` — multi-proto devirtualization:**
+  - checkpoints are grouped into **execution streams** by array signature
+    (the VM swaps k/s/L/O wholesale between protos: 10557 → 110 → 981 on the
+    real fixture) and each stream is lifted and disassembled separately;
+  - per stream, the LAST checkpoint is the base (all decrypts up to that hit
+    are already applied by the VM); only block events at/after that hit are
+    replayed, mapped to their owning stream via the hit field;
+  - a self-check picks base vs replayed by in-range opcode count, so a bad
+    replay can never corrupt the output;
+  - the const pool comes from the handler epilogue dump (ground truth);
+    wrong-seed garbage is filtered (single-char-repeat rejection);
+  - disassembly lines are comments, so the whole output parses as Lua
+    (verification: syntax verified — previously failed verification).
+  - Measured on the real fixture: 3 streams, 5,473/11,645 instructions
+    decrypted, 91 decrypts replayed, 21 const regions + pool section,
+    verified output (v2.0 baseline: 1 stream, 4,407/10,556, 0 consts).
+- **`test/luraph-ext.js`**: the hybrid-fixture test now asserts trace
+  recovery success (`Instance.new("Folder")` in verified output, phase
+  `trace`, <70 s) instead of a clean miss. **`test/all.js` — 11/11 suites
+  green**; never-fail semantics untouched.
+
+Known limits (honesty section): the trace phase records executed statements
+only — unexecuted branches appear in the devirt disassembly/const pool
+instead; the v15 second-layer string encryption (per-string keys inside the
+FH state machine) is not yet reversed, so the devirt const pool shows the
+layer-1 plaintext for the 21 instrumented sites.
+
+
 ## v2.1.0 — vendored Luraph v15 full-source devirtualizer (external engine stage)
 
 **The bot now ships a second, independent devirtualization engine for Luraph

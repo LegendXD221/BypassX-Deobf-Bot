@@ -278,6 +278,7 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
                 stage('luraph15:ext', ext.how);
                 const post = postprocessFile('recovered.lua', Buffer.from(ext.code, 'utf8'));
                 if (outcome.workDir) await engine.cleanupWorkDir(outcome.workDir);
+                const tracePhase = ext.phase === 'trace';
                 return {
                   ok: true,
                   code: post.data.toString('utf8'),
@@ -288,8 +289,12 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
                   verification: ext.verification,
                   originalSize: buffer.length,
                   recoveredSize: post.data.length,
-                  how: 'Luraph v15 devirtualization (vendored CFG+SSA full-source lift)',
-                  partialNote: `Luraph ${detected.version || 'v15.x'}: **full source recovered** by the vendored devirtualization engine — control flow, closures and constants reconstructed (${ext.how}).`,
+                  how: tracePhase
+                    ? 'Luraph v15 devirtualization (vendored engine, behaviour-trace recovery)'
+                    : 'Luraph v15 devirtualization (vendored CFG+SSA full-source lift)',
+                  partialNote: tracePhase
+                    ? `Luraph ${detected.version || 'v15.x'}: **source recovered** by the vendored engine's behaviour-trace pass — the sample ran in the offline emulator and its executed statements were recorded and re-emitted as real source (${ext.how}).`
+                    : `Luraph ${detected.version || 'v15.x'}: **full source recovered** by the vendored devirtualization engine — control flow, closures and constants reconstructed (${ext.how}).`,
                   engine: await engine.probe(),
                 };
               }
