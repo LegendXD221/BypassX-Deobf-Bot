@@ -23,6 +23,7 @@ const SUITES = [
   { name: 'vm-lift.js', timeoutMs: 300_000 },        // VM devirtualization engine (v1.9.0)
   { name: 'luraph-ext.js', timeoutMs: 300_000 }, // vendored v15 full-source lift (v2.1.0)
   { name: 'layers.js', timeoutMs: 420_000 },     // multi-layer peel loop + readability (v2.4.0)
+  { name: 'luraph14.js', timeoutMs: 420_000 },   // Luraph v14 runtime-state devirtualizer (v2.6.0)
 ];
 
 let failed = 0;

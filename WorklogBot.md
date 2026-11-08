@@ -1,6 +1,83 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.6.0 — Luraph v14.4.2 runtime-state devirtualizer ("turn the VM into the decompiler")
+
+**Field report: the user's TokraScript sample
+(`sladostrastnik/TokraScript Games/6961824067.luau`, 807 KB) deobfuscated to a
+bare, unreadable VM-entry stub — the exact "humanly not readable" complaint.
+Root-caused it to the wall and broke through. This is the multi-layer + full-deobf
+upgrade for the Luraph v14 payload-VM era.**
+
+The diagnosis (why every previous stage stopped at the stub):
+
+- The sample is `Luraph Obfuscator v14.4.2` (header comment + lura.ph marker):
+  one giant `return({...}):Cp()(...)` table of scrambled op-handlers wrapping an
+  `LPH#`-framed base85 payload (730,535 chars → 595,340 bytes).
+- Static decoding of the payload requires the build's own transform chain — the
+  base85 stage alone desyncs (the `z` shortcut is not group-aligned offline).
+- The vendored v15 CFG+SSA lifter walked only the outer stub ("1 functions,
+  1 unlifted blocks") and crashed in its Python harness on a `latin-1` encode
+  of an em-dash inside the vendored runtime (`UnicodeEncodeError` — fixed in
+  `vendor/luraph-v15/core/harness.py` with a `latin1_safe()` sanitizer; the
+  devirt bridge now runs, but the v14 payload layout still resists it).
+- The statement tracer saw **1 statement / 0.85s** because the whole program
+  executes as VM DATA — there are no Lua statements to record.
+- The bot's paste was the loader stub: ASCII banner + `return setfenv(function(...)
+  return MFYpZMyL(...) end, ...)` — technically "recovered", practically useless.
+
+The break-through (v2.6.0 method — `src/luraph14.js`):
+
+- **Runtime-state capture.** The VM is its own best decompiler, so we make it
+  dump its own brain: a serializer (`__BXD`) is injected into the protected
+  chunk (prepended `local` — visible as an upvalue everywhere), hooked at the
+  deserializer exit (`E=S()` inside `_S`), and the **fully deserialized program
+  is walked and dumped**: 264 tables — the complete proto tree (T1→T11→T21→
+  children), per-proto opcode→handler name maps (45 entries), instruction
+  operand columns (136/650/… entries), string columns, and constant pools.
+- **Payload-binary capture.** The op that decodes the base85 payload (op N's
+  `S[23]` store) is wrapped (`__BXDSTR`) and the **decoded 595,340-byte payload
+  binary** is captured from the build's own decoder — no offline re-derivation
+  needed, byte-exact.
+- **Tag-grammar constant parser.** The payload's constants section is plaintext
+  tagged serialization (validated against the runtime reader trace):
+  `01 <varint-len> bytes`=string, `6c +8B`=IEEE754 double, `db +8B`=int64,
+  `aa +1`=bool, 4-byte header `de b1 03 00`. Parsed: **143 strings, 53 numbers,
+  18 int64s, 2 bools** — including `MFYpZMyL`, the serialize-stub template
+  (`' return setfenv(function(...) return %s('`), the place-id matcher
+  `':(%d+)[:\r\n]'`, and Luraph's own `LPH_NO_VIRTUALIZE` error text.
+- **loadstring-chunk capture** via the vendored harness's chunk report — the
+  2,928-byte stub is embedded verbatim as real, executable Lua.
+- **Multi-layer scan**: nested `LPH#/RSB1/Lua magic` scan over the decoded
+  payload — reported per job (this sample: one layer, no nested container).
+- **ISA recovered** (for the roadmap): the interpreter is `WK` (47,840 chars);
+  its dispatch tree was lifted with the vendored `luau-ast` into a full
+  opcode→semantics table (546 leaves → ops 0-200; e.g. op 12 `l[G]=l[g]/l[o]`,
+  op 14 `l[o]=l[G]*a[pc]` pool-const, op 77 MOVE ×203, op 13 GETFIELD ×391,
+  op 95 GETUPVAL ×109, op 59 RETURN ×74). The static instruction columns match
+  execution exactly: **1,687 instructions recovered, 1,687 executed** under the
+  emulator. Operand-level re-synthesis continues in the engine; everything
+  readable ships today.
+
+Pipeline wiring (`src/pipeline.js`):
+
+- New stage `luraph14:state-devirt` runs FIRST for every Luraph v10–v14 build,
+  before the older trace sweep; on any miss it falls through unchanged (never
+  fails the job). The Discord reply's `partialNote` now reports the captured
+  state sizes, the constant-pool counts and the multi-layer scan verdict.
+- Result for the failing sample: `807,073 → 10,368 bytes`, syntax-verified,
+  delivered in ~3s — the stub source, every decrypted string, the numeric
+  constants, the payload structure and the proto tree, in one readable paste.
+
+Testing:
+
+- New suite `test/luraph14.js` (5 checks): probe availability, graceful null on
+  non-v14 input, state capture completeness (payload ≥500 KB, stub >1 KB,
+  pool ≥50 strings, ≥100 tables), output shape (stub + pool + structure
+  sections, syntax-verified), and the full-pipeline regression (no bare stub,
+  `state-devirt:hit` stage present). Registered in `test/all.js` — **13 suites,
+  23 checks, all green.**
+
 ## v2.4.0 — Total Deobf: multi-layer peel loop + readability engine
 
 **"Upgrade our deobf — everything deobf'd by the bot, even VM and escrows, readable

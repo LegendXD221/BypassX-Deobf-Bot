@@ -896,8 +896,8 @@ async function main() {
         spec = { src: transformed, tag: 'targeted-' + pass, ops };
       }
       let d2 = null;
-      try { d2 = attempt(spec.src, spec.tag, spec.ops); } catch { d2 = null; }
-      out.log.push('BXDBG pass ' + spec.tag + ' lift=' + (d2.lift && d2.lift.snap ? 'yes' : 'no') + ' ended=' + (d2.lift ? d2.lift.ended : '-') + ' probed=' + (d2.lift && d2.lift.probes ? d2.lift.probes.filter(p => p.ev.length > 0).length : 0));
+      try { d2 = attempt(spec.src, spec.tag, spec.ops); } catch (e) { d2 = null; out.log.push('BXDBG pass ' + spec.tag + ' threw: ' + String(e && e.message || e).slice(0, 120)); }
+      out.log.push('BXDBG pass ' + spec.tag + ' lift=' + (d2 && d2.lift && d2.lift.snap ? 'yes' : 'no') + ' ended=' + (d2 && d2.lift ? d2.lift.ended : '-') + ' probed=' + (d2 && d2.lift && d2.lift.probes ? d2.lift.probes.filter(p => p.ev.length > 0).length : 0));
       if (!d2 || !d2.lift || !d2.lift.snap) continue;
       mergeLift(acc, d2);
       if (d2.lift.ended === 'clean-exit') {

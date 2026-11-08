@@ -400,7 +400,9 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null }
             // v2.1.0: vendored full-source devirtualizer (MIT engine, CFG+SSA
             // lift) — true readable source for the standard Luraph v15
             // closure-maker layout; our own chain below covers the hybrid
-            // CPS-loader layout it cannot read. Any miss falls through.
+            // CPS-loader layout it cannot read. (v14 builds take the
+            // behaviour-trace sweep branch below instead.) Any miss falls
+            // through.
             if (!binaryOutput && (detected.version || '').startsWith('v15')) {
               stage('luraph15:ext-attempt', 'vendored v15 devirtualizer (full-source lift)');
               let ext = null;
@@ -460,6 +462,119 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null }
                 partialNote: `Luraph ${detected.version || 'v15.x'} devirtualization: the obfuscator's own VM ran inside the jailed sandbox — instruction stream + decrypted constant pool captured at the dispatcher, ${lift.classified}/${lift.total} opcodes behaviorally probed, bytecode transpiled below.${h.strings.length ? ` ${h.strings.length} pool strings also decrypted.` : ''}`,
                 engine: await engine.probe(),
               };
+            }
+          } else if (!binaryOutput && /^v1[0-4]/.test(detected.version || '')) {
+            // v2.6.0: runtime-state devirtualizer for Luraph v10–v14 payload
+            // VMs — runs the build's own VM inside the offline emulator with
+            // its interpreter instrumented: captures the deserialized program
+            // (protos, opcode maps, operand columns, pools), the decoded
+            // payload binary from the build's own decoder, and the
+            // loadstring() chunk. Emits a verified readable document. Falls
+            // through to the older trace sweep on any miss.
+            stage('luraph14:state-devirt', 'runtime-state capture — deserialized program + decoded payload + loadstring chunk');
+            let dev14 = null;
+            try {
+              const { runLuraph14Devirt } = await import('./luraph14.js');
+              dev14 = await runLuraph14Devirt(buffer.toString('latin1'), {
+                timeoutMs: Math.min(CONFIG.engineTimeoutMs, 120_000),
+                version: detected.version || 'v14',
+              });
+            } catch (e) {
+              stage('luraph14:state-devirt:miss', String(e.message || e).slice(0, 120));
+            }
+            if (dev14 && dev14.code && dev14.code.length > 200) {
+              stage('luraph14:state-devirt:hit', `${dev14.code.length} bytes — ${dev14.how}`);
+              if (outcome.workDir) await engine.cleanupWorkDir(outcome.workDir);
+              return {
+                ok: true,
+                code: dev14.code,
+                binaryOutput: false,
+                outputBuffer: null,
+                codeName: 'devirtualized.lua',
+                detected, stages, durationMs: Date.now() - t0, lang,
+                verification: dev14.verification,
+                originalSize: buffer.length,
+                recoveredSize: dev14.code.length,
+                how: dev14.how,
+                partialNote: `Luraph ${detected.version || 'v14.x'} devirtualization: **the build's own VM was turned into the decompiler.** The payload VM ran inside the offline emulator with its interpreter instrumented — the fully deserialized program (protos, opcode→handler maps, operand columns, constant pools) was dumped at the deserializer exit, the decoded payload binary was captured from the build's own decoder, and the loadstring() chunk is delivered verbatim below with every decrypted pool string.${dev14.meta && dev14.meta.constants ? ` Constant pool: ${dev14.meta.constants.strings} strings, ${dev14.meta.constants.numbers} numeric constants.` : ''}${dev14.meta && dev14.meta.nestedMagics && dev14.meta.nestedMagics.length ? ` Multi-layer scan: nested container magics found (${dev14.meta.nestedMagics.map((x) => x.magic).join(', ')}).` : ' Multi-layer scan: no second container layer inside the payload.'}`,
+                engine: await engine.probe(),
+              };
+            }
+            stage('luraph14:state-devirt:miss', 'runtime-state capture produced nothing — falling back to trace sweep');
+            // v2.5.0: vendored behaviour-trace sweep for Luraph v10–v14 VM
+            // builds. The payload-VM layout resists static lifting, but the
+            // build RUNS in the vendored offline emulator: executed statements
+            // are recorded as real source, every loadstring() chunk is
+            // captured, and HttpGet URLs the loader hits are fetched and
+            // their real responses injected for a second pass (multi-layer
+            // payloads materialize as chunks). Delivers: verified source
+            // chunk > statement trace; on a total miss the payload-inventory
+            // fallback below still runs.
+            stage('luraph14:trace-sweep', 'vendored offline emulator — statement + chunk + URL sweep');
+            let sweep = null;
+            try {
+              const { runExtTrace } = await import('./luraph15-ext.js');
+              const base = path.basename(filename || '');
+              const placeId = (/(?:^|[^0-9])(\d{6,12})[^0-9]*\.\w{0,5}$/.exec(base) || [])[1] || null;
+              sweep = await runExtTrace(buffer.toString('utf8'), {
+                timeoutMs: Math.min(CONFIG.engineTimeoutMs, 120_000),
+                version: detected.version || 'v14',
+                prelude: placeId ? `setprop(game, 'PlaceId', ${placeId})` : null,
+                fetchUrl: async (u) => {
+                  const { safeFetch } = await import('./fetchurl.js');
+                  const res = await safeFetch(u, { maxBytes: 2 * 1024 * 1024 });
+                  return await res.text();
+                },
+              });
+            } catch (e) {
+              stage('luraph14:trace:miss', String(e.message || e).slice(0, 120));
+            }
+            if (sweep) {
+              stage('luraph14:trace', sweep.how);
+              // 1) a verified source chunk is full recovery — deliver it
+              let bestChunk = null;
+              for (const c of sweep.chunks) {
+                if (!c.text || c.text.length < 24) continue;
+                const v = verifyCode(c.text, { lang: 'lua', filename: 'chunk.lua' });
+                if (v.status === 'verified' && (!bestChunk || c.text.length > bestChunk.text.length)) bestChunk = c;
+              }
+              if (bestChunk) {
+                const post = postprocessFile('recovered.lua', Buffer.from(bestChunk.text, 'utf8'));
+                if (outcome.workDir) await engine.cleanupWorkDir(outcome.workDir);
+                return {
+                  ok: true,
+                  code: post.data.toString('utf8'),
+                  binaryOutput: false,
+                  outputBuffer: null,
+                  codeName: 'recovered.lua',
+                  detected, stages, durationMs: Date.now() - t0, lang,
+                  verification: verifyCode(post.data.toString('utf8'), { lang: 'lua', filename: 'recovered.lua' }),
+                  originalSize: buffer.length,
+                  recoveredSize: post.data.length,
+                  how: `Luraph ${detected.version || 'v14.x'} — decrypted loadstring() chunk recovered (offline emulator sweep)`,
+                  partialNote: `Luraph ${detected.version || 'v14.x'}: the build ran in the vendored offline emulator and handed a decrypted chunk to loadstring() — captured verbatim below (${sweep.statements} executed statements also recorded${sweep.urls.length ? `, loader URLs: ${sweep.urls.slice(0, 2).join(', ')}` : ''}).`,
+                  engine: await engine.probe(),
+                };
+              }
+              // 2) statement trace — readable recovery of what executed
+              if (sweep.statements >= 3 && sweep.traceCode.length > 120) {
+                if (outcome.workDir) await engine.cleanupWorkDir(outcome.workDir);
+                return {
+                  ok: true,
+                  code: sweep.traceCode,
+                  binaryOutput: false,
+                  outputBuffer: null,
+                  codeName: 'behaviour-trace.lua',
+                  detected, stages, durationMs: Date.now() - t0, lang,
+                  verification: { status: 'unverifiable', lang: 'lua', detail: `behaviour trace — ${sweep.statements} executed statements recovered (the VM payload resists full static lifting)` },
+                  originalSize: buffer.length,
+                  recoveredSize: sweep.traceCode.length,
+                  how: sweep.how,
+                  partialNote: `Luraph ${detected.version || 'v14.x'}: **source recovered by behaviour trace** — the build ran in the vendored offline emulator and every statement it executed is listed below in order${sweep.urls.length ? `; the loader fetched ${sweep.urls.length} URL(s): ${sweep.urls.slice(0, 3).join(', ')}` : ''}. Remaining VM-only sections stay behind the payload VM.`,
+                  engine: await engine.probe(),
+                };
+              }
+              stage('luraph14:trace:thin', `only ${sweep.statements} statements — falling through`);
             }
           } else if (!binaryOutput
             && looksLikeLuraphInventory(data.toString('utf8'))

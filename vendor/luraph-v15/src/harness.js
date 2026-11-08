@@ -71,6 +71,8 @@ function longString(s) {
 function luaValue(v) {
   if (typeof v === 'boolean') return v ? 'true' : 'false';
   if (Array.isArray(v)) return '{' + v.map(luaValue).join(', ') + '}';
+  if (v && typeof v === 'object')
+    return '{' + Object.entries(v).map(([k2, v2]) => `[${luaValue(String(k2))}] = ${luaValue(v2)}`).join(', ') + '}';
   if (typeof v === 'string')
     return '"' + v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r') + '"';
   if (v === null || v === undefined) return 'nil';
@@ -132,7 +134,7 @@ function buildHarness(source, cfg, chunks = {}) {
   const rdata = fs.existsSync(robloxFile) ? fs.readFileSync(robloxFile, 'ascii').replace('--!nocheck', '') : '';
   const dtypes = fs.existsSync(dtypesFile) ? fs.readFileSync(dtypesFile, 'utf8').replace('--!nocheck', '') : '';
 
-  const cfgLua = '{' + Object.entries(cfg).map(([k, v]) => `${k} = ${luaValue(v)}`).join(', ') + '}';
+  const cfgLua = '{' + Object.entries(cfg).map(([k, v]) => `[${luaValue(String(k))}] = ${luaValue(v)}`).join(', ') + '}';
   const p2dLua = '{' + [...P2D_CACHE.entries()].map(([k, v]) => `[${luaValue(k)}] = ${luaValue(v)},\n`).join('') + '}';
   const chunksLua = '{' + Object.entries(chunks).map(([k, v]) => `[${luaValue(k)}] = ${longString(v)},\n`).join('') + '}';
 

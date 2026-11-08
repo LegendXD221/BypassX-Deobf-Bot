@@ -37,6 +37,42 @@ local R = {
 	floor = math.floor, huge = math.huge, max = math.max,
 }
 local REAL_G = R.getfenv(0)
+
+-- v2.5.0: real base64 codec — guest-side decoders (HttpService:Base64Decode)
+-- feed their result to string.find/loadstring; a proxy here kills the run.
+local B64A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local B64D = {}
+for i = 1, #B64A do B64D[R.sub(B64A, i, i)] = i - 1 end
+local function b64decode(data)
+	data = R.gsub(data, "[^A-Za-z0-9+/=]", "")
+	local out = {}
+	local acc, bits = 0, 0
+	for i = 1, #data do
+		local v = B64D[R.sub(data, i, i)]
+		if v ~= nil then
+			acc = acc * 64 + v
+			bits = bits + 6
+			if bits >= 8 then
+				bits = bits - 8
+				out[#out + 1] = R.char(R.floor(acc / 2 ^ bits) % 256)
+				acc = acc % (2 ^ bits)
+			end
+		end
+	end
+	return R.concat(out)
+end
+local B64E = {}
+for i = 1, #B64A do B64E[i - 1] = R.sub(B64A, i, i) end
+local function b64encode(data)
+	local out = {}
+	for i = 1, #data, 3 do
+		local b1, b2, b3 = R.byte(data, i, i + 2)
+		local n = b1 * 65536 + (b2 or 0) * 256 + (b3 or 0)
+		out[#out + 1] = B64E[R.floor(n / 262144) % 64] .. B64E[R.floor(n / 4096) % 64]
+			.. (b2 and B64E[R.floor(n / 64) % 64] or "=") .. (b3 and B64E[n % 64] or "=")
+	end
+	return R.concat(out)
+end
 local HARNESS_SRC0 = debug.info(1, "s")
 
 -- native mode: the harness runs inside Roblox itself (Studio). Pure engine
@@ -1534,9 +1570,22 @@ local function onCall(p, ...)
 		return {}
 	end
 
+	if name == "Base64Decode" and R.type(a1) == "string" then
+		return b64decode(a1)
+	end
+	if name == "Base64Encode" and R.type(a1) == "string" then
+		return b64encode(a1)
+	end
 	if name == "HttpGet" or name == "HttpGetAsync" or name == "HttpPost" or name == "HttpPostAsync"
 		or name == "GetAsync" or name == "PostAsync" or name == "RequestAsync" then
-		if R.type(a1) == "string" then remember(urls, a1) end
+		local theUrl = R.type(a1) == "string" and a1 or nil
+		if theUrl then remember(urls, theUrl) end
+		-- v2.5.0: the bot pre-fetches URLs the loader will hit (offline run)
+		-- and injects the real response text here, so guest-side decoders run
+		-- on real data and their loadstring() chunks carry actual payload.
+		if theUrl and CFG.http_answers and CFG.http_answers[theUrl] ~= nil then
+			return CFG.http_answers[theUrl]
+		end
 		return callP(calleeText .. "(" .. fmtArgs(R.unpack(args, 1, args.n)) .. ")", "response", "string")
 	end
 
@@ -1759,6 +1808,7 @@ end
 -- In Roblox a method is one C function shared by every object of a type
 -- (workspace.FindFirstChild == game.FindFirstChild); Luraph compares them.
 local SHARED_METHODS = {}
+local HTTP_METHODS = { HttpGet = true, HttpGetAsync = true, HttpPost = true, HttpPostAsync = true, GetAsync = true, PostAsync = true, RequestAsync = true }
 local SIGNAL_T = { RBXScriptSignal = true, RBXScriptConnection = true }
 function methodFn(p, k)
 	local want = INFO[p].tname
@@ -1788,6 +1838,12 @@ function methodFn(p, k)
 	f = function(...)
 		local self = ...
 		if not isP(self) then
+			-- v2.5.0: executor-style dot calls are valid on executors —
+			-- `game.HttpGet("https://…")` (no self). Route them to the same
+			-- proxy method with the owning object prepended.
+			if HTTP_METHODS[k] then
+				return PMT.__call(ip, p, ...)
+			end
 			R.error("Expected ':' not '.' calling member function " .. k, 0)
 		end
 		return PMT.__call(indexP(self, k), ...)
@@ -1826,6 +1882,11 @@ PMT.__index = function(p, k)
 	end
 	local v = info.props[k]
 	if v ~= nil then return v end
+	-- v2.5.0: identity properties are REAL strings — guests feed script.Name /
+	-- ClassName into string.find/gsub/loadstring and a proxy here kills the run
+	if R.type(k) == "string" and (k == "Name" or k == "ClassName") then
+		return info.className or info.tname or "Instance"
+	end
 	local rv = REALV[p]
 	if rv ~= nil and R.type(k) == "string" then
 		local isInst = R.typeof(rv) == "Instance"
@@ -2031,6 +2092,15 @@ function genvTable(label)
 	CHAIN.genvShadow = CHAIN.genvShadow or {}
 	CHAIN.genvShadow[t] = shadow
 	return R.setmetatable(t, {
+		-- executor/`_G` tables chain reads to the fake Roblox env: production
+		-- executors share their globals with the game environment, so scripts
+		-- doing `getgenv().game.PlaceId` must see the same `game` (v2.5.0 fix:
+		-- reads used to hit raw nil and the guest aborted at its first import)
+		__index = function(_, k)
+			local v = ENV[k]
+			if v == nil and R.type(k) == "string" then return nil end
+			return v
+		end,
 		__newindex = function(self, k, v)
 			emit({ text = label .. keySuffix(k) .. " = " .. fmt(v) })
 			R.rawset(self, k, v)
@@ -2359,6 +2429,45 @@ E.setfenv = function(x, env)
 	if CFUNCS[x] or isP(x) or (R.type(x) == "function" and debug.info(x, "s") == HARNESS_SRC0) then
 		R.error("'setfenv' cannot change environment of given object", 0)
 	end
+	-- v2.5.0: environments the script installs are made PRODUCTION-SHAPED.
+	-- Roblox/executor envs hold real keys (raw hits, no metamethod frames);
+	-- Luraph v14 installs one EMPTY guest env for every proto it builds and
+	-- relies on a later `setmetatable(env, {__index = getfenv(...)})` — with
+	-- envlog's function-__index ENV that chain burns C-stack frames on every
+	-- guest global read and trips Luraph's stack-overflow fingerprint probe.
+	-- 1) empty env: copy the whole ENV key set in (raw reads thereafter)
+	-- 2) non-empty env without __index: add an ENV fallback
+	if R.type(env) == "table" then
+		local n = 0
+		for _ in R.next, env do n = n + 1 end
+		if n == 0 then
+			local okFill = R.pcall(function()
+				for k, v in R.next, ENV do
+					R.rawset(env, k, v)
+				end
+				local mt = R.getmetatable(env)
+				if mt == nil then
+					R.setmetatable(env, { __index = ENV })
+				end
+			end)
+			if not okFill then
+				-- frozen empty env: read-through wrapper (identity changes,
+				-- but a frozen env cannot hold raw keys at all)
+				local wrapper = R.setmetatable({}, { __index = ENV })
+				env = wrapper
+			end
+		else
+			R.pcall(function()
+				local mt = R.getmetatable(env)
+				if mt and mt.__index == nil then
+					mt.__index = ENV
+					R.setmetatable(env, mt)
+				elseif mt == nil then
+					R.setmetatable(env, { __index = ENV })
+				end
+			end)
+		end
+	end
 	return R.setfenv(x, env)
 end
 E.print = function(...)
@@ -2384,13 +2493,19 @@ E.loadstring = function(src, chunkname)
 		return exprP("loadstring(" .. tok(src) .. ")", "function")
 	end
 	local patched = nil
-	if R.type(src) == "string" and #src >= 4096 then
+	if R.type(src) == "string" and #src >= (CFG.report_chunks and 64 or 4096) then
 		local key = srcKey(src)
 		patched = __CHUNKS and __CHUNKS[key]
 		if not patched and not NEWCHUNKS[key] then
 			NEWCHUNKS[key] = src
 			R.insert(NEWCHUNKS, key)
-			if CFG.chunks_only then
+			if CFG.report_chunks then
+				-- v2.5.0 peel-loop mode: report EVERY chunk (the loader chain
+				-- may decode small remote payloads) and keep executing so the
+				-- next layer's loadstrings are captured too.
+				R.print("\0CHUNK " .. key)
+				R.print((R.gsub(src, ".", function(c) return R.fmt("%02x", R.byte(c)) end)))
+			elseif CFG.chunks_only then
 				-- the driver only wanted the chunk source: dump it now and stop.
 				-- Executing the raw (uninstrumented) VM here would be silent and
 				-- pointless -- the real trace comes from the patched rerun.
@@ -3309,6 +3424,11 @@ E.debug = fakeDebug
 
 E.getmetatable = function(...)
 	if GENVNAME[(...)] then return nil end
+	-- v2.5.0 NOTE: `s:find(p)` string-method calls resolve through the native
+	-- string metatable (bypassing wrapLib) — a stand-in proxy argument there
+	-- raises the native "string expected" error. Handing out a wrapped
+	-- __index instead trips Luraph's environment fingerprint (run dies at its
+	-- first import), so the native behavior stays.
 	return R.getmetatable(...)
 end
 CFUNCS[E.getmetatable] = true
@@ -4187,11 +4307,14 @@ R.setmetatable(ENV, {
 		-- a hash-like name (`_54776ae771af02794d46e80d`) is an obfuscator's
 		-- run-once/cache key, never an API: nil, as in a fresh Roblox state
 		if #k >= 12 and R.match(k, "^_*%x+$") and R.find(k, "%d") then return nil end
-		local p = globalP(k, "function")
+		-- v2.5.0: unknown globals are NIL, as in a fresh production state.
+		-- Script hubs guard with `if <TheirMarker> then return end` (TokraLoaded
+		-- etc.); handing out a truthy logging proxy made the guest exit at its
+		-- first anti-double-load check. The name is still recorded so the
+		-- trace can show it; writes go raw into ENV and read back from there.
 		if CFG.ptrace then R.print("[unknown-global]", k) end
 		remember(unknownGlobals, k)
-		R.rawset(ENV, k, p)
-		return p
+		return nil
 	end,
 })
 
@@ -4550,6 +4673,9 @@ else
 		if not pf then R.error("plugin runtime: " .. R.tostring(perr)) end
 		pf({ E = E, CHAIN = CHAIN, R = R, CFG = CFG, isP = isP, INFO = INFO })
 	end
+	-- v2.5.0 NOTE: do NOT wrap string/table/utf8 functions — Luraph verifies
+	-- that library members are native C functions (debug.info source checks)
+	-- and a Lua wrapper trips its tamper response.
 	-- Roblox's libraries are frozen (Script42 checks isreadonly(math))
 	for _, lib in { "string", "math", "table", "os", "debug", "buffer", "utf8", "task", "bit32", "coroutine", "vector" } do
 		local t = R.rawget(E, lib)

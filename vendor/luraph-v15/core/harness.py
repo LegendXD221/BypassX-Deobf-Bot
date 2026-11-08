@@ -123,6 +123,13 @@ def p2d_miss(body, cache_path):
           file=sys.stderr)
     return body.replace("\x00P2DMISS\n", "")
 
+def latin1_safe(s):
+    """The harness file is written latin-1 (byte-exact for the embedded
+    source/chunks); runtime files read as utf-8 may still carry non-latin-1
+    chars (e.g. an em-dash in a comment) — replace them instead of crashing
+    with UnicodeEncodeError before the run even starts."""
+    return s.encode("latin-1", "replace").decode("latin-1")
+
 def build_harness(source, cfg, chunks=None):
     with open(os.path.join(RUNTIME_DIR, "envlog.luau"), encoding="utf-8") as f:
         runtime = f.read()
@@ -203,7 +210,7 @@ def _communicate(cmd, timeout, stall):
 def run_once(luau, source, cfg, hpath, timeout, keep, chunks=None):
     cfg = dict(cfg, heartbeat=HEARTBEAT) if "heartbeat" not in cfg else cfg
     with open(hpath, "w", encoding="latin-1", newline="\n") as f:
-        f.write(build_harness(source, cfg, chunks))
+        f.write(latin1_safe(build_harness(source, cfg, chunks)))
     try:
         out, errb = _communicate([luau, hpath], timeout, STALL if cfg.get("heartbeat") else None)
     except subprocess.TimeoutExpired as e:
@@ -244,7 +251,7 @@ class HarnessServer:
         import tempfile
         self.dir = tempfile.mkdtemp(prefix="deobf_serve_")
         with open(os.path.join(self.dir, "harness.luau"), "w", encoding="latin-1", newline="\n") as f:
-            f.write(build_harness(source, dict(cfg, serve=True), chunks))
+            f.write(latin1_safe(build_harness(source, dict(cfg, serve=True), chunks)))
         self.proc = subprocess.Popen([luau], cwd=self.dir, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.STDOUT)
         self.buf = b""
