@@ -1,6 +1,46 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.7.0 acceptance — the TokraScript treatment ran through the LIVE pipeline end-to-end
+
+**User directive: "run the same treatment through the bot's live pipeline
+end-to-end and push a fresh Pastefy paste of the new output so you can compare
+it against the old non-readable one."**
+
+How it was run (headless driver `scripts/run-live-tokra.js`, zero shortcuts —
+the exact code path a Discord `.deobf <link>` job takes):
+
+- input fetched with the bot's own `safeFetch()` from
+  `raw.githubusercontent.com/sladostrastnik/TokraScript/refs/heads/main/Games/6961824067.luau`
+  (807,073 bytes);
+- full `pipeline.deobfuscate()` peel loop: detect → lua-peel → verify →
+  post-process → vm-lift (miss, expected) → **luraph14:state-devirt:hit**;
+- detection: Luraph v14.4.2, confidence 99; end-to-end wall time **3.0 s**;
+- delivered with the bot's own `createPaste()` (Pastefy API v2, anonymous).
+
+**Fresh paste: https://pastefy.app/M1Ur7sNx** (raw: /M1Ur7sNx/raw, 168,645
+bytes, 1 part). Round-trip verified: the fetched-back paste is byte-identical
+to the local output (`diff -q` clean).
+
+Old vs new (same sample, same bot, before/after v2.7.0):
+
+| | old paste fgR7E4oM | new paste M1Ur7sNx |
+|---|---|---|
+| bytes | 793,939 | 168,590 |
+| content | VM-inventory dump: `LPH#` header, ascii85 payload base64, opcode tables | real Lua: logo ASCII art, `setfenv` loader line, 143-string constant pool, per-proto lifted source |
+| readability score | 50 "rough" (very long lines, keyword starvation) | **100 "clean", zero issues** |
+| VM artifacts | `LPH#`, `ascii85`, `encoded_bytes`, `payload_ascii85` all present | **none** (scanned: `LPH#`, `ascii85`, `__pc`, `[dup]`, `nil % nil`, `encoded_bytes`, `payload_ascii85` — 0 hits) |
+| structure | none — data tables | 6 for-loops, 24 while-loops, 109 conditionals, repeat-until re-entries, closures linked (`F_T236 -- closure`), 0 degraded edges |
+
+Pipeline-reported stats in the output header: 1,687 VM instructions decoded ·
+917 reachable (semantic program) · 770 decoy blocks dropped · 23 protos ·
+verification: `verified` (luau-ast + fengari).
+
+`test/all.js`: **ALL 13 TEST SUITES PASSED** after the run (including the
+strict v2.7.0 regression checks and "full pipeline delivers readable output
+(not the bare VM stub)").
+
+
 ## v2.7.0 — Full source reconstruction: the 1,687 VM instructions become real Lua
 
 **User directive: "turning the 1,687 instructions back into full Lua source do it
