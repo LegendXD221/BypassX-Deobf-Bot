@@ -1,6 +1,51 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.7.1 — ".deobf now answers instantly: @user mention, then background delivery
+
+**User directive: "In Bot When Someone Type .Deobf with file or link make the
+bot say '( mention user ) deobfuscating Your Code' and then give the Deobf
+code after its done in the background because it takes time to Deobf."**
+
+The old flow made the user stare at "Bot is thinking…" (slash) or nothing at
+all (prefix) for the whole pipeline. New flow, exactly as requested:
+
+1. **Instant acknowledgement** — the very first Discord write is a plain
+   status line mentioning the requester:
+   `<@user> deobfuscating Your Code (script.luau) …`
+   (sent before the input download and pipeline even start; the filename is
+   included when known upfront and refined after the input resolves).
+2. **Background work** — the full peel-loop pipeline runs unchanged.
+3. **Separate delivery** — when finished, the status line is edited to
+   `✅ <@user> done in 3.0s — your deobfuscated code is below 👇` and the full
+   result card (paste buttons / preview / file) arrives as a NEW follow-up
+   message. Failure paths follow the same discipline: status flips to `❌ … —
+   details below` and the error/failure card is delivered via follow-up.
+
+Implementation:
+
+- `src/ctx.js` — two new primitives for every command:
+  - `statusReply(text)` → slash: defer + editReply (turns "thinking…" into
+    the status line); prefix: a real reply. Returns `{ update(text) }` with
+    explicit `allowedMentions: { users: [userId] }` so the mention always
+    pings.
+  - `send(payload)` → always a NEW message (slash `followUp`, prefix reply) —
+    delivers results WITHOUT replacing the status line. Components V2
+    payloads verified against both paths.
+- `src/commands/deobf.js` — full flow rewrite: cooldown → statusReply →
+  input fetch → pipeline → createPaste → status ✅ + send(result). Every
+  error branch (download fail, no input, no-recovery, crash) updates the
+  status and delivers via `send()` — nothing replaces the status line, and
+  no path leaves the interaction hanging.
+- New offline suite `test/deobf-ack.js` (4 checks): slash ordering
+  (deferReply → editReply status → editReply ✅ → followUp result), prefix
+  ordering (status reply first, result as separate reply, status edited to
+  ✅), failure path (❌ status + error card via followUp), cooldown
+  short-circuit (no placeholder). Fetch is routed in-process (mock
+  attachment + mock pastefy) — fully offline.
+- All **14** test suites green; version 2.7.0 → 2.7.1.
+
+
 ## v2.7.0 acceptance — the TokraScript treatment ran through the LIVE pipeline end-to-end
 
 **User directive: "run the same treatment through the bot's live pipeline

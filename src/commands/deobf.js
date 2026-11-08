@@ -43,15 +43,31 @@ export default {
   async run(ctx) {
     const cd = checkCooldown(ctx.userId);
     if (!cd.ok) return ctx.reply(cooldownReply(cd.remainingMs));
-    await ctx.defer();
+
+    // v2.7.1 — instant acknowledgement, then background work. The user sees
+    // "@user deobfuscating Your Code …" IMMEDIATELY; the pipeline keeps
+    // running and the deobfuscated code is delivered as a follow-up message
+    // the moment it is ready.
+    const known = ctx.attachments.find(Boolean)?.name
+      || (ctx.url ? 'link' : (ctx.attachments.referencedId ? 'replied message' : null));
+    const t0 = Date.now();
+    const secs = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
+    const status = await ctx.statusReply(`<@${ctx.userId}> deobfuscating Your Code${known ? ` (\`${known}\`)` : ''} …`);
 
     let att;
     try {
       att = await getInputBuffer(ctx, { maxBytes: CONFIG.maxUploadBytes });
     } catch (e) {
-      return ctx.reply(errorReply('Download failed', String(e.message || e).slice(0, 300)));
+      await status.update(`❌ <@${ctx.userId}> couldn't download the input (${secs()}) — details below.`);
+      return ctx.send(errorReply('Download failed', String(e.message || e).slice(0, 300)));
     }
-    if (att.error) return ctx.reply(errorReply('No input', att.error));
+    if (att.error) {
+      await status.update(`❌ <@${ctx.userId}> no valid input — details below.`);
+      return ctx.send(errorReply('No input', att.error));
+    }
+    if (att.filename && att.filename !== known) {
+      await status.update(`<@${ctx.userId}> deobfuscating Your Code (\`${att.filename}\`) …`);
+    }
 
     try {
       const result = await deobfuscate({ buffer: att.buffer, filename: att.filename });
@@ -67,7 +83,8 @@ export default {
           source: att.sourceUrl ? 'link' : 'upload',
         });
         logger.info({ name: att.filename, detected: result.detected?.id }, 'deobf: no recovery');
-        return ctx.reply(failureReply(result, ctx.prefix));
+        await status.update(`❌ <@${ctx.userId}> couldn't fully deobfuscate \`${att.filename}\` (${secs()}) — report below.`);
+        return ctx.send(failureReply(result, ctx.prefix));
       }
       let paste = null;
       if (!result.binaryOutput) {
@@ -92,11 +109,13 @@ export default {
         source: att.sourceUrl ? 'link' : 'upload',
       });
       logger.info({ name: att.filename, size: result.recoveredSize, paste: paste?.id || null }, 'deobf: success');
-      return ctx.reply(successReply(result, paste, att.filename, att.sourceUrl, att.note));
+      await status.update(`✅ <@${ctx.userId}> done in ${secs()} — your deobfuscated code is below 👇`);
+      return ctx.send(successReply(result, paste, att.filename, att.sourceUrl, att.note));
     } catch (e) {
       bumpJob(false);
       logger.error({ err: String(e?.stack || e).slice(0, 500) }, 'deobf: crashed');
-      return ctx.reply(errorReply('Unexpected error', String(e.message || e).slice(0, 500)));
+      await status.update(`❌ <@${ctx.userId}> unexpected error after ${secs()} — details below.`);
+      return ctx.send(errorReply('Unexpected error', String(e.message || e).slice(0, 500)));
     }
   },
 };

@@ -1,6 +1,6 @@
 {
   "name": "bypassx-deobf-bot",
-  "version": "2.7.0",
+  "version": "2.7.1",
   "description": "BypassX Deobf \u2014 the best Discord deobfuscation bot. Multi-layer peel loop (stacked obfuscators peeled layer by layer) + readability engine (escape decode, literal folding, machine-name rename, readability score). Luraph v11\u2192v15.1 + v14.x runtime-state devirtualization (the build's own VM dumped: deserialized program + decoded payload + loadstring chunk) (per-build key capture + load()-chunk source recovery + vendored CFG+SSA devirtualizer + behaviour-trace source recovery + 25-tool owner dashboard), MoonSec v1/v2/v3 (escrow dispatcher runs in the jailed VM with production-shaped Roblox env), IronBrew 1/2/3, Prometheus, Hercules, obfuscator.io, pyArmor, UPX, MoonVeil, 77fuscator, Xhider, GoofyScator, Ironveil and more. Auto-detect with confidence %, pure-code Pastefy delivery, prefix + slash commands. No walls: every run produces output \u2014 full source via load()-capture, vendored lift, or trace recovery; decrypted multi-proto disassembly + const pool + static peel otherwise.",
   "main": "src/index.js",
   "type": "module",

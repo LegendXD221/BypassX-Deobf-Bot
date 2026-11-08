@@ -26,6 +26,8 @@ export function makeCtx({ interaction = null, message = null, client }) {
   if (message?.attachments?.size) attachments.push(...message.attachments.values());
   if (message?.reference?.messageId) attachments.referencedId = message.reference.messageId;
 
+  const userId = interaction?.user?.id || message?.author?.id || '0';
+
   return {
     isSlash,
     interaction,
@@ -34,7 +36,7 @@ export function makeCtx({ interaction = null, message = null, client }) {
     attachments,
     /** Link input (.deobf <url> / /deobf link:) — resolved by index.js for prefix. */
     url,
-    userId: interaction?.user?.id || message?.author?.id || '0',
+    userId,
     userTag: interaction?.user?.tag || message?.author?.tag || 'unknown',
     prefix: message?._prefix || '.',
 
@@ -50,6 +52,57 @@ export function makeCtx({ interaction = null, message = null, client }) {
     async reply(payload) {
       if (interaction) {
         if (interaction.deferred || interaction.replied) return interaction.editReply(payload);
+        return interaction.reply(payload);
+      }
+      if (message) return message.reply(payload);
+    },
+
+    /**
+     * v2.7.1 — instant visible acknowledgement that mentions the user:
+     *   "@user deobfuscating Your Code …"
+     * Slash: defer + editReply (turns "Bot is thinking…" into the status line);
+     * prefix: a real reply message. The heavy command then keeps working in the
+     * background and delivers the result via send(). Returns a handle with
+     * update(text) to refresh the status line (e.g. ✅ done / ❌ failed).
+     */
+    async statusReply(text) {
+      const mentions = { allowedMentions: { users: [userId] } };
+      if (interaction) {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.deferReply().catch(() => {});
+        }
+        const payload = { content: text, ...mentions };
+        await (interaction.deferred || interaction.replied
+          ? interaction.editReply(payload)
+          : interaction.reply(payload)).catch(() => {});
+        return {
+          async update(t) {
+            await interaction.editReply({ content: t, ...mentions }).catch(() => {});
+          },
+        };
+      }
+      if (message) {
+        const sent = await message.reply({ content: text, ...mentions }).catch(() => null);
+        return {
+          async update(t) {
+            if (sent) await sent.edit({ content: t, ...mentions }).catch(() => {});
+          },
+        };
+      }
+      return { async update() { /* no channel context */ } };
+    },
+
+    /**
+     * v2.7.1 — deliver a NEW message (followUp for slash, reply for prefix).
+     * Used to hand over the finished result WITHOUT replacing the status
+     * placeholder created by statusReply().
+     */
+    async send(payload) {
+      if (interaction) {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.deferReply().catch(() => {});
+        }
+        if (interaction.deferred || interaction.replied) return interaction.followUp(payload);
         return interaction.reply(payload);
       }
       if (message) return message.reply(payload);
