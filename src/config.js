@@ -42,7 +42,9 @@ export const CONFIG = {
   dangerMaxPerHour: Math.max(1, num('DANGER_MAX_PER_HOUR', 12)),
   confirmTimeoutS: Math.max(5, num('CONFIRM_TIMEOUT_S', 30)),
 
-  version: '2.4.0',
+  // Single source of truth: package.json "version" (this field went stale at
+  // 2.4.0 while package.json reached 2.7.0 — now it can never drift again).
+  version: JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version || '0.0.0',
 };
 
 export function ensureVarDir(sub = '') {
