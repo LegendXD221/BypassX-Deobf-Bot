@@ -282,6 +282,43 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
           } else if (!binaryOutput
             && looksLikeLuraphInventory(data.toString('utf8'))
             && (detected.version || '').startsWith('v15')) {
+            // v2.0: real-Luau VM capture — run the sample inside the bundled real
+            // Luau runtime with its own interpreter instrumented in place; replay
+            // every lazy decrypt it performed; deliver the decrypted instruction
+            // stream + recovered constants. Replaces the raw inventory as output.
+            let devirt = null;
+            try {
+              const { captureLuraph15 } = await import('./luau-capture.js');
+              const { devirtFromCapture } = await import('./luraph15-devirt.js');
+              const luauBin = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'bin', 'luau');
+              const cap = await captureLuraph15(buffer.toString('utf8'), {
+                luauBin,
+                timeoutMs: Math.min(CONFIG.engineTimeoutMs, 150_000),
+              });
+              if (cap.ok) {
+                devirt = devirtFromCapture(cap, { detectedName: detected.name, version: detected.version || 'v15.x' });
+              }
+            } catch (e) {
+              stage('luraph15:luau-devirt:miss', String(e.message || e).slice(0, 120));
+            }
+            if (devirt && devirt.ok) {
+              stage('luraph15:luau-devirt', `${devirt.applied} decrypts replayed, ${devirt.decrypted}/${devirt.total} instructions decrypted, ${devirt.consts} strings`);
+              if (outcome.workDir) await engine.cleanupWorkDir(outcome.workDir);
+              return {
+                ok: true,
+                code: devirt.code,
+                binaryOutput: false,
+                outputBuffer: null,
+                codeName: 'devirtualized.lua',
+                detected, stages, durationMs: Date.now() - t0, lang,
+                verification: verifyCode(devirt.code, { lang: 'lua', filename: 'devirtualized.lua' }),
+                originalSize: buffer.length,
+                recoveredSize: devirt.code.length,
+                how: 'Luraph v15 devirtualization (real-Luau VM capture + decrypt replay)',
+                partialNote: `Luraph ${detected.version || 'v15.x'}: the obfuscated file ran inside the bundled real Luau runtime with its own register-VM interpreter instrumented in place. Every lazy block-decrypt the VM performed was recorded (${devirt.applied} events) and replayed bit-exactly — ${devirt.decrypted}/${devirt.total} instructions of the VM program are decrypted and disassembled below, plus ${devirt.consts} recovered constant strings. This is the build's own bytecode, decoded by the build's own keys.`,
+                engine: await engine.probe(),
+              };
+            }
             const invText = data.toString('utf8');
             const m = /payload_ascii85_decoded_b64\s*=\s*"([^"]*)"/.exec(invText);
             const carriers = captureKeyCarriers(buffer.toString('utf8'));

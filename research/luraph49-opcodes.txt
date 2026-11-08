@@ -1,0 +1,944 @@
+## LOOP 0 dispatch var: h
+---- h=0 (loc 38296:38307) ----
+se e[O[I]]()
+
+---- h=1 (loc 38040:38288) ----
+se H,m=s[I],O[I]+1;for T=1,L[I],1 do H=P(Q(H,(w(H,13))),536870911);H=Q(H,(U(H,13)));H=P(Q(H,(w(H,14))),536870911);s[m]=Q(s[m],(P(U(H,0),127)));O[m]=Q(O[m],(P(U(H,7),127)));L[m]=Q(L[m],(P(U(H,14),127)));k[m]=Q(k[m],(P(U(H,21),127)));m=m+1;end;k[I]=94
+
+---- h=2 (loc 38014:38036) ----
+en e[L[I]]=e[O[I]]<s[I]
+
+---- h=3 (loc 37835:37858) ----
+en e[L[I]][s[I]]=e[O[I]]
+
+---- h=4 (loc 37957:37976) ----
+se e[O[I]]=Y[I]+c[I]
+
+---- h=5 (loc 37875:37953) ----
+en a,m,H={[5]=F,[8]=a,[6]=b,[7]=G},s[I],V(p);H(R,e[m],e[m+1],e[m+2]);I,F=L[I],H
+
+---- h=6 (loc 38403:38429) ----
+se e[O[I]]=e[L[I]]//e[s[I]]
+
+---- h=7 (loc 38357:38380) ----
+en e[L[I]]=e[s[I]]~=O[I]
+
+---- h=8 (loc 38384:38395) ----
+se I=e[s[I]]
+
+---- h=9 (loc 38546:38563) ----
+se e[O[I]]=R[L[I]]
+
+---- h=10 (loc 38508:38538) ----
+se m=X[L[I]];e[O[I]]=m[6][m[5]]
+
+---- h=11 (loc 38465:38504) ----
+en m=X[s[I]];m[6][m[5]][e[O[I]]]=e[L[I]]
+
+---- h=12 (loc 38746:38769) ----
+en e[O[I]]=e[s[I]]<=L[I]
+
+---- h=13 (loc 38787:38809) ----
+en e[L[I]]=e[O[I]]>s[I]
+
+---- h=14 (loc 38813:38845) ----
+se m,H={...},L[I];i(m,1,O[I],H,e)
+
+---- h=15 (loc 38699:38725) ----
+se e[L[I]]=e[s[I]]>=e[O[I]]
+
+---- h=16 (loc 38657:38691) ----
+se I=if O[I]<e[s[I]]then L[I]else I
+
+---- h=17 (loc 38634:38653) ----
+en e[L[I]]=e[s[I]]()
+
+---- h=18 (loc 38981:39004) ----
+en g=O[I];I=L[I]+1;break
+
+---- h=19 (loc 39021:39038) ----
+en e[s[I]]=u(O[I])
+
+---- h=20 (loc 39042:39076) ----
+se I=if e[s[I]]<L[I]then O[I]else I
+
+---- h=21 (loc 38888:38914) ----
+en e[L[I]][e[O[I]]]=e[s[I]]
+
+---- h=22 (loc 38931:38942) ----
+en e[s[I]]=s
+
+---- h=23 (loc 38946:38960) ----
+se e[L[I]]=r[I]
+
+---- h=24 (loc 40129:40215) ----
+se m=L[I];local T,Rq,Fq=F();if T then e[m+1]=Rq;e[m+2]=Fq;I=s[I];else end;H,M,N=T,Rq,Fq
+
+---- h=25 (loc 40099:40121) ----
+se e[O[I]]=e[L[I]]-s[I]
+
+---- h=26 (loc 40072:40095) ----
+en e[O[I]]=e[L[I]](c[I])
+
+---- h=27 (loc 40782:40808) ----
+se e[s[I]]=e[L[I]][e[O[I]]]
+
+---- h=28 (loc 40251:40539) ----
+en H,m=(Q(O[I],(P(Q(B,(P(U(B,29),7))),536870911)))),s[I]+1;for T=1,L[I],1 do H=P(Q(H,(w(H,13))),536870911);H=Q(H,(U(H,13)));H=P(Q(H,(w(H,14))),536870911);s[m]=Q(s[m],(P(U(H,0),127)));O[m]=Q(O[m],(P(U(H,7),127)));L[m]=Q(L[m],(P(U(H,14),127)));k[m]=Q(k[m],(P(U(H,21),127)));m=m+1;end;k[I]=94
+
+---- h=29 (loc 40543:40774) ----
+se m,H,M,N=Q(J,P(U(J,14),262143),(P(U(J,28),15))),O[I],s[I],L[I];C=N<2097152 and 7 or 14;z,j=P(N,w(1,C)-1),U(N,C);k[I]=Q(j,43,(P(U(m,21),127)));s[I]=Q(M,117,(P(m,127)));O[I]=Q(H,3,(P(U(m,7),127)));L[I]=Q(z,13,(P(U(m,14),127)));I=I-1
+
+---- h=30 (loc 39941:39959) ----
+en e[L[I]](e[O[I]])
+
+---- h=31 (loc 39997:40019) ----
+se e[L[I]]=e[s[I]]+O[I]
+
+---- h=32 (loc 39976:39993) ----
+en e[L[I]]=X[O[I]]
+
+---- h=33 (loc 39885:39920) ----
+se I=if e[O[I]]<=s[I]then L[I]else I
+
+---- h=34 (loc 39854:39877) ----
+se e[O[I]]=e[s[I]][L[I]]
+
+---- h=35 (loc 39820:39850) ----
+en m=X[s[I]];m[6][m[5]]=e[O[I]]
+
+---- h=36 (loc 39634:39752) ----
+se local T,Rq,Fq=s[I],e[O[I]];repeat local Yq=Rq%4294967296;if Yq~=Yq then Fq=0;break;end;Fq=Yq-Yq%1;until true;e[T]=Fq
+
+---- h=37 (loc 39604:39626) ----
+se e[L[I]]=e[s[I]]*r[I]
+
+---- h=38 (loc 39574:39600) ----
+en e[s[I]]=e[O[I]](e[L[I]])
+
+---- h=39 (loc 39442:39468) ----
+en e[L[I]]=e[s[I]]==e[O[I]]
+
+---- h=40 (loc 39514:39539) ----
+se e[O[I]]=e[L[I]]%e[s[I]]
+
+---- h=41 (loc 39485:39510) ----
+en e[O[I]]=e[s[I]]-e[L[I]]
+
+---- h=42 (loc 39301:39343) ----
+en e[L[I]]=e[s[I]];e[L[I+1]]=e[s[I+1]];I+=1
+
+---- h=43 (loc 39361:39372) ----
+en e[O[I]]=y
+
+---- h=44 (loc 39376:39399) ----
+se e[L[I]]=e[s[I]]==O[I]
+
+---- h=45 (loc 39165:39176) ----
+en e[O[I]]=B
+
+---- h=46 (loc 39180:39216) ----
+se m=X[O[I]];m[6][m[5]][e[L[I]]]=c[I]
+
+---- h=47 (loc 39253:39276) ----
+se e[O[I]]=e[s[I]]//L[I]
+
+---- h=48 (loc 39238:39249) ----
+en B=e[s[I]]
+
+---- h=49 (loc 34356:34636) ----
+en local T,Rq,Fq=O[I],e[s[I]],L[I];local Yq,dq=P(Rq,4294967295),P(Fq,4294967295);local Rq,Fq,Lq,Oq=P(Yq,65535),U(Yq,16),P(dq,65535),U(dq,16);dq=P(Rq*Lq+w(P(Rq*Oq+Fq*Lq,65535),16),4294967295);Oq=nil;repeat Fq=dq%4294967296;if Fq~=Fq then Oq=0;break;end;Oq=Fq-Fq%1;until true;e[T]=Oq
+
+---- h=50 (loc 34654:34671) ----
+en e[L[I]]=R[c[I]]
+
+---- h=51 (loc 34675:34714) ----
+se e[s[I]]=L[I];e[L[I+1]]=e[s[I+1]];I+=1
+
+---- h=52 (loc 33700:34252) ----
+en local T;local Rq=r[I];if Rq then local Fq=#Rq/3;if Fq>0 then T={};local Yq,dq=A,x;for Lq=1,Fq,1 do local Fq=(Lq-1)*3;local Oq,kq=Rq[Fq+3],Rq[Fq+2];if Oq==1 then Yq=if not Yq then{}else Yq;local vq=Yq[kq];if not vq then vq={[6]=e,[5]=kq};Yq[kq]=vq;else end;T[Lq]=vq;else if Oq==0 then T[Lq]=e[kq];else if Oq==2 then T[Lq]=X[kq];else if Oq==3 then dq=if not dq then{}else dq;local Oq=dq[kq];if not Oq then Oq={[4]=Rq[Fq+1],[5]=kq,[6]=e};dq[kq]=Oq;else end;T[Lq]=Oq;else end;end;end;end;end;A,x=Yq,dq
+
+---- h=53 (loc 34296:34331) ----
+se I=if e[O[I]]==s[I]then L[I]else I
+
+---- h=54 (loc 34270:34292) ----
+en e[L[I]]=s[I]-e[O[I]]
+
+---- h=55 (loc 34881:34903) ----
+en e[O[I]]=e[L[I]]-c[I]
+
+---- h=56 (loc 35528:35581) ----
+se m,H,M=L[I],s[I],O[I];N=m+H;e[m]=o(e[m](f(e,m+1,N)))
+
+---- h=57 (loc 34921:35524) ----
+en local T,Rq,Fq=s[I],Q(O[I],(P(Q(B,(P(U(B,29),7))),536870911))),y[5];local Yq=Q(Fq[T],535359694);Fq[T]=Yq;Fq,T=y[4],Yq+1;Yq=n(Fq,T);local dq,Lq;if Yq<128 then dq,Lq=Yq,T+1;else local Oq=n(Fq,T+1);if Oq<128 then dq,Lq=(Yq-128)*128+Oq,T+2;else local kq=n(Fq,T+2);if kq<128 then dq,Lq=Yq-128+(Oq-128)*16384+kq*128,T+3;else local vq=n(Fq,T+3);dq,Lq=(Yq-128)*2097152+(Oq-128)*128+(kq-128)*16384+vq%128+(vq-vq%128)*2097152,T+4;end;end;end;T,Yq=Rq*16843009,Lq+dq;local Oq=Yq-dq%4;for dq=Lq,Oq-1,4 do t(Fq,d
+
+---- h=58 (loc 34757:34796) ----
+en m=X[L[I]];e[s[I]]=m[6][m[5]][e[O[I]]]
+
+---- h=59 (loc 34829:34856) ----
+se m=X[s[I]];m[6][m[5]]=Y[I]
+
+---- h=60 (loc 34814:34825) ----
+en e[O[I]]=J
+
+---- h=61 (loc 33596:33644) ----
+se m,H,M=O[I],s[I],L[I];N=e[m];i(e,m+1,m+H,M+1,N)
+
+---- h=62 (loc 33540:33562) ----
+en e[O[I]]=e[L[I]]%s[I]
+
+---- h=63 (loc 33566:33588) ----
+se e[L[I]]=e[O[I]]+c[I]
+
+---- h=64 (loc 33478:33504) ----
+se e[O[I]]=e[s[I]]<=e[L[I]]
+
+---- h=65 (loc 33415:33444) ----
+en F,G,b=a[5],a[7],a[6];a=a[8]
+
+---- h=66 (loc 33448:33470) ----
+se e[L[I]]=e[O[I]]*s[I]
+
+---- h=67 (loc 32708:32991) ----
+en local T,Rq,Fq=L[I],e[s[I]],e[O[I]];local Yq,dq=P(Rq,4294967295),P(Fq,4294967295);local Rq,Lq,Oq,kq=P(Yq,65535),U(Yq,16),P(dq,65535),U(dq,16);Fq=P(Rq*Oq+w(P(Rq*kq+Lq*Oq,65535),16),4294967295);Oq=nil;repeat dq=Fq%4294967296;if dq~=dq then Oq=0;break;end;Oq=dq-dq%1;until true;e[T]=Oq
+
+---- h=68 (loc 33107:33357) ----
+se m,H,M,N=O[I],L[I],s[I],Q(J,P(U(J,14),262143),(P(U(J,28),15)));C=m<16384 and 7 or(m<2097152 and 14 or 21);z,j=P(m,w(1,C)-1),U(m,C);O[I]=Q(z,58,(P(U(N,7),127)));L[I]=Q(H,54,(P(U(N,14),127)));s[I]=Q(M,75,(P(N,127)));k[I]=Q(j,75,(P(U(N,21),127)));I=I-1
+
+---- h=69 (loc 33009:33103) ----
+en local T=L[I];if A then local Rq=A[T];if Rq then Rq[6]=Rq;Rq[4]=e[T];Rq[5]=4;A[T]=nil;end;end
+
+---- h=70 (loc 32541:32600) ----
+en m,H,M=s[I],{...},L[I];i(H,1,m-1,M,e);e[M+m-1]=o(T(m,...))
+
+---- h=71 (loc 32633:32683) ----
+se m,H=O[I],L[I];M={n=H-m+1};i(e,m,H,1,M);e[s[I]]=M
+
+---- h=72 (loc 32618:32629) ----
+en e[O[I]]=R
+
+---- h=73 (loc 36733:36756) ----
+se e[s[I]]=e[L[I]]>=O[I]
+
+---- h=74 (loc 36157:36725) ----
+se local T,Rq,Fq=O[I],s[I],y[5];local Yq=Q(Fq[T],535359694);Fq[T]=Yq;T,Fq=y[4],Yq+1;Yq=n(T,Fq);local dq,Lq;if Yq<128 then dq,Lq=Yq,Fq+1;else local Oq=n(T,Fq+1);if Oq<128 then dq,Lq=(Yq-128)*128+Oq,Fq+2;else local kq=n(T,Fq+2);if kq<128 then dq,Lq=Yq-128+(Oq-128)*16384+kq*128,Fq+3;else local vq=n(T,Fq+3);dq,Lq=(Yq-128)*2097152+(Oq-128)*128+(kq-128)*16384+vq%128+(vq-vq%128)*2097152,Fq+4;end;end;end;Yq,Fq=Rq*16843009,Lq+dq;local Oq=Fq-dq%4;for dq=Lq,Oq-1,4 do t(T,dq,(Q(_(T,dq),Yq)));end;for Yq=Oq,F
+
+---- h=75 (loc 36142:36153) ----
+en e[L[I]]=O
+
+---- h=76 (loc 36777:36800) ----
+en e[s[I]]=e[O[I]]>=Y[I]
+
+---- h=77 (loc 36863:36895) ----
+se I=if e[O[I]]then L[I]else s[I]
+
+---- h=78 (loc 36818:36859) ----
+en e[L[I]]=e[s[I]](f(e[O[I]],1,e[O[I]].n))
+
+---- h=79 (loc 35658:35670) ----
+en e[O[I]]={}
+
+---- h=80 (loc 35687:35708) ----
+en e[s[I]]=not e[L[I]]
+
+---- h=81 (loc 35712:35992) ----
+se local T,Rq,Fq=L[I],r[I],e[s[I]];local Yq,dq=P(Rq,4294967295),P(Fq,4294967295);local Rq,Fq,Lq,Oq=P(Yq,65535),U(Yq,16),P(dq,65535),U(dq,16);Yq=P(Rq*Lq+w(P(Rq*Oq+Fq*Lq,65535),16),4294967295);dq=nil;repeat Lq=Yq%4294967296;if Lq~=Lq then dq=0;break;end;dq=Lq-Lq%1;until true;e[T]=dq
+
+---- h=82 (loc 36013:36030) ----
+en e[L[I]]=e[s[I]]
+
+---- h=83 (loc 36074:36085) ----
+se J=e[O[I]]
+
+---- h=84 (loc 36048:36070) ----
+en e[s[I]]=L[I]+e[O[I]]
+
+---- h=85 (loc 37511:37534) ----
+en e[O[I]]=e[L[I]]==c[I]
+
+---- h=86 (loc 37570:37643) ----
+se m,H,M=s[I],O[I],L[I];N,C,z=m+M-1,m+H,o(e[m](f(e,m+1,m+H)));i(z,1,M,m,e)
+
+---- h=87 (loc 37552:37566) ----
+en e[s[I]]=L[I]
+
+---- h=88 (loc 37728:37748) ----
+se e[s[I]](Y[I],r[I])
+
+---- h=89 (loc 37712:37720) ----
+se I=s[I]
+
+---- h=90 (loc 37683:37708) ----
+en e[L[I]]=e[s[I]]*e[O[I]]
+
+---- h=91 (loc 37455:37473) ----
+se e[L[I]]=-e[O[I]]
+
+---- h=92 (loc 37376:37421) ----
+en m=s[I];H,M,N=e[m],e[m+1],e[m+2];e[m]=H(M,N)
+
+---- h=93 (loc 37425:37447) ----
+se e[L[I]]=r[I]+e[s[I]]
+
+---- h=94 (loc 36970:36971) ----
+en
+
+---- h=95 (loc 36975:37263) ----
+se H,m=(Q(O[I],(P(Q(J,(P(U(J,29),7))),536870911)))),s[I]+1;for T=1,L[I],1 do H=P(Q(H,(w(H,13))),536870911);H=Q(H,(U(H,13)));H=P(Q(H,(w(H,14))),536870911);s[m]=Q(s[m],(P(U(H,0),127)));O[m]=Q(O[m],(P(U(H,7),127)));L[m]=Q(L[m],(P(U(H,14),127)));k[m]=Q(k[m],(P(U(H,21),127)));m=m+1;end;k[I]=94
+
+---- h=96 (loc 37285:37310) ----
+en e[s[I]]=e[O[I]]+e[L[I]]
+
+---- h=97 (loc 37314:37336) ----
+se e[L[I]]=s[I]*e[O[I]]
+
+## LOOP 1 dispatch var: v
+---- v=0 (loc 47927:47963) ----
+se m=X[s[I]];e[O[I]]=m[6][m[5]][Y[I]]
+
+---- v=1 (loc 47894:47919) ----
+se e[O[I]]=e[s[I]]%e[L[I]]
+
+---- v=2 (loc 47622:47890) ----
+en local K,T,h=s[I],Y[I],O[I];local Rq,Fq=P(T,4294967295),P(h,4294967295);local T,Yq,dq,Lq=P(Rq,65535),U(Rq,16),P(Fq,65535),U(Fq,16);h=P(T*dq+w(P(T*Lq+Yq*dq,65535),16),4294967295);Yq=nil;repeat dq=h%4294967296;if dq~=dq then Yq=0;break;end;Yq=dq-dq%1;until true;e[K]=Yq
+
+---- v=3 (loc 47565:47588) ----
+se e[O[I]][e[L[I]]]=s[I]
+
+---- v=4 (loc 47537:47557) ----
+se e[L[I]](c[I],r[I])
+
+---- v=5 (loc 47516:47533) ----
+en e[L[I]]=e[O[I]]
+
+---- v=6 (loc 48425:48447) ----
+en e[O[I]]=e[s[I]]+Y[I]
+
+---- v=7 (loc 48489:48515) ----
+se e[O[I]](e[L[I]],e[s[I]])
+
+---- v=8 (loc 48463:48485) ----
+en e[O[I]]=e[L[I]]-s[I]
+
+---- v=9 (loc 48098:48109) ----
+en e[O[I]]=L
+
+---- v=10 (loc 48113:48401) ----
+se H,m=(Q(s[I],(P(Q(J,(P(U(J,29),7))),536870911)))),L[I]+1;for K=1,O[I],1 do H=P(Q(H,(w(H,13))),536870911);H=Q(H,(U(H,13)));H=P(Q(H,(w(H,14))),536870911);L[m]=Q(L[m],(P(U(H,0),127)));s[m]=Q(s[m],(P(U(H,7),127)));O[m]=Q(O[m],(P(U(H,14),127)));k[m]=Q(k[m],(P(U(H,21),127)));m=m+1;end;k[I]=50
+
+---- v=11 (loc 48016:48050) ----
+en I=if e[L[I]]<s[I]then O[I]else I
+
+---- v=12 (loc 48054:48076) ----
+se e[O[I]]=e[L[I]]<s[I]
+
+---- v=13 (loc 46754:46780) ----
+se e[O[I]]=e[s[I]]==e[L[I]]
+
+---- v=14 (loc 46721:46746) ----
+se e[s[I]]=e[O[I]]*e[L[I]]
+
+---- v=15 (loc 46178:46717) ----
+en local K;local T=r[I];if T then local h=#T/3;if h>0 then K={};local Rq,Fq=A,x;for Yq=1,h,1 do local h=(Yq-1)*3;local dq,Lq=T[h+3],T[h+2];if dq==1 then Rq=if not Rq then{}else Rq;local Oq=Rq[Lq];if not Oq then Oq={[6]=e,[5]=Lq};Rq[Lq]=Oq;else end;K[Yq]=Oq;else if dq==0 then K[Yq]=e[Lq];else if dq==2 then K[Yq]=X[Lq];else if dq==3 then Fq=if not Fq then{}else Fq;local dq=Fq[Lq];if not dq then dq={[4]=T[h+1],[5]=Lq,[6]=e};Fq[Lq]=dq;else end;K[Yq]=dq;else end;end;end;end;end;A,x=Rq,Fq;else end;els
+
+---- v=16 (loc 46904:46930) ----
+en e[s[I]]=e[L[I]]//e[O[I]]
+
+---- v=17 (loc 46934:46959) ----
+se e[O[I]]=e[L[I]]+e[s[I]]
+
+---- v=18 (loc 46816:46855) ----
+en m=X[s[I]];e[O[I]]=m[6][m[5]][e[L[I]]]
+
+---- v=19 (loc 46859:46882) ----
+se e[s[I]]=e[O[I]](Y[I])
+
+---- v=20 (loc 47305:47316) ----
+se J=e[s[I]]
+
+---- v=21 (loc 47016:47282) ----
+en local K,T,h=L[I],c[I],e[O[I]];local Rq,Fq=P(T,4294967295),P(h,4294967295);local T,h,Yq,dq=P(Rq,65535),U(Rq,16),P(Fq,65535),U(Fq,16);Rq=P(T*Yq+w(P(T*dq+h*Yq,65535),16),4294967295);Yq=nil;repeat h=Rq%4294967296;if h~=h then Yq=0;break;end;Yq=h-h%1;until true;e[K]=Yq
+
+---- v=22 (loc 47286:47297) ----
+se I=e[O[I]]
+
+---- v=23 (loc 47433:47445) ----
+se e[s[I]]={}
+
+---- v=24 (loc 47406:47429) ----
+en e[O[I]][s[I]]=e[L[I]]
+
+---- v=25 (loc 47352:47363) ----
+en B=e[L[I]]
+
+---- v=26 (loc 47367:47384) ----
+se e[L[I]]=Z[c[I]]
+
+---- v=27 (loc 48587:48604) ----
+en e[O[I]]=u(L[I])
+
+---- v=28 (loc 48621:48733) ----
+en local K,T,h=O[I],e[s[I]];repeat local Rq=T%4294967296;if Rq~=Rq then h=0;break;end;h=Rq-Rq%1;until true;e[K]=h
+
+---- v=29 (loc 48737:49007) ----
+se if A then for K in q,A,nil do if A then local T=A[K];if T then T[6]=T;T[4]=e[K];T[5]=4;A[K]=nil;end;end;end;end;if x then for K,T in q,x,nil do local h=T[4];if x then local T=x[K];if T then local Rq=u(h);i(e,K,K+h-1,1,Rq);T[6]=Rq;T[5]=1;x[K]=nil;end;end;end;end;return
+
+---- v=30 (loc 49042:49130) ----
+en local K=O[I];if A then local T=A[K];if T then T[6]=T;T[4]=e[K];T[5]=4;A[K]=nil;end;end
+
+---- v=31 (loc 49134:49145) ----
+se D=e[L[I]]
+
+---- v=32 (loc 49193:49223) ----
+se m=X[s[I]];m[6][m[5]]=e[L[I]]
+
+---- v=33 (loc 49167:49189) ----
+en e[O[I]]=L[I]*e[s[I]]
+
+---- v=34 (loc 50198:50220) ----
+se e[O[I]]=e[s[I]]/L[I]
+
+---- v=35 (loc 49932:50164) ----
+en m,H,M,N=O[I],L[I],Q(B,P(U(B,14),262143),(P(U(B,28),15))),s[I];C=m<2097152 and 7 or 14;z,j=P(m,w(1,C)-1),U(m,C);L[I]=Q(H,103,(P(M,127)));O[I]=Q(z,95,(P(U(M,14),127)));s[I]=Q(N,64,(P(U(M,7),127)));k[I]=Q(j,22,(P(U(M,21),127)));I=I-1
+
+---- v=36 (loc 50168:50190) ----
+se e[s[I]]=Y[I]+e[O[I]]
+
+---- v=37 (loc 49534:49570) ----
+se m=X[L[I]];m[6][m[5]][c[I]]=e[O[I]]
+
+---- v=38 (loc 49280:49530) ----
+en m,H,M,N=s[I],O[I],L[I],Q(B,P(U(B,14),262143),(P(U(B,28),15)));C=m<16384 and 7 or(m<2097152 and 14 or 21);z,j=U(m,C),P(m,w(1,C)-1);L[I]=Q(M,44,(P(N,127)));s[I]=Q(j,65,(P(U(N,7),127)));O[I]=Q(H,19,(P(U(N,14),127)));k[I]=Q(z,53,(P(U(N,21),127)));I=I-1
+
+---- v=39 (loc 49592:49863) ----
+en local K,T,h=O[I],L[I],e[s[I]];local Rq,Fq=P(T,4294967295),P(h,4294967295);local T,h,Yq,dq=P(Rq,65535),U(Rq,16),P(Fq,65535),U(Fq,16);Fq=P(T*Yq+w(P(T*dq+h*Yq,65535),16),4294967295);Yq=nil;repeat Rq=Fq%4294967296;if Rq~=Rq then Yq=0;break;end;Yq=Rq-Rq%1;until true;e[K]=Yq
+
+---- v=40 (loc 49867:49892) ----
+se e[O[I]]=e[L[I]]-e[s[I]]
+
+---- v=41 (loc 50646:50694) ----
+se m,H,M=O[I],s[I],L[I];N=e[m];i(e,m+1,m+H,M+1,N)
+
+---- v=42 (loc 50624:50638) ----
+se e[s[I]]=L[I]
+
+---- v=43 (loc 50598:50620) ----
+en e[O[I]]=L[I]%e[s[I]]
+
+---- v=44 (loc 50729:50748) ----
+en e[L[I]]=e[O[I]]()
+
+---- v=45 (loc 50752:50775) ----
+se e[L[I]]=e[O[I]]<=s[I]
+
+---- v=46 (loc 50796:50819) ----
+en e[O[I]]=e[L[I]]~=s[I]
+
+---- v=47 (loc 50823:50834) ----
+se e[O[I]]()
+
+---- v=48 (loc 50276:50294) ----
+en e[s[I]]=#e[O[I]]
+
+---- v=49 (loc 50294:50341) ----
+];elseif not(v==50)then e[s[I]]=e[O[I]][L[I]];en
+
+---- v=51 (loc 50373:50396) ----
+en e[O[I]]=e[s[I]][Y[I]]
+
+---- v=52 (loc 50400:50439) ----
+se e[s[I]]=L[I];e[L[I+1]]=e[O[I+1]];I+=1
+
+---- v=53 (loc 50461:50497) ----
+en m=X[s[I]];m[6][m[5]][e[L[I]]]=O[I]
+
+---- v=54 (loc 50501:50541) ----
+se m,H=s[I],e[O[I]];e[m+1]=H;e[m]=H[Y[I]]
+
+---- v=55 (loc 45635:45661) ----
+se e[O[I]]=e[L[I]]<=e[s[I]]
+
+---- v=56 (loc 45360:45627) ----
+se local K,T,h=O[I],e[s[I]],L[I];local Rq,Fq=P(T,4294967295),P(h,4294967295);local T,h,Yq,dq=P(Rq,65535),U(Rq,16),P(Fq,65535),U(Fq,16);Fq=P(T*Yq+w(P(T*dq+h*Yq,65535),16),4294967295);T=nil;repeat dq=Fq%4294967296;if dq~=dq then T=0;break;end;T=dq-dq%1;until true;e[K]=T
+
+---- v=57 (loc 45078:45356) ----
+en if A then for K in q,A,nil do if A then local T=A[K];if T then T[6]=T;T[4]=e[K];T[5]=4;A[K]=nil;end;end;end;end;if x then for K,T in q,x,nil do local h=T[4];if x then local T=x[K];if T then local Rq=u(h);i(e,K,K+h-1,1,Rq);T[6]=Rq;T[5]=1;x[K]=nil;end;end;end;end;return e[s[I]]
+
+---- v=58 (loc 45719:45986) ----
+se local K,T,h=L[I],e[O[I]],e[s[I]];local Rq,Fq=P(T,4294967295),P(h,4294967295);local T,Yq,dq,Lq=P(Rq,65535),U(Rq,16),P(Fq,65535),U(Fq,16);Rq=P(T*dq+w(P(T*Lq+Yq*dq,65535),16),4294967295);h=nil;repeat T=Rq%4294967296;if T~=T then h=0;break;end;h=T-T%1;until true;e[K]=h
+
+---- v=59 (loc 45696:45715) ----
+en e[O[I]]=Y[I]+c[I]
+
+---- v=60 (loc 46008:46030) ----
+en e[s[I]]=O[I]+e[L[I]]
+
+---- v=61 (loc 46034:46069) ----
+se I=if e[s[I]]~=Y[I]then O[I]else I
+
+---- v=62 (loc 44746:44772) ----
+en e[s[I]]=e[O[I]][e[L[I]]]
+
+---- v=63 (loc 44839:44862) ----
+se e[L[I]]=e[O[I]]==s[I]
+
+---- v=64 (loc 44790:44835) ----
+en m=O[I];H,M,N=e[m],e[m+1],e[m+2];e[m]=H(M,N)
+
+---- v=65 (loc 44901:44912) ----
+en e[s[I]]=J
+
+---- v=66 (loc 44916:44933) ----
+se e[O[I]]=R[L[I]]
+
+---- v=67 (loc 44984:45025) ----
+se e[O[I]]=e[L[I]](f(e[s[I]],1,e[s[I]].n))
+
+---- v=68 (loc 44954:44980) ----
+en e[O[I]]=e[s[I]]>=e[L[I]]
+
+---- v=69 (loc 43559:43581) ----
+en e[s[I]]=O[I]-e[L[I]]
+
+---- v=70 (loc 43621:43629) ----
+se I=s[I]
+
+---- v=71 (loc 43599:43617) ----
+en e[L[I]]=-e[O[I]]
+
+---- v=72 (loc 43436:43447) ----
+se e[L[I]]=D
+
+---- v=73 (loc 43406:43432) ----
+en e[O[I]]=e[s[I]](e[L[I]])
+
+---- v=74 (loc 43513:43538) ----
+se e[s[I]]=e[O[I]]/e[L[I]]
+
+---- v=75 (loc 43468:43509) ----
+en e[s[I]](e[L[I]],f(e[O[I]],1,e[O[I]].n))
+
+---- v=76 (loc 44668:44690) ----
+se e[O[I]]=e[L[I]]%s[I]
+
+---- v=77 (loc 44635:44660) ----
+se e[L[I]]=e[O[I]]>e[s[I]]
+
+---- v=78 (loc 44365:44631) ----
+en local K,T,h=s[I],Y[I],r[I];local Rq,Fq=P(T,4294967295),P(h,4294967295);local T,Yq,dq,Lq=P(Rq,65535),U(Rq,16),P(Fq,65535),U(Fq,16);Fq=P(T*dq+w(P(T*Lq+Yq*dq,65535),16),4294967295);h=nil;repeat Rq=Fq%4294967296;if Rq~=Rq then h=0;break;end;h=Rq-Rq%1;until true;e[K]=h
+
+---- v=79 (loc 43686:43721) ----
+en for K=O[I],s[I],1 do e[K]=nil;end
+
+---- v=80 (loc 43725:43992) ----
+se local K,T,h=L[I],s[I],O[I];local Rq,Fq=P(T,4294967295),P(h,4294967295);local Yq,dq,Lq,Oq=P(Rq,65535),U(Rq,16),P(Fq,65535),U(Fq,16);T=P(Yq*Lq+w(P(Yq*Oq+dq*Lq,65535),16),4294967295);h=nil;repeat Oq=T%4294967296;if Oq~=Oq then h=0;break;end;h=Oq-Oq%1;until true;e[K]=h
+
+---- v=81 (loc 44014:44033) ----
+en e[L[I]]=r[I]>c[I]
+
+---- v=82 (loc 44037:44325) ----
+se H,m=(Q(s[I],(P(Q(B,(P(U(B,29),7))),536870911)))),L[I]+1;for K=1,O[I],1 do H=P(Q(H,(w(H,13))),536870911);H=Q(H,(U(H,13)));H=P(Q(H,(w(H,14))),536870911);L[m]=Q(L[m],(P(U(H,0),127)));s[m]=Q(s[m],(P(U(H,7),127)));O[m]=Q(O[m],(P(U(H,14),127)));k[m]=Q(k[m],(P(U(H,21),127)));m=m+1;end;k[I]=50
+
+---- v=83 (loc 42341:42363) ----
+se e[s[I]]=e[L[I]]+O[I]
+
+---- v=84 (loc 41745:42294) ----
+en local K,T,h=s[I],L[I],y[5];local Rq=Q(h[K],535359694);h[K]=Rq;h,K=y[4],Rq+1;Rq=n(h,K);local Fq,Yq;if Rq<128 then Fq,Yq=Rq,K+1;else local dq=n(h,K+1);if dq<128 then Fq,Yq=(Rq-128)*128+dq,K+2;else local Lq=n(h,K+2);if Lq<128 then Fq,Yq=Rq-128+(dq-128)*16384+Lq*128,K+3;else local Oq=n(h,K+3);Fq,Yq=(Rq-128)*2097152+(dq-128)*128+(Lq-128)*16384+Oq%128+(Oq-Oq%128)*2097152,K+4;end;end;end;K,Rq=T*16843009,Yq+Fq;local dq=Rq-Fq%4;for Fq=Yq,dq-1,4 do t(h,Fq,(Q(_(h,Fq),K)));end;for K=dq,Rq-1,1 do S(h,K,(Q
+
+---- v=85 (loc 42298:42333) ----
+se I=if e[L[I]]<=s[I]then O[I]else I
+
+---- v=86 (loc 41667:41690) ----
+en e[O[I]]=e[L[I]]//s[I]
+
+---- v=87 (loc 41694:41709) ----
+se e[L[I]](r[I])
+
+---- v=88 (loc 41624:41646) ----
+se e[s[I]]=e[O[I]]%Y[I]
+
+---- v=89 (loc 41603:41620) ----
+en R[s[I]]=e[O[I]]
+
+---- v=90 (loc 40955:41557) ----
+en local K=I;if v>=93 then if v<95 then if v==94 then m,H,M=L[K],s[K],O[K];N=m+H;e[m]=o(e[m](f(e,m+1,N)));else e[s[K]]=Y[K];end;else if v==96 then g=O[K];I=s[K]+1;break;else H,m=L[K],O[K]+1;for T=1,s[K],1 do H=P(Q(H,(w(H,13))),536870911);H=Q(H,(U(H,13)));H=P(Q(H,(w(H,14))),536870911);L[m]=Q(L[m],(P(U(H,0),127)));s[m]=Q(s[m],(P(U(H,7),127)));O[m]=Q(O[m],(P(U(H,14),127)));k[m]=Q(k[m],(P(U(H,21),127)));m=m+1;end;k[K]=50;end;end;else if v>=91 then if v~=92 then m,H,M=s[K],O[K],L[K];N,C,z=m+M-1,m+H,o
+
+---- v=97 (loc 42977:42999) ----
+en e[L[I]]=e[O[I]]-c[I]
+
+---- v=98 (loc 43016:43291) ----
+en if A then for K in q,A,nil do if A then local T=A[K];if T then T[6]=T;T[4]=e[K];T[5]=4;A[K]=nil;end;end;end;end;if x then for K,T in q,x,nil do local h=T[4];if x then local T=x[K];if T then local Rq=u(h);i(e,K,K+h-1,1,Rq);T[6]=Rq;T[5]=1;x[K]=nil;end;end;end;end;return Y[I]
+
+---- v=99 (loc 43295:43318) ----
+se e[L[I]]=e[O[I]]~=c[I]
+
+---- v=100 (loc 42905:42927) ----
+en e[s[I]]=e[L[I]]*O[I]
+
+---- v=101 (loc 42931:42952) ----
+se e[s[I]]=not e[O[I]]
+
+---- v=102 (loc 42737:42846) ----
+en local K,T,h=s[I],r[I];repeat local Rq=T%4294967296;if Rq~=Rq then h=0;break;end;h=Rq-Rq%1;until true;e[K]=h
+
+---- v=103 (loc 42850:42882) ----
+se I=if e[L[I]]then s[I]else O[I]
+
+---- v=104 (loc 42494:42521) ----
+se m=X[L[I]];m[6][m[5]]=r[I]
+
+---- v=105 (loc 42438:42464) ----
+en e[L[I]][e[s[I]]]=e[O[I]]
+
+---- v=106 (loc 42468:42486) ----
+se e[L[I]](e[O[I]])
+
+---- v=107 (loc 42558:42588) ----
+en m=X[O[I]];e[L[I]]=m[6][m[5]]
+
+---- v=108 (loc 42592:42615) ----
+se e[O[I]][c[I]]=e[L[I]]
+
+---- v=109 (loc 42665:42676) ----
+se e[s[I]]=k
+
+---- v=110 (loc 42638:42661) ----
+en e[L[I]](e[s[I]],r[I])
+
+## LOOP 2 dispatch var: v
+---- v=0 (loc 54043:54066) ----
+en e[s[I]]=e[k[I]]~=L[I]
+
+---- v=1 (loc 54082:54099) ----
+en e[k[I]]=u(L[I])
+
+---- v=2 (loc 54103:54129) ----
+se e[s[I]]=e[k[I]](e[L[I]])
+
+---- v=3 (loc 54177:54191) ----
+se R[c[I]]=Y[I]
+
+---- v=4 (loc 54162:54173) ----
+en e[L[I]]()
+
+---- v=5 (loc 54212:54460) ----
+en H,m=s[I],L[I]+1;for K=1,k[I],1 do H=P(Q(H,(w(H,13))),536870911);H=Q(H,(U(H,13)));H=P(Q(H,(w(H,14))),536870911);s[m]=Q(s[m],(P(U(H,0),127)));k[m]=Q(k[m],(P(U(H,7),127)));L[m]=Q(L[m],(P(U(H,14),127)));O[m]=Q(O[m],(P(U(H,21),127)));m=m+1;end;O[I]=27
+
+---- v=6 (loc 54464:54486) ----
+se e[s[I]]=k[I]-e[L[I]]
+
+---- v=7 (loc 54584:54609) ----
+se e[s[I]]=e[k[I]]+e[L[I]]
+
+---- v=8 (loc 54541:54564) ----
+en e[k[I]]=e[s[I]]~=Y[I]
+
+---- v=9 (loc 54568:54576) ----
+se I=k[I]
+
+---- v=10 (loc 54644:54722) ----
+en a,m,H={[5]=F,[8]=a,[6]=b,[7]=G},L[I],V(p);H(R,e[m],e[m+1],e[m+2]);I,F=k[I],H
+
+---- v=11 (loc 54726:54749) ----
+se e[k[I]]=e[L[I]]==s[I]
+
+---- v=12 (loc 54787:54814) ----
+se m=X[L[I]];m[6][m[5]]=d[I]
+
+---- v=13 (loc 54771:54783) ----
+en e[s[I]]={}
+
+---- v=14 (loc 55368:55388) ----
+en e[s[I]](d[I],Y[I])
+
+---- v=15 (loc 55406:55507) ----
+en e[k[I]]=e[L[I]];m,H,M=s[I+1],L[I+1],k[I+1];N,C,z=m+M-1,m+H,o(e[m](f(e,m+1,m+H)));i(z,1,M,m,e);I=I+1
+
+---- v=16 (loc 55511:55533) ----
+se e[L[I]]=c[I]+e[k[I]]
+
+---- v=17 (loc 55641:55664) ----
+en e[s[I]][e[k[I]]]=L[I]
+
+---- v=18 (loc 55668:55703) ----
+se I=if e[L[I]]<=k[I]then s[I]else I
+
+---- v=19 (loc 55597:55619) ----
+se e[s[I]]=k[I]*e[L[I]]
+
+---- v=20 (loc 55573:55593) ----
+en e[s[I]][d[I]]=L[I]
+
+---- v=21 (loc 54934:54957) ----
+se e[s[I]]=e[k[I]]<=L[I]
+
+---- v=22 (loc 54889:54900) ----
+en e[k[I]]=B
+
+---- v=23 (loc 54904:54926) ----
+se e[L[I]]=e[k[I]]-s[I]
+
+---- v=24 (loc 55007:55270) ----
+se local K,T,V=k[I],s[I],e[L[I]];local p,h=P(T,4294967295),P(V,4294967295);local T,V,Rq,Fq=P(p,65535),U(p,16),P(h,65535),U(h,16);h=P(T*Rq+w(P(T*Fq+V*Rq,65535),16),4294967295);Fq=nil;repeat Rq=h%4294967296;if Rq~=Rq then Fq=0;break;end;Fq=Rq-Rq%1;until true;e[K]=Fq
+
+---- v=25 (loc 54992:55003) ----
+en e[k[I]]=J
+
+---- v=26 (loc 55278:55330) ----
+se I=if v~=27 then if e[L[I]]then k[I]else s[I]else I
+
+---- v=28 (loc 53387:53671) ----
+se if A then for K in q,A,nil do if A then local T=A[K];if T then T[6]=T;T[4]=e[K];T[5]=4;A[K]=nil;end;end;end;end;if x then for K,T in q,x,nil do local h=T[4];if x then local T=x[K];if T then local Rq,Fq=K+h-1,u(h);i(e,K,Rq,1,Fq);T[6]=Fq;T[5]=1;x[K]=nil;end;end;end;end;return e[L[I]]
+
+---- v=29 (loc 53090:53358) ----
+en local K,T,h=s[I],d[I],Y[I];local Rq,Fq=P(T,4294967295),P(h,4294967295);local T,Yq,dq,Lq=P(Rq,65535),U(Rq,16),P(Fq,65535),U(Fq,16);h=P(T*dq+w(P(T*Lq+Yq*dq,65535),16),4294967295);Yq=nil;repeat Rq=h%4294967296;if Rq~=Rq then Yq=0;break;end;Yq=Rq-Rq%1;until true;e[K]=Yq
+
+---- v=30 (loc 53362:53379) ----
+se e[k[I]]=Z[Y[I]]
+
+---- v=31 (loc 52440:53026) ----
+en local K,T,h=s[I],Q(k[I],(P(Q(J,(P(U(J,29),7))),536870911))),y[5];local Rq=Q(h[K],535359694);h[K]=Rq;h,K=y[4],Rq+1;Rq=n(h,K);local Fq,Yq;if Rq<128 then Fq,Yq=Rq,K+1;else local dq=n(h,K+1);if dq<128 then Fq,Yq=(Rq-128)*128+dq,K+2;else local Lq=n(h,K+2);if Lq<128 then Fq,Yq=Rq-128+(dq-128)*16384+Lq*128,K+3;else local Oq=n(h,K+3);Fq,Yq=(Rq-128)*2097152+(dq-128)*128+(Lq-128)*16384+Oq%128+(Oq-Oq%128)*2097152,K+4;end;end;end;K,Rq=T*16843009,Yq+Fq;local dq=Rq-Fq%4;for Fq=Yq,dq-1,4 do t(h,Fq,(Q(_(h,Fq
+
+---- v=32 (loc 53030:53050) ----
+se e[s[I]][Y[I]]=d[I]
+
+---- v=33 (loc 52407:52418) ----
+se B=e[s[I]]
+
+---- v=34 (loc 52373:52403) ----
+en m=X[s[I]];e[k[I]]=m[6][m[5]]
+
+---- v=35 (loc 53773:53784) ----
+se J=e[k[I]]
+
+---- v=36 (loc 53739:53765) ----
+se e[s[I]]=e[k[I]]//e[L[I]]
+
+---- v=37 (loc 53724:53735) ----
+en I=e[L[I]]
+
+---- v=38 (loc 53882:53955) ----
+en m,H,M=s[I],L[I],k[I];N,C,z=m+M-1,m+H,o(e[m](f(e,m+1,m+H)));i(z,1,M,m,e)
+
+---- v=39 (loc 53959:53970) ----
+se I=e[L[I]]
+
+---- v=40 (loc 53835:53860) ----
+se e[k[I]]=e[s[I]]*e[L[I]]
+
+---- v=41 (loc 53820:53831) ----
+en D=e[s[I]]
+
+---- v=42 (loc 50998:51016) ----
+en e[k[I]](e[s[I]])
+
+---- v=43 (loc 51034:51112) ----
+en m,H,M=L[I],k[I],s[I];N,C=e[m],m+H;z=e[C];i(e,m+1,C-1,M+1,N);i(z,1,z.n,M+H,N)
+
+---- v=44 (loc 51116:51156) ----
+se m,H=k[I],e[s[I]];e[m+1]=H;e[m]=H[Y[I]]
+
+---- v=45 (loc 51862:51873) ----
+se e[L[I]]=R
+
+---- v=46 (loc 51269:51858) ----
+en local K,T,h=s[I],Q(k[I],(P(Q(B,(P(U(B,29),7))),536870911))),y[5];local Rq=Q(h[K],535359694);h[K]=Rq;K,h=y[4],Rq+1;Rq=n(K,h);local Fq,Yq;if Rq<128 then Fq,Yq=Rq,h+1;else local dq=n(K,h+1);if dq<128 then Fq,Yq=(Rq-128)*128+dq,h+2;else local Lq=n(K,h+2);if Lq<128 then Fq,Yq=Rq-128+(dq-128)*16384+Lq*128,h+3;else local Oq=n(K,h+3);Fq,Yq=(Rq-128)*2097152+(dq-128)*128+(Lq-128)*16384+Oq%128+(Oq-Oq%128)*2097152,h+4;end;end;end;Rq,h=T*16843009,Yq+Fq;local dq=h-Fq%4;for Fq=Yq,dq-1,4 do t(K,Fq,(Q(_(K,Fq)
+
+---- v=47 (loc 51222:51248) ----
+se e[k[I]][e[s[I]]]=e[L[I]]
+
+---- v=48 (loc 51196:51218) ----
+en e[k[I]]=e[s[I]]%L[I]
+
+---- v=49 (loc 52084:52107) ----
+en e[k[I]]=e[s[I]][L[I]]
+
+---- v=50 (loc 52111:52223) ----
+se local K,T,h=k[I],e[L[I]];repeat local Rq=T%4294967296;if Rq~=Rq then h=0;break;end;h=Rq-Rq%1;until true;e[K]=h
+
+---- v=51 (loc 52268:52298) ----
+se m=X[L[I]];m[6][m[5]]=e[s[I]]
+
+---- v=52 (loc 52245:52264) ----
+en e[k[I]]=e[s[I]]()
+
+---- v=53 (loc 52009:52023) ----
+en e[s[I]]=k[I]
+
+---- v=54 (loc 52027:52049) ----
+se e[L[I]]=e[s[I]]+k[I]
+
+---- v=55 (loc 51927:51949) ----
+en e[s[I]]=e[L[I]]<k[I]
+
+---- v=56 (loc 51953:51988) ----
+se for K=s[I],k[I],1 do e[K]=nil;end
+
+---- v=57 (loc 59673:59696) ----
+en e[L[I]][d[I]]=e[s[I]]
+
+---- v=58 (loc 59713:59959) ----
+en local y,K,B=L[I],k[I],c[I];local J,j=P(K,4294967295),P(B,4294967295);local K,T,Q,n=P(J,65535),U(J,16),P(j,65535),U(j,16);B=P(K*Q+w(P(K*n+T*Q,65535),16),4294967295);n=nil;repeat T=B%4294967296;if T~=T then n=0;break;end;n=T-T%1;until true;e[y]=n
+
+---- v=59 (loc 59963:59988) ----
+se e[L[I]]=P(e[s[I]],k[I])
+
+---- v=60 (loc 59552:59580) ----
+se e[s[I]]=Q(e[L[I]],e[k[I]])
+
+---- v=61 (loc 59526:59548) ----
+en e[L[I]]=e[s[I]]*k[I]
+
+---- v=62 (loc 59601:59624) ----
+en e[L[I]]=e[k[I]]//s[I]
+
+---- v=63 (loc 59628:59653) ----
+se e[L[I]]=e[k[I]]<e[s[I]]
+
+---- v=64 (loc 58517:58552) ----
+en I=if e[L[I]]==s[I]then k[I]else I
+
+---- v=65 (loc 58570:58581) ----
+en e[s[I]]=e
+
+---- v=66 (loc 58585:58621) ----
+se e[s[I]]=k[I];e[s[I+1]]=k[I+1];I+=1
+
+---- v=67 (loc 59176:59197) ----
+se e[L[I]]=not e[k[I]]
+
+---- v=68 (loc 58660:59172) ----
+en local K,B,T=s[I],L[I],y[5];local V=Q(T[K],535359694);T[K]=V;T,K=y[4],V+1;V=n(T,K);local y,p;if V<128 then y,p=V,K+1;else local h=n(T,K+1);if h<128 then y,p=(V-128)*128+h,K+2;else local Rq=n(T,K+2);if Rq<128 then y,p=V-128+(h-128)*16384+Rq*128,K+3;else local Fq=n(T,K+3);y,p=(V-128)*2097152+(h-128)*128+(Rq-128)*16384+Fq%128+(Fq-Fq%128)*2097152,K+4;end;end;end;V,K=B*16843009,p+y;local h=K-y%4;for y=p,h-1,4 do t(T,y,(Q(_(T,y),V)));end;for y=h,K-1,1 do S(T,y,(Q(n(T,y),B)));end;s[I]=54;L[I]=148;k[I
+
+---- v=69 (loc 59219:59233) ----
+en e[L[I]]=d[I]
+
+---- v=70 (loc 59237:59469) ----
+se m,H,M,N=L[I],k[I],s[I],Q(J,P(U(J,14),262143),(P(U(J,28),15)));C=m<2097152 and 7 or 14;z,j=U(m,C),P(m,w(1,C)-1);k[I]=Q(H,106,(P(U(N,7),127)));L[I]=Q(j,35,(P(U(N,14),127)));s[I]=Q(M,18,(P(N,127)));O[I]=Q(z,27,(P(U(N,21),127)));I=I-1
+
+---- v=71 (loc 60438:60705) ----
+en if A then for y in q,A,nil do if A then local K=A[y];if K then K[6]=K;K[4]=e[y];K[5]=4;A[y]=nil;end;end;end;end;if x then for y,K in q,x,nil do local B=K[4];if x then local K=x[y];if K then local J=u(B);i(e,y,y+B-1,1,J);K[6]=J;K[5]=1;x[y]=nil;end;end;end;end;return
+
+---- v=72 (loc 60722:61217) ----
+en local y;local K=Y[I];if K then local B=#K/3;if B>0 then y={};local J,j=A,x;for T=1,B,1 do local B=(T-1)*3;local Q,n=K[B+3],K[B+2];if Q==1 then J=if not J then{}else J;local t=J[n];if not t then t={[6]=e,[5]=n};J[n]=t;else end;y[T]=t;else if Q==0 then y[T]=e[n];else if Q==2 then y[T]=X[n];else if Q==3 then j=if not j then{}else j;local Q=j[n];if not Q then Q={[4]=K[B+1],[5]=n,[6]=e};j[n]=Q;else end;y[T]=Q;else end;end;end;end;end;A,x=J,j;else end;else end;H=d[I](nil,y);l(H,Z);e[s[I]]=H;m=y
+
+---- v=73 (loc 61221:61269) ----
+se m,H,M=L[I],k[I],s[I];N=e[m];i(e,m+1,m+H,M+1,N)
+
+---- v=74 (loc 60054:60071) ----
+en e[L[I]]=R[k[I]]
+
+---- v=75 (loc 60075:60093) ----
+se e[s[I]]=#e[L[I]]
+
+---- v=76 (loc 60115:60157) ----
+en e[k[I]]=e[L[I]];e[k[I+1]]=e[L[I+1]];I+=1
+
+---- v=77 (loc 60161:60413) ----
+se local y,K,B=L[I],e[k[I]],e[s[I]];local J,j=P(K,4294967295),P(B,4294967295);local T,Q,n,t=P(J,65535),U(J,16),P(j,65535),U(j,16);K=P(T*n+w(P(T*t+Q*n,65535),16),4294967295);J=nil;repeat B=K%4294967296;if B~=B then J=0;break;end;J=B-B%1;until true;e[y]=J
+
+---- v=78 (loc 61850:61872) ----
+se e[k[I]]=L[I]+e[s[I]]
+
+---- v=79 (loc 61786:61815) ----
+en F,G,b=a[5],a[7],a[6];a=a[8]
+
+---- v=80 (loc 61819:61842) ----
+se e[s[I]]=e[k[I]][Y[I]]
+
+---- v=81 (loc 61497:61746) ----
+se local d,y,K=k[I],c[I],e[L[I]];local B,J=P(y,4294967295),P(K,4294967295);local y,j,T,Q=P(B,65535),U(B,16),P(J,65535),U(J,16);K=P(y*T+w(P(y*Q+j*T,65535),16),4294967295);T=nil;repeat y=K%4294967296;if y~=y then T=0;break;end;T=y-y%1;until true;e[d]=T
+
+---- v=82 (loc 61467:61493) ----
+en e[L[I]]=e[k[I]][e[s[I]]]
+
+---- v=83 (loc 61426:61445) ----
+se e[k[I]]=c[I]+Y[I]
+
+---- v=84 (loc 61323:61422) ----
+en m,H,M=s[I],L[I],k[I];N,C,z=m+M-1,m+H,o(e[m](f(e,m+1,m+H)));i(z,1,M,m,e);e[k[I+1]]=e[L[I+1]];I=I+1
+
+---- v=85 (loc 56655:56695) ----
+se e[s[I]]=k[I];e[k[I+1]]=e[L[I+1]];I=I+1
+
+---- v=86 (loc 56621:56647) ----
+se e[s[I]]=e[k[I]]<=e[L[I]]
+
+---- v=87 (loc 56507:56617) ----
+en m,H,M=k[I],L[I],s[I];N=m+H;C=e[N];z=C.n;j=H+z-1;C.n=j;i(C,1,z,H,C);i(e,m+1,N-1,1,C);e[m]=o(e[m](f(C,1,C.n)))
+
+---- v=88 (loc 56152:56440) ----
+en H,m=(Q(k[I],(P(Q(J,(P(U(J,29),7))),536870911)))),s[I]+1;for K=1,L[I],1 do H=P(Q(H,(w(H,13))),536870911);H=Q(H,(U(H,13)));H=P(Q(H,(w(H,14))),536870911);s[m]=Q(s[m],(P(U(H,0),127)));k[m]=Q(k[m],(P(U(H,7),127)));L[m]=Q(L[m],(P(U(H,14),127)));O[m]=Q(O[m],(P(U(H,21),127)));m=m+1;end;O[I]=27
+
+---- v=89 (loc 56444:56467) ----
+se e[s[I]]=e[L[I]](d[I])
+
+---- v=90 (loc 55813:55839) ----
+en e[L[I]](e[k[I]],e[s[I]])
+
+---- v=91 (loc 55843:56130) ----
+se if A then for K in q,A,nil do if A then local T=A[K];if T then T[6]=T;T[4]=e[K];T[5]=4;A[K]=nil;end;end;end;end;if x then for K,T in q,x,nil do local V=T[4];if x then local T=x[K];if T then local p,h=K+V,u(V);i(e,K,p-1,1,h);T[6]=h;T[5]=1;x[K]=nil;end;end;end;end;return e[k[I]],e[L[I]]
+
+---- v=92 (loc 57022:57039) ----
+en R[L[I]]=e[s[I]]
+
+---- v=93 (loc 57114:57137) ----
+se e[s[I]]=e[L[I]]==d[I]
+
+---- v=94 (loc 57057:57110) ----
+en m,H,M=k[I],L[I],s[I];N=m+H;e[m]=o(e[m](f(e,m+1,N)))
+
+---- v=95 (loc 56963:56997) ----
+se I=if L[I]<e[s[I]]then k[I]else I
+
+---- v=96 (loc 56831:56959) ----
+en m,H,M=L[I],s[I],k[I];N,C=m+M-1,m+H;z=e[C];j=z.n;W=H+j-1;z.n=W;i(z,1,j,H,z);i(e,m+1,C-1,1,z);E=o(e[m](f(z,1,z.n)));i(E,1,M,m,e)
+
+---- v=97 (loc 56735:56813) ----
+en local K=I;if v~=98 then g=L[K];I=s[K]+1;break;else e[L[K]][e[s[K]]]=d[K];end
+
+---- v=99 (loc 57991:58013) ----
+se e[L[I]]=e[s[I]]-d[I]
+
+---- v=100 (loc 57958:57983) ----
+se e[L[I]]=e[k[I]]-e[s[I]]
+
+---- v=101 (loc 57703:57954) ----
+en m,H,M,N=s[I],k[I],Q(J,P(U(J,14),262143),(P(U(J,28),15))),L[I];C=m<16384 and 7 or(m<2097152 and 14 or 21);z,j=P(m,w(1,C)-1),U(m,C);k[I]=Q(H,82,(P(U(M,7),127)));L[I]=Q(N,79,(P(U(M,14),127)));s[I]=Q(z,34,(P(M,127)));O[I]=Q(j,108,(P(U(M,21),127)));I=I-1
+
+---- v=102 (loc 58050:58076) ----
+en e[L[I]]=e[s[I]]>=e[k[I]]
+
+---- v=103 (loc 58080:58103) ----
+se e[L[I]][s[I]]=e[k[I]]
+
+---- v=104 (loc 58126:58148) ----
+en e[s[I]]=e[L[I]]+d[I]
+
+---- v=105 (loc 58152:58440) ----
+se H,m=(Q(k[I],(P(Q(B,(P(U(B,29),7))),536870911)))),s[I]+1;for K=1,L[I],1 do H=P(Q(H,(w(H,13))),536870911);H=Q(H,(U(H,13)));H=P(Q(H,(w(H,14))),536870911);s[m]=Q(s[m],(P(U(H,0),127)));k[m]=Q(k[m],(P(U(H,7),127)));L[m]=Q(L[m],(P(U(H,14),127)));O[m]=Q(O[m],(P(U(H,21),127)));m=m+1;end;O[I]=27
+
+---- v=106 (loc 57583:57600) ----
+en e[s[I]]=R[Y[I]]
+
+---- v=107 (loc 57604:57643) ----
+se m=X[s[I]];e[k[I]]=m[6][m[5]][e[L[I]]]
+
+---- v=108 (loc 57516:57533) ----
+en e[k[I]]=e[L[I]]
+
+---- v=109 (loc 57537:57560) ----
+se e[k[I]](e[L[I]],c[I])
+
+---- v=110 (loc 57438:57474) ----
+se m=e[k[I]];e[L[I]]=o(f(m,s[I],m.n))
+
+---- v=111 (loc 57346:57434) ----
+en local K=L[I];if A then local T=A[K];if T then T[6]=T;T[4]=e[K];T[5]=4;A[K]=nil;end;end
+
+---- v=112 (loc 57243:57323) ----
+se m=s[I];local K,T,V=F();if K then e[m+1]=T;e[m+2]=V;I=k[I];else end;H,M,N=K,T,V
+
+---- v=113 (loc 57217:57239) ----
+en e[L[I]]=e[k[I]]*c[I]

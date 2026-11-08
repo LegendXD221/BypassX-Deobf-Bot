@@ -1,6 +1,57 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.0.0 — real-Luau devirtualization for Luraph v15.1
+
+**The obfuscated file now runs inside a bundled REAL Luau runtime with its own
+VM interpreter instrumented in place — and every decrypt it performs is
+replayed bit-exactly in JS.**
+
+The full reverse-engineering of the Luraph v15.1 format this release is built on:
+
+- **TWO-LAYER VM CONFIRMED** — a CPS loader state machine (`mH`/`rH`/`SH`/`FH`,
+  base-85 const decode `(c-33)*52200625`) feeds an inner register VM
+  (`while true do local v=k[I]` over operand arrays `k/s/L/O/Y/c/r`, register
+  file `e`, proto `y={4=bytecode buffer, 5=const offsets}`).
+- **ISA EXTRACTION** — `luau-ast` (bundled runtime's own parser) resolves every
+  opcode of the three polymorphic dispatch loops to its leaf branch: ~110 ops
+  cataloged (MOVE/LOADK/arith/cmp/tables/upvalues/calls/jumps/3 decrypt
+  families). Per-build opcode shuffling handled by reading the build itself.
+- **DECRYPT PRIMITIVES** — 29-bit xorshift rolling key
+  (`H=(H^(H<<13))&0x1FFFFFFF; H^=H>>13; H=(H^(H<<14))&0x1FFFFFFF`), three
+  block-decrypt families with per-build role permutations (which operand array
+  XORs which 7-bit group), self-decrypt variants keyed by evolving B/J/D
+  registers, const format `offset ^ 535359694 → varint length → seed*0x01010101
+  buffer xor`.
+
+New engine (`src/luau-capture.js` + `src/luraph15-devirt.js`):
+
+- **REAL-LUAU CAPTURE** — the sample runs under `bin/luau` (official Luau CLI,
+  bundled) with source-transform instrumentation (the CLI locks its stdlib, so
+  all hooks are injected into the sample text itself): checkpoints every 512
+  inner-VM instructions (full array/register/key state as JSON) + a decrypt
+  event log at all 9 block-decrypt sites and 5 const-decrypt sites, recording
+  exact runtime seeds/starts/counts.
+- **DECRYPT REPLAY** — the recorded events re-apply in JS with the interpreter's
+  own xorshift: every instruction region the VM decrypted at runtime becomes
+  readable here. Constant-slot decrypts replay into the captured bytecode
+  buffer.
+- **DISASSEMBLY OUTPUT** — the decrypted stream renders through the behavioral
+  ISA into an annotated Lua view (registers, calls, jumps, decrypt blocks,
+  trampoline structure, recovered constants) — always valid Lua, verified.
+- The Luraph v15.x pipeline stage now tries engine peel → chunk capture →
+  behavioral lift → **real-Luau devirtualization** → key-capture inventory →
+  static peel, in that order.
+
+Also in v2.0.0:
+
+- `bin/luau` — official Luau CLI runtime bundled (Linux x86-64).
+- `src/luau-prelude-runtime.lua` — production-shaped Roblox env for the real
+  runtime (inert datatypes, identity fields, executor probes read nil).
+- `test/luau-devirt.js` — end-to-end suite: bundling, instrumentation compile,
+  live capture, replay + disassembly against the real v15.1 fixture.
+
+
 ## v1.9.0 — VM devirtualization (behavioral opcode lifting)
 
 **Every VM family now gets a real devirtualization attempt, not just a string pool.**

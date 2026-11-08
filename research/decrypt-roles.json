@@ -1,0 +1,110 @@
+[
+ {
+  "id": 0,
+  "roles": {
+   "s": 0,
+   "k": 7,
+   "L": 14,
+   "O": 21
+  },
+  "init": "(Q(k[I],(P(Q(B,(P(U(B,29),7))),536870911)))),s[I]+1",
+  "count": "L[I]",
+  "selfMod": null
+ },
+ {
+  "id": 1,
+  "roles": {
+   "s": 0,
+   "k": 7,
+   "L": 14,
+   "O": 21
+  },
+  "init": "(Q(k[I],(P(Q(J,(P(U(J,29),7))),536870911)))),s[I]+1",
+  "count": "L[I]",
+  "selfMod": null
+ },
+ {
+  "id": 2,
+  "roles": {
+   "s": 0,
+   "k": 7,
+   "L": 14,
+   "O": 21
+  },
+  "init": "s[I],L[I]+1",
+  "count": "k[I]",
+  "selfMod": null
+ },
+ {
+  "id": 3,
+  "roles": {
+   "L": 0,
+   "s": 7,
+   "O": 14,
+   "k": 21
+  },
+  "init": "(Q(s[I],(P(Q(J,(P(U(J,29),7))),536870911)))),L[I]+1",
+  "count": "O[I]",
+  "selfMod": null
+ },
+ {
+  "id": 4,
+  "roles": {
+   "L": 0,
+   "s": 7,
+   "O": 14,
+   "k": 21
+  },
+  "init": "(Q(s[I],(P(Q(B,(P(U(B,29),7))),536870911)))),L[I]+1",
+  "count": "O[I]",
+  "selfMod": null
+ },
+ {
+  "id": 5,
+  "roles": {
+   "L": 0,
+   "s": 7,
+   "O": 14,
+   "k": 21
+  },
+  "init": "L[K],O[K]+1",
+  "count": "s[K]",
+  "selfMod": null
+ },
+ {
+  "id": 6,
+  "roles": {
+   "s": 0,
+   "O": 7,
+   "L": 14,
+   "k": 21
+  },
+  "init": "(Q(O[I],(P(Q(B,(P(U(B,29),7))),536870911)))),s[I]+1",
+  "count": "L[I]",
+  "selfMod": null
+ },
+ {
+  "id": 7,
+  "roles": {
+   "s": 0,
+   "O": 7,
+   "L": 14,
+   "k": 21
+  },
+  "init": "s[I],O[I]+1",
+  "count": "L[I]",
+  "selfMod": null
+ },
+ {
+  "id": 8,
+  "roles": {
+   "s": 0,
+   "O": 7,
+   "L": 14,
+   "k": 21
+  },
+  "init": "(Q(O[I],(P(Q(J,(P(U(J,29),7))),536870911)))),s[I]+1",
+  "count": "L[I]",
+  "selfMod": null
+ }
+]
