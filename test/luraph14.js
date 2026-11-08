@@ -67,6 +67,29 @@ if (probe.available) {
     assert.ok(r.code.includes('program structure'), 'structure section missing');
   });
 
+  await check('devirtualized source: full CFG lift with structure + zero degraded edges', async () => {
+    const r = await runLuraph14Devirt(src, { timeoutMs: 120_000, version: 'v14.4.2' });
+    assert.ok(r && r.meta.lift, 'no lift produced');
+    const lift = r.meta.lift;
+    // the 1,687-instruction stream: every reachable instruction lifted, decoys dropped
+    assert.ok(lift.instructions >= 1600, `instruction count regressed: ${lift.instructions}`);
+    assert.ok(lift.reachable >= 900, `reachable count regressed: ${lift.reachable}`);
+    assert.ok(lift.decoys >= 600, `decoy drop count regressed: ${lift.decoys}`);
+    assert.ok(lift.protos >= 20, `proto count regressed: ${lift.protos}`);
+    assert.equal(lift.verified, true, 'lifted source failed luau-ast verification');
+    assert.equal(lift.degraded, 0, `unstructured edges remain: ${lift.degraded}`);
+    assert.ok(lift.whileLoops >= 10 && lift.forLoops >= 3, `structure recovery regressed: ${JSON.stringify({ w: lift.whileLoops, f: lift.forLoops, i: lift.ifs })}`);
+    // readability: the lift must contain real control flow, not a pc-runner
+    const liftSection = r.code.slice(r.code.indexOf('DEVIRTUALIZED SOURCE'));
+    assert.ok(liftSection.includes('while true do'), 'no while-loop recovered');
+    assert.ok(liftSection.includes('for '), 'no for-loop recovered');
+    assert.ok(!liftSection.includes('__pc'), 'pc-runner artifacts leaked into the lift');
+    assert.ok(!liftSection.includes('region reached only via other paths'), 'old dup-walk artifacts leaked');
+    assert.ok(!/\[dup\]/.test(liftSection), 'old [dup] artifacts leaked');
+    assert.ok(!/nil % nil/.test(liftSection), 'missing-constant junk leaked');
+    assert.ok(!/-- \[op \d+ unlifted\]/.test(liftSection), 'unlifted opcodes remain');
+  });
+
   await check('full pipeline delivers readable output (not the bare VM stub)', async () => {
     const buf = fs.readFileSync(SAMPLE);
     const result = await deobfuscate({ buffer: buf, filename: 'tokrascript-6961824067.luau' });

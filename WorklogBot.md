@@ -1,6 +1,75 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.7.0 — Full source reconstruction: the 1,687 VM instructions become real Lua
+
+**User directive: "turning the 1,687 instructions back into full Lua source do it
+it should be perfect." v2.6.0 captured the deserialized program and decoded the
+ISA; v2.7.0 completes the chain — the lifted stream is now genuinely readable,
+structured Lua (CFG-based source reconstruction), syntax-verified by luau-ast
+AND fengari, with zero unstructured edges.**
+
+Why v2.6.0's lift wasn't "perfect" (measured on the real TokraScript build):
+
+- It emitted ALL 1,687 instructions — but a CFG reachability analysis proves
+  only **917 are live**; **770 are unreachable decoy blocks** (register-shifted
+  clones of real code, dead jump chains) that no edge can ever reach. They
+  surfaced as junk: `REGS[483]`, `nil % nil`, "region reached only via other
+  paths" blocks interleaving real code.
+- The dup-mode walker re-emitted loop bodies mid-stream (`-- [dup] goto 547`
+  inside constant-table builds), producing 183 spurious `while true do` loops
+  and scrambled line order.
+- Luraph chains basic blocks in **scrambled order**, so pc-space "back edges"
+  are usually just block order — real loops are true CFG cycles, which the old
+  pc-interval walker misdetected.
+- Upvalue cells (`U0_cell` etc.) were referenced but never declared.
+- Result: syntactically valid but semantically scrambled output — not source.
+
+The v2.7.0 lifter (`src/luraph14-lift.js`, rewritten emission core):
+
+- **Basic-block CFG + reachability filter.** Leaders at jump targets and
+  post-terminators; DFS from the entry block; 770 decoy instructions dropped
+  (counted and reported in the output header, never emitted).
+- **Dominator-based natural loops** (iterative Cooper-Harvey-Kennedy): back
+  edges u→h where h dominates u give the real loop set; nested loops recurse.
+- **Numeric for-loop reconstruction**: the forprep (op 31) pairs with its
+  forloop (op 100, same base register) into `for R(m) = R(m), R(m+1), R(m+2) do`
+  (table-mode protos get a shadow loop variable with a per-iteration REGS sync).
+  6 real for-loops recovered (T76's `for R6 = 0, 255, 1` byte loops etc.).
+- **If/else + skip-if regions** via join analysis: a forward conditional whose
+  fallthrough path provably reaches the join emits `if not (cond) then … end`;
+  divergent targets (cond-true-only regions) emit `if cond then … end`.
+- **Backward re-entries become `repeat … until not (cond)`** — the tail re-runs
+  and the very same test re-evaluates, so the translation is exact (including
+  non-termination). This replaced the last 12 "degraded edge" comments with
+  exact structure: **0 degraded edges**.
+- **Shared-tail duplication**: when a second path (e.g. a second loop body)
+  arrives at an already-emitted block, the block is re-emitted for that path
+  (capped at depth 3) — every dynamic arrival executes it once, so copying is
+  exact while dropping it silently lost loop tails (the bug that left T77's
+  second GCD loop without its halving step).
+- **Upvalue cell declarations**: `U<n>` / `U<n>_cell` names are collected from
+  the emitted code and declared at file scope (`local U0_cell = {} …`).
+- **Polish pass**: unused-register pruning (per-proto, from emitted text),
+  consecutive identical annotation comments collapsed, consistent 2-space
+  indentation, params from the prologue's op 2/129.
+
+Result on the acceptance sample (test/luraph14.js, new strict suite):
+
+- `1,687 decoded · 917 live · 770 decoys dropped · 23 protos · 6 for-loops,
+  24 while-loops, 109 conditionals · 0 degraded · luau-ast verified ✓`.
+- T77 reads as an actual algorithm (binary GCD: parity compare, weighted-bit
+  accumulator, halving steps); T31 is the LPH_NO_UPVALUES error path with the
+  plaintext message; T21 is the serializer main (field reads → weight tables →
+  F_T39/F_T40 closures → getfenv/pcall → dispatch cycle in `while true`).
+- The old artifacts are asserted away in the regression suite: no `__pc`
+  runner, no `[dup]`, no `nil % nil`, no unlifted opcodes, no bare-stub leak.
+- Document total: 170,336 bytes (stub + constant pool + structure + lift).
+
+Testing: new suite check `devirtualized source: full CFG lift with structure +
+zero degraded edges` (instruction/reachable/decoy/structure floors + artifact
+absence). **All 13 suites, 25 checks green.** Version 2.6.0 → 2.7.0.
+
 ## v2.6.0 — Luraph v14.4.2 runtime-state devirtualizer ("turn the VM into the decompiler")
 
 **Field report: the user's TokraScript sample
