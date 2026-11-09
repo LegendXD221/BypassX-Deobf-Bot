@@ -70,7 +70,7 @@ client.once(Events.ClientReady, async (c) => {
   await initDashboardToken(); // DB-backed token — survives Render redeploys
   announceDashboard();
   c.user.setPresence({
-    activities: [{ name: '.deobf | /deobf — best deobf bot', type: 3 }], // 3 = WATCHING
+    activities: [{ name: '.deobf | .lph .ms3 .ms2 +12 more | best deobf bot', type: 3 }], // 3 = WATCHING
     status: 'online',
   });
   await registerSlashCommands();
@@ -198,7 +198,7 @@ async function dispatch(cmd, ctx, rawArgs) {
     if (gid) {
       const gs = await db.getGuildSettings(gid);
       if (gs.disabled) return ctx.reply(guildOffReply('The bot is disabled in this server', 'The owner turned it off from the dashboard.'));
-      if (cmd.name === 'deobf' && !gs.deobf_enabled) return ctx.reply(guildOffReply('Deobfuscation is off here', 'The owner disabled the deobf command in this server.'));
+      if ((cmd.name === 'deobf' || cmd.serviceCmd) && !gs.deobf_enabled) return ctx.reply(guildOffReply('Deobfuscation is off here', 'The owner disabled the deobf commands in this server.'));
       if (cmd.name === 'detect' && !gs.detect_enabled) return ctx.reply(guildOffReply('Detection is off here', 'The owner disabled the detect command in this server.'));
     }
   }

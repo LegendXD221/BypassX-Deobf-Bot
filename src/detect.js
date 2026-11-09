@@ -204,6 +204,20 @@ export const SERVICES = [
       { re: /\bwYnFuscate\b|\bwynfuscate\b/i, weight: 55, label: 'wYnFuscate markers' },
     ],
   },
+  // Forced-routing-only families: dedicated commands (.clyde / .luast) pin the
+  // pipeline onto them, but no verified public byte signature exists yet — so
+  // they carry ZERO indicators and can never win auto-detection (no false
+  // positives in the auto path).
+  {
+    id: 'clyde', name: 'Clyde', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
+    versions: 'Clyde builds (dedicated .clyde command — forced routing)',
+    indicators: [],
+  },
+  {
+    id: 'luast', name: 'LuaST', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
+    versions: 'luast.clv.cloud levels 1–3 (dedicated .luast command)',
+    indicators: [],
+  },
 
   // ---- JavaScript ------------------------------------------------------------
   {

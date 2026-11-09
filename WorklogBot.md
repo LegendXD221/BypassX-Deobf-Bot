@@ -1,6 +1,78 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.9.0 — Every service gets its own command + `.l` Environment Logger
+
+**User directive: "Each service should have its own command" — the exact
+15-command list (.l, .prom, .ms3, .ms2, .lph, .clyde, .psu, .ib2, .hcs, .lo,
+.mv, .iv, .77, .goofy, .luast) and the exact supported-card format with the
+usage line.**
+
+### What landed
+
+- **`src/service-catalog.js`** (new) — single source of truth for all 15
+  per-service commands: cmd name, display name, the exact supported-card
+  blurb, slash description, the detect.js service id each command forces,
+  and `resolveForced()` — the forced-vs-detected rule: a STRONG auto-hit
+  (score ≥ 45) on an accepted sibling family stays (MoonSec V1 under .ms3,
+  WeAreDevs under .prom — sub-family truthfulness); unknown/weak/foreign
+  detection is overridden by the user's explicit choice.
+- **`src/commands/deobf-core.js`** (new) — the v2.7.1 heavy-deobf flow
+  (cooldown → instant "@user deobfuscating Your Code (file) — targeting X …"
+  ack → background pipeline → ✅ flip → result card as a NEW message, every
+  failure branch flips ❌ and delivers) extracted to ONE shared runner.
+  `.deobf` is now a thin wrapper with `forced: null` — its behavior is
+  byte-identical (deobf-ack suite still green).
+- **`src/commands/services.js`** (new) — the 14 forced-family commands
+  built from the catalog: .prom .ms3 .ms2 .lph .clyde .psu .ib2 .hcs .lo
+  .mv .iv .77 .goofy .luast. Prefix + slash (file/link options, ≤100-char
+  descriptions), `heavy` + `serviceCmd` flags, share the deobf cooldown.
+- **`src/commands/logger.js`** (new) — `.l` Environment Logger, the
+  "Most Recommended" dumper: runs the script inside the jailed offline VM
+  sandbox with full instrumentation and delivers the RECORDING as a paste —
+  every load()/loadstring() chunk (full source or bytecode the obfuscator
+  hands over = complete recovery), the decrypted string pool, every URL the
+  payload touched, and an honest verdict (source > bytecode > pool > clean
+  > norecord) with next-step guidance. A lone recovered source chunk ships
+  as PURE code; mixed artifacts ship as an annotated Lua report so nothing
+  recorded is dropped. Recording is always attached as a file too.
+- **`src/pipeline.js`** — `deobfuscate()`/`deobfuscateOnce()` accept
+  `forced: { id, accept, tag }`; the pin applies to the FIRST peel layer
+  only (later layers auto-detect the next stack layer). Forced detect shows
+  `[forced via .<cmd>]` in the stage log. `clyde` + `luast` added to
+  HARVEST_ELIGIBLE and FAMILY_WALL_NOTES.
+- **`src/detect.js`** — `clyde` + `luast` service entries with ZERO
+  indicators: they exist so forced routing resolves a real family
+  descriptor, but can never win auto-detection (no false positives until
+  verified public signatures exist).
+- **`src/replies.js`** — `.families` card now renders the EXACT user
+  format: one line per command (`` `.l` — **Environment Logger** (Run
+  Script In A Dumper Tool And See What It Records - Most Recommended) `` …)
+  + `Usage: .<cmd> [raw URL] or attach a .lua / .txt file.` — driven from
+  the catalog. Help card points at the per-service commands. New
+  `loggerReply` card (verdict-tinted, signature/VM-run/chunks/pool/URLs
+  facts, paste + raw buttons).
+- **`src/index.js`** — per-guild `deobf_enabled` gate now covers every
+  `serviceCmd` (including `.l`). Presence: ".deobf | .lph .ms3 .ms2 +12
+  more | best deobf bot". Slash registration now 41 commands.
+- **`test/service-commands.js`** (new, 10 checks): registry/slash validity
+  for all 15, exact supported-card lines + order, resolveForced matrix
+  (accepted-strong stays, weak/foreign overridden), a REAL end-to-end
+  forced `.ms3` run through the pipeline (status ordering + family on the
+  card), logger verdict ladder + chunk classification + pure-vs-annotated
+  recording + card budget, `.l` fail path (dumper never invoked) and
+  injected-dumper success path, shared cooldown. Registered in test/all.js
+  → **ALL 16 SUITES PASS**.
+
+### Notes
+- `.77` works as a prefix command (`.77 <url|file>`); as a slash command it
+  registers as `/77` (Discord allows digit names).
+- Clyde/LuaST have no verified public byte signature yet — their commands
+  force the full chain (engine sweep → jailed dumper → static peel) and the
+  entries are detect-table-ready for signatures when samples arrive.
+- Package version 2.9.0 (single source of truth for /health + /stats).
+
+
 ## v2.8.0 — The Final Scan: 45-sample, 26-family exploit audit + 3 exploits landed
 
 **User directive: "Do A Last And Final Biggest Scan On All The Services Find

@@ -11,6 +11,7 @@ import path from 'node:path';
 import { CONFIG, ensureVarDir } from './config.js';
 import { logger } from './logger.js';
 import { detectService, guessLanguage } from './detect.js';
+import { resolveForced } from './service-catalog.js';
 import * as engine from './engine.js';
 import { postprocessFile } from './postprocess.js';
 import { spawnHardened } from './security.js';
@@ -52,7 +53,7 @@ async function withJobSlot(fn) {
  * obfuscated (or passes stop making progress), stacking a layer report:
  * { ok, code, layers[], inputLayers, layerSummary, readability, ... }
  */
-export async function deobfuscate({ buffer, filename = 'input.lua', hintId = null }) {
+export async function deobfuscate({ buffer, filename = 'input.lua', hintId = null, forced = null }) {
   const staticLayers = detectLayers(buffer);
   const layerStack = [];
   const mergedStages = [];
@@ -67,7 +68,12 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
       const bytesIn = current.length;
       let r = null;
       try {
-        r = await deobfuscateOnce({ buffer: current, filename: i === 1 ? filename : `layer${i}.lua`, hintId: i === 1 ? hintId : null });
+        r = await deobfuscateOnce({
+          buffer: current,
+          filename: i === 1 ? filename : `layer${i}.lua`,
+          hintId: i === 1 ? hintId : null,
+          forced: i === 1 ? forced : null, // family pin applies to the first peel only
+        });
       } catch (e) {
         if (best) {
           best.stages = mergedStages;
@@ -181,13 +187,29 @@ function annotateResidual(r, passes, res) {
  * Single peel pass — one detect → route → engine run → fallbacks cycle over
  * the CURRENT buffer. Returns the same result document as v2.3.0.
  */
-async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null }) {
+async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, forced = null }) {
   const t0 = Date.now();
   return (async () => {
     const stages = [];
     const stage = (name, detail) => { stages.push({ name, detail }); logger.info({ detail }, `stage: ${name}`); };
 
     const detection = detectService(buffer);
+
+    // Per-service commands (.lph, .ms3, .goofy, …): pin the family the user
+    // explicitly asked for. A strong auto-hit on an ACCEPTED sibling family
+    // (MoonSec V1 under .ms3, WeAreDevs under .prom) stays — version/sub-family
+    // truthfulness; unknown/weak/foreign detection is overridden by the choice.
+    const forcedSvc = resolveForced(detection.best, forced);
+    if (forcedSvc) {
+      detection.best = {
+        service: forcedSvc,
+        score: 100,
+        confidence: 99,
+        evidence: [`forced via .${forced.tag} command`],
+        version: null,
+      };
+    }
+
     const lang = guessLanguage(buffer);
 
     // Persist input in an isolated 0700 dir with a safe name.
@@ -216,7 +238,7 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null }
 
       let outcome = null;
       const route = pickRoute(detected, lang, buffer);
-      stage('detect', `${detected.name} ${detected.version || ''} (${detected.confidence}%) → route ${route}`);
+      stage('detect', `${detected.name} ${detected.version || ''} (${detected.confidence}%) → route ${route}${forcedSvc ? ` [forced via .${forced.tag}]` : ''}`);
 
       if (route === 'pyarmor') outcome = await runPyarmorRoute(inputPath, detected, stage, buffer);
       else if (route === 'webcrack') outcome = await runWebcrackRoute(inputPath, buffer, stage);
@@ -683,6 +705,7 @@ const HARVEST_ELIGIBLE = new Set([
   'luraph', 'moonsec_v1', 'moonsec_v2', 'moonsec_v3', 'ironbrew1', 'ironbrew2', 'ironbrew3',
   'psu', 'boronide', 'darksec', 'luaobfuscator_com', 'wearedevs', 'slua', 'moonveil',
   '77fuscator', 'xhider', 'goofyscator', 'ironveil', '25ms', 'synapsexen', 'wynfuscate',
+  'clyde', 'luast',
   'unknown',
 ]);
 
@@ -974,6 +997,8 @@ const FAMILY_WALL_NOTES = {
   '25ms': '25ms-branded builds route through VM obfuscators (often Luraph-family). v1.9.0 behavioral VM lifting engages when the dispatcher is captured at runtime; otherwise the decrypted constant pool is delivered.',
   moonsec_v3: "This MoonSec V3 build derives its constant-pool keys at runtime (escrow/anti-tamper). v1.9.0 behavioral VM lifting engages automatically: the jailed run captures the dispatcher, probes every opcode against the obfuscator's own handlers, and transpiles the bytecode into a runnable runner — decrypt-then-load variants still hand their full source to load() for complete recovery.",
   moonsec_v2: "This MoonSec V2 build derives its keys at runtime (escrow mode). The jailed VM runs this dispatcher end-to-end against a production-shaped Roblox environment (Is* probes return production booleans, executor-only methods read nil, PlaceId/JobId real-shaped) and replays its key schedule. v1.9.0 behavioral VM lifting: instruction stream + decrypted constant pool captured at the dispatcher, every opcode probed against the build's own handlers, bytecode transpiled into a runnable runner. Decrypt-then-load variants hand their full decrypted source to load() for complete recovery. The very newest anti-dump builds may still fragment.",
+  clyde: 'Clyde wraps its payload behind a custom loader. The jailed dumper run captures decrypted load() chunks and the string pool, and the unconditional static peel recovers every readable constant — the .clyde command runs this chain end-to-end.',
+  luast: 'LuaST (luast.clv.cloud) levels 1–3 are wrapper/string-array schemes. The static peel + jailed dumper run recover constants, captured chunks and readable structure — the .luast command runs this chain end-to-end.',
 };
 
 function familyWallNote(detected) {

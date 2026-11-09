@@ -18,6 +18,7 @@ import {
   SeparatorBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, FileBuilder,
 } from 'discord.js';
 import { TIER, SERVICES } from './detect.js';
+import { SERVICE_COMMANDS, serviceCommandLines, serviceUsageLine } from './service-catalog.js';
 import { CONFIG } from './config.js';
 import { prettyEngine } from './pretty.js';
 
@@ -121,8 +122,9 @@ export function helpReply(prefix, client) {
     c.addTextDisplayComponents(T([
       '**Deobfuscate**',
       `• **\`${prefix}deobf\`** \`<file | link>\` — full pipeline → pure code via Pastefy`,
+      `• **\`${prefix}lph\` \`${prefix}ms3\` \`${prefix}ms2\` \`${prefix}l\` +11 more** — per-service commands, full list in \`${prefix}families\``,
       `• **\`${prefix}detect\`** \`<file | link>\` — obfuscator ID + confidence %, no deobfuscation`,
-      `• **\`${prefix}families\`** — every supported service, versions and recovery tiers`,
+      `• **\`${prefix}families\`** — every supported service with its own command`,
       '',
       '**Utilities**',
       `• **\`${prefix}beautify\`** \`<file | link>\` — reformat messy/minified code, no deobfuscation`,
@@ -140,30 +142,92 @@ export function helpReply(prefix, client) {
   return v2([card]);
 }
 
-// ---- families ---------------------------------------------------------------
+// ---- families / supported ---------------------------------------------------
 
+/**
+ * The supported-commands card — EXACT user-specified format: one line per
+ * dedicated service command, then the usage line. Single source of truth is
+ * src/service-catalog.js (the same table drives the command definitions).
+ */
 export function familiesReply(prefix) {
-  const full = SERVICES.filter((s) => s.tier === TIER.FULL);
-  const partial = SERVICES.filter((s) => s.tier === TIER.PARTIAL);
   const card = container(BRAND.color, (c) => {
     brandHeader(c, '🗂 Supported services',
-      `${full.length} full-recovery • ${partial.length} best-effort • ${SERVICES.length} total`, null);
+      `${SERVICE_COMMANDS.length} dedicated commands — every service has its own`, null);
     c.addSeparatorComponents(SEP());
-    c.addTextDisplayComponents(T([
-      `**⬤ Full recovery (${full.length})**`,
-      ...full.map((s) => `• **${s.name}** — ${clamp(s.versions, 90)}`),
-    ].join('\n')));
-    if (partial.length) {
+    c.addTextDisplayComponents(T(serviceCommandLines(prefix).join('\n')));
+    c.addSeparatorComponents(SEP());
+    c.addTextDisplayComponents(T(`**${serviceUsageLine(prefix)}**`));
+    c.addTextDisplayComponents(T(`-# Auto-detect still works everywhere: \`${prefix}deobf\` / \`${prefix}detect\` with any file or link.`));
+  });
+  return v2([card]);
+}
+
+// ---- environment logger (.l) --------------------------------------------------
+
+const LOGGER_VERDICTS = {
+  source: {
+    title: 'decrypted source captured at load()',
+    detail: 'The script decrypted its REAL code and handed it to load()/loadstring() inside the dumper sandbox — the recording contains the complete original source. Run `.deobf` on the original file for the polished pipeline delivery.',
+  },
+  bytecode: {
+    title: 'decrypted bytecode captured at load()',
+    detail: 'The obfuscator compiled its payload and handed raw bytecode to load() — that chunk is in the recording. Run `.deobf` on the original to engage the full VM devirtualization chain.',
+  },
+  pool: {
+    title: 'decrypted string pool recorded',
+    detail: 'The VM decrypted its constant pool inside the sandbox — every recovered string is in the recording. The code itself stays behind the VM; `.deobf` engages behavioral lifting for that.',
+  },
+  clean: {
+    title: 'script ran clean — nothing sensitive recorded',
+    detail: 'The script executed in the dumper sandbox but recorded no chunks, pool or URLs — it may be plain code, or its payload needs an environment the offline jail does not fake. Run `.deobf` for the full pipeline, or run it in a live dumper environment and send the recorded output back here.',
+  },
+  norecord: {
+    title: 'VM did not reach its payload',
+    detail: 'The jailed run halted before the payload decrypted (anti-tamper or time-gate). This is exactly what the Environment Logger workflow is for: run the script in a live dumper tool, then send the recorded output back with `.deobf`.',
+  },
+};
+
+/** .l card — the dumper recording summary + paste buttons + guidance. */
+export function loggerReply(report, paste, filename, prefix, fileBuffer = null) {
+  const files = [];
+  const v = LOGGER_VERDICTS[report.verdict] || LOGGER_VERDICTS.norecord;
+  const accent = report.verdict === 'source' || report.verdict === 'bytecode'
+    ? BRAND.ok
+    : report.verdict === 'pool' ? BRAND.color : BRAND.warn;
+  const card = container(accent, (c) => {
+    brandHeader(c, '🎚 Environment Logger — recording', v.title, null);
+    c.addSeparatorComponents(SEP());
+    facts(c, [
+      { label: 'File', value: `${clamp(filename || 'input.lua', 60)}` },
+      { label: 'Signature', value: report.signature || 'no known signature' },
+      { label: 'VM run', value: report.ran ? 'completed inside the jailed dumper sandbox' : `halted early${report.runError ? ` — ${clamp(report.runError, 120)}` : ''}` },
+      { label: 'load() chunks', value: `${report.counts.total} captured — ${report.counts.sources} source, ${report.counts.bytecode} bytecode, ${report.counts.data} data` },
+      { label: 'Pool strings', value: `${report.strings.kept.length} decrypted${report.strings.dropped ? ` (${report.strings.dropped} noise fragments filtered)` : ''}` },
+      { label: 'URLs seen', value: String(report.urls.length) },
+    ]);
+    if (report.urls.length) {
       c.addSeparatorComponents(SEP());
       c.addTextDisplayComponents(T([
-        `**◐ Partial recovery / best-effort (${partial.length})**`,
-        ...partial.map((s) => `• **${s.name}** — ${clamp(s.versions, 90)}`),
+        '**URLs recorded**',
+        ...report.urls.slice(0, 6).map((u) => `• ${clamp(u, 120)}`),
       ].join('\n')));
     }
     c.addSeparatorComponents(SEP());
-    c.addTextDisplayComponents(T(`**Try it** \`${prefix}deobf\` with your file attached or a link — detection is automatic.`));
+    c.addTextDisplayComponents(T(`**What this means** ${v.detail}`));
+    if (paste) {
+      c.addActionRowComponents(linkRow([
+        { label: '🧾 Open recording', url: paste.url },
+        { label: 'Raw', url: paste.rawUrl },
+      ]));
+    }
+    if (fileBuffer) {
+      const outName = 'environment-recording.lua';
+      files.push(new AttachmentBuilder(fileBuffer, { name: outName }));
+      c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
+      if (!paste) c.addTextDisplayComponents(T('-# Pastefy upload failed — the recording is delivered as the attached file instead.'));
+    }
   });
-  return v2([card]);
+  return v2([card], { files });
 }
 
 // ---- detection report -------------------------------------------------------

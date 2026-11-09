@@ -5,6 +5,8 @@
  * pass through the 5-layer protection gate (src/owner-guard.js).
  */
 import deobf from './commands/deobf.js';
+import serviceCommands from './commands/services.js';
+import loggerCmd from './commands/logger.js';
 import detect from './commands/detect.js';
 import families from './commands/families.js';
 import stats from './commands/stats.js';
@@ -32,8 +34,8 @@ import logs from './commands/logs.js';
 import shutdown from './commands/shutdown.js';
 
 export const COMMANDS = [
-  // public
-  deobf, detect, families, stats, paste, beautify, strings, history, help, ping, invite,
+  // public — deobf family first (.deobf auto + every per-service command)
+  deobf, ...serviceCommands, loggerCmd, detect, families, stats, paste, beautify, strings, history, help, ping, invite,
   // owner-only (eval/exec/restart/db/broadcast/dm/leave/shutdown are danger-gated)
   evalCmd, exec, restart, dbCmd, broadcast, dm, blacklist, activity, env, owner,
   servers, leave, setstatus, logs, shutdown,
