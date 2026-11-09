@@ -223,6 +223,26 @@ function foldArithSegment(code) {
   });
 }
 
+// ---- P3b: Roblox constructor normalization (unparser alignment, v2.12.0) --------
+
+/**
+ * Color3.new(N/255, M/255, K/255) → Color3.fromRGB(N, M, K).
+ * Identical math — fromRGB divides each component by 255 internally and Roblox
+ * quantizes colors to 1/255 steps, so the recovered value is bit-exact — but
+ * it is strictly shorter and matches how a human writes a color. Recovered
+ * Luraph/Prometheus output is full of the /255 form; the leaked UnveilR-V3
+ * unparser shipped exactly this fold (research/unveilr-v3/modules/unparser.luau).
+ */
+function foldColor3Segment(code) {
+  return code.replace(/Color3\.new\(\s*(\d{1,3})\s*\/\s*255\s*,\s*(\d{1,3})\s*\/\s*255\s*,\s*(\d{1,3})\s*\/\s*255\s*\)/g, (m, r, g, b) => {
+    const R = Number(r);
+    const G = Number(g);
+    const B = Number(b);
+    if (R > 255 || G > 255 || B > 255) return m;
+    return `Color3.fromRGB(${R}, ${G}, ${B})`;
+  });
+}
+
 // ---- P4: machine-name rename ----------------------------------------------------
 
 const MACHINE_NAME_RE = /\b_0x[0-9a-fA-F]{3,}\b|\b[vVwWlLoOuU]_?\d{1,4}(?:_\d{1,4})?\b|\b[lI1]{4,}[oO0]?\b|\b[uU]\d{2,}\b/g;
@@ -252,6 +272,52 @@ function prettyNameGen(used) {
 }
 
 /**
+ * Unparser alignment (v2.12.0): prefer a name derived from what the variable
+ * actually holds, matching the leaked UnveilR-V3 unparser's naming heuristic
+ * (research/unveilr-v3/modules/unparser.luau). Two intel sources:
+ *   • v0.Name = "hi"                 → prefer "hi" (strongest evidence)
+ *   • v0 = Instance.new("ScreenGui") → prefer "screenGui"
+ * A preference only wins when the derived identifier collides with NOTHING in
+ * the file (not reserved, not any other identifier — machine or not — so it can
+ * never shadow an existing global/local). Otherwise the a/ar/aa generator stands.
+ */
+function sanitizePreferred(raw) {
+  const name = String(raw ?? '').replace(/[^A-Za-z0-9_]/g, '');
+  if (!name || !/^[A-Za-z_]/.test(name) || name.length > 24) return null;
+  if (RESERVED.has(name)) return null;
+  return name;
+}
+
+function collectNamePreferences(src, ids) {
+  const prefs = new Map();
+  const idAlt = `(?:${MACHINE_NAME_RE.source})`;
+  const scans = [
+    // v0.Name = "hi" — the unparser's primary naming source
+    new RegExp(`\\b(${idAlt})\\.Name\\s*=\\s*"([^"\\\\]{1,64})"`, 'g'),
+    // v0 = Instance.new("ScreenGui") — class-based fallback, lcfirst
+    new RegExp(`\\b(${idAlt})\\s*=\\s*Instance\\.new\\(\\s*"([^"\\\\]{1,64})"\\s*\\)`, 'g'),
+  ];
+  for (let si = 0; si < scans.length; si++) {
+    let m;
+    while ((m = scans[si].exec(src)) !== null) {
+      const id = m[1];
+      if (!ids.has(id) || prefs.has(id)) continue;
+      const raw = sanitizePreferred(m[2]);
+      if (!raw || raw === id) continue;
+      if (si === 1) {
+        // class-based: ScreenGui → screenGui (keep Part → part)
+        const lc = raw.charAt(0).toLowerCase() + raw.slice(1);
+        if (lc === id) continue;
+        prefs.set(id, lc);
+      } else {
+        prefs.set(id, raw);
+      }
+    }
+  }
+  return prefs;
+}
+
+/**
  * Rename machine-generated identifiers to short readable names, consistently,
  * gated on luaparse accepting the file. Renaming only engages when the file is
  * clearly machine-named (≥ 15 machine ids) so hand-written `l1` never moves.
@@ -271,25 +337,53 @@ function renameMachineNames(src) {
   while ((m = re.exec(src)) !== null) ids.add(m[0]);
   if (ids.size < 15) return src; // not machine-named enough to justify a rename
 
-  // Names already in use by non-machine identifiers (single letters etc.)
+  // Names already in use by non-machine identifiers (single letters etc.).
+  // Collected from CODE segments only (v2.12.0 fix): an identifier-shaped token
+  // inside a string literal is DATA, not a binding — counting it blocked the
+  // .Name-derived naming for nearly every recovered Roblox script (the .Name
+  // value always also appears as a string) and it can never shadow anything.
   const used = new Set();
-  const allIds = src.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) || [];
-  for (const id of allIds) {
-    if (!ids.has(id)) used.add(id);
+  for (const seg of scanLuaSegments(src)) {
+    if (seg.type !== 'code') continue;
+    const toks = seg.text.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) || [];
+    for (const id of toks) {
+      if (!ids.has(id)) used.add(id);
+    }
   }
+
+  // Unparser alignment: evidence-derived names first, generator fallback second.
+  let prefs = null;
+  try { prefs = collectNamePreferences(src, ids); } catch { prefs = null; }
 
   const mapping = new Map();
   for (const id of ids) {
+    const pref = prefs ? prefs.get(id) : null;
+    if (pref && !used.has(pref) && !ids.has(pref)) {
+      mapping.set(id, pref);
+      used.add(pref);
+      continue;
+    }
     const pretty = prettyNameGen(used);
     if (!pretty) break;
     mapping.set(id, pretty);
     used.add(pretty);
   }
+  if (!mapping.size) return src;
 
-  // Single combined pass — no cascading renames.
+  // Single combined pass — no cascading renames. Applied to CODE segments only
+  // (v2.12.0 fix): renaming a machine id inside a string literal ("v0 is set")
+  // used to corrupt string data.
   const parts = [...mapping.keys()].map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   const combined = new RegExp(`\\b(?:${parts.join('|')})\\b`, 'g');
-  return src.replace(combined, (name) => mapping.get(name) || name);
+  const segs = scanLuaSegments(src);
+  let changed = false;
+  for (const seg of segs) {
+    if (seg.type !== 'code') continue;
+    const next = seg.text.replace(combined, (name) => mapping.get(name) || name);
+    if (next !== seg.text) { seg.text = next; changed = true; }
+  }
+  if (!changed) return src;
+  return reassemble(segs);
 }
 
 // ---- public API -----------------------------------------------------------------
@@ -320,6 +414,12 @@ export function makeReadableLua(src) {
   try {
     const next = mapSegments(out, ['code'], foldArithSegment);
     if (next !== out && sameOrBetter(out, next)) { out = next; passes.push('constant arithmetic fold'); }
+  } catch { /* gated out */ }
+
+  // P3b — Color3.new(N/255,…) → Color3.fromRGB(N,…) (code segments only)
+  try {
+    const next = mapSegments(out, ['code'], foldColor3Segment);
+    if (next !== out && sameOrBetter(out, next)) { out = next; passes.push('Color3.fromRGB normalize'); }
   } catch { /* gated out */ }
 
   // P4 — machine-name rename (luaparse-gated whole-file pass)

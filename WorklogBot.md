@@ -1,6 +1,82 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.12.0 — env-sanity suite (the leaked intel is now a permanent regression floor), unparser-aligned output, jail env hardened
+
+**User directive: "Complete every pending task in one sweep — I want result and success."**
+The remaining UnveilR-V3 intel items (notes §9 ①/④) landed in one pass, the new
+env-sanity suite immediately found and fixed FIVE real jail-environment gaps, and both
+live acceptances re-ran green. 18 suites, all green.
+
+### New: `test/env-sanity.js` — suite #18 (38 checks)
+
+Ports the leaked UnveilR-V3 executor-detection corpus
+(`research/unveilr-v3/detections/{1,2,4..13}.lua` — 3.lua does not exist in the leak) plus
+every v2.11.0 A/B-verified jail exploit into a permanent floor. Three layers:
+
+- **A. Exploit regression floor (20 checks)** — real setfenv swap, `setfenv(cfunc,{})`
+  erroring (MoonSec skid detector), numeric-setfenv no-op, advancing clocks + the
+  `while os.clock()-t < X do end` gate terminating, `task.wait` numeric, anti-dump
+  nil-probe globals, IsStudio/IsClient production shape, `string.dump` nil,
+  `math.ldexp`, bit32 surface, buffer round-trip, load()-chunk capture, string sinks,
+  clean print log, polyglot tolerance, Luau stdlib extensions.
+- **B. Detection catalog (12 checks)** — each leaked detection runs inside the jail and
+  asserts the EXACT outcome our environment shape produces (e.g. d6/d12 still report
+  "dtc" like production Roblox; d8/d9/d11 fail cleanly with no leak).
+- **C. Unparser alignment (6 checks)** — the readable-engine additions below.
+
+### New: unparser alignment in `src/readable.js` (leaked UnveilR-V3 unparser heuristics)
+
+- **P3b `Color3.fromRGB` normalize**: `Color3.new(N/255, M/255, K/255)` →
+  `Color3.fromRGB(N, M, K)` — bit-exact (fromRGB divides by 255 internally; Roblox
+  quantizes to 1/255 steps), strictly shorter, matches how a human writes a color.
+  Recovered Luraph/Prometheus output is full of the /255 form.
+- **`.Name`-derived machine naming**: when renaming machine identifiers, a `v0.Name =
+  "HUD"` assignment names the variable `HUD` (strongest evidence), a
+  `v0 = Instance.new("ScreenGui")` initializer names it `screenGui`. Derived names only
+  win when they collide with NOTHING in the file — zero shadowing risk.
+- **Two pre-existing rename bugs fixed**: (1) the collision set was collected from the
+  WHOLE file — an identifier-shaped token inside a string literal blocked the .Name
+  naming for nearly every recovered Roblox script (the .Name value always also appears
+  as a string); now collected from code segments only. (2) the rename replace ran over
+  string literals too — `print("v0 is set")` came back as `print("a is set")`, corrupting
+  string DATA; now segment-aware (code only).
+
+### Fixed: five jail-environment gaps (found by the new suite on its first run)
+
+- **Polyglot fallback resurrected host libraries**: `require = nil` makes the key ABSENT,
+  so `_G`'s polyglot `__index` answered with a callable object — `pcall(require,
+  "@lune/roblox")` SUCCEEDED inside the jail (executor tell; leaked detection 8
+  fingerprints exactly this). `require/package/loadfile/dofile/io` are now in the
+  `__NILPROBE` nil list — pcall(require, …) fails like on a real executor.
+- **`task.cancel/synchronize/desynchronize` missing** (leaked detection 7 calls
+  `task.cancel` mid-init) — added as inert no-ops.
+- **`debug.info` missing** — fengari's 5.3 debug lib lacks Luau's `debug.info`; every
+  executor has it. Added a nil-returning shim (leaked detection 10 stays alive).
+- **`print` wrote an empty table into `_BX_LOG[0]`** on the first call (`#_BX_LOG`
+  indexing bug) — log is clean now.
+- fengari exposes JS bridges with `debug.getinfo().what == 'J'` — the suite accepts
+  C-or-J ("not a Lua closure" is the property MoonSec's check needs).
+
+### Verified (live, real samples)
+
+- **MoonSec V3 escrow (158KB corpus sample)**: full Discord-path run
+  (`scripts/live-escrow-acceptance.js`, new) — pipeline 121.8s, 138 decrypted pool
+  strings recovered with report header, readability 85 (clean).
+  BEFORE: https://pastefy.app/XPSgbinv — AFTER: https://pastefy.app/jWG87RUf
+- **TokraScript live end-to-end reconfirm**: the 807KB `Games/6961824067.luau` URL →
+  168KB verified readable source, **score 100** (`SKIP_PASTE=1 node
+  scripts/run-live-tokra.js`).
+- **Dashboard command count verified**: `/commands` route returns the full registry —
+  45 commands (17 deobf/service + 28 utility) including all 16 service commands.
+- Corpus regression floor intact after the env hardening: `thirdparty-samples` 20/20,
+  full run **18 suites green** (`npm test`).
+
+### Next
+- UnveilR-style CHECK*-lite branch comments on the vm-lift devirt output (the
+  documented-not-built lever from the v2.11.0 frontier — notes.md playbook).
+
+
 ## v2.11.0 — THE BIGGEST SCAN: jail exploits from the leaked UnveilR-V3 intel, +43-sample corpus, TokraScript service #16
 
 **User directive: "Do The Biggest Scan Of Your Life On All Supported Services — find every

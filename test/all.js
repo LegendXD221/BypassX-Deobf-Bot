@@ -19,6 +19,7 @@ const SUITES = [
   { name: 'v2-smoke.js' },       // every Components V2 reply builder serializes
   { name: 'chunk-paste.js' },    // pastefy chunking round-trips
   { name: 'links.js' },          // url detection / normalization / SSRF guards
+  { name: 'env-sanity.js' },     // jail exploit floor + detection catalog + unparser alignment (v2.12.0)
   { name: 'luau-shim.js' },      // Luau shim: compound assigns + if-expressions (v1.6.0)
   { name: 'vm-lift.js', timeoutMs: 300_000 },        // VM devirtualization engine (v1.9.0)
   { name: 'luraph-ext.js', timeoutMs: 300_000 }, // vendored v15 full-source lift (v2.1.0)

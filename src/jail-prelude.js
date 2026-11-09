@@ -376,6 +376,11 @@ local __NILPROBE = {
   getconnections = true, getgc = true, getloadedmodules = true,
   getrawmetatable = true, setreadonly = true, setclipboard = true,
   identifyexecutor = true, getexecutorname = true,
+  -- v2.12.0 (env-sanity suite): host-reaching libraries nil-assigned above are
+  -- ABSENT keys — without this list the polyglot __index resurrected them as
+  -- callable polyglot objects (pcall(require, '@lune/roblox') SUCCEEDED — an
+  -- executor tell; leaked UnveilR-V3 detection 8 fingerprints exactly this).
+  require = true, package = true, loadfile = true, dofile = true, io = true,
 }
 
 -- inert Roblox universe (v1.8.0 production-shaped):
@@ -452,14 +457,24 @@ task = {
   spawn = function(f, ...) if type(f) == 'function' then local ok, err = pcall(f, ...) if not ok and _BX_LOG and #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = 'spawn-error: ' .. tostring(err) end return end end,
   defer = function(f, ...) if type(f) == 'function' then local ok, err = pcall(f, ...) if not ok and _BX_LOG and #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = 'defer-error: ' .. tostring(err) end return end end,
   delay = function(_, f, ...) if type(f) == 'function' then local ok, err = pcall(f, ...) if not ok and _BX_LOG and #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = 'delay-error: ' .. tostring(err) end return end end,
+  -- v2.12.0 (env-sanity suite / leaked detection 7): task.cancel exists on the
+  -- real Luau task library — its absence made task.bindings error mid-init.
+  cancel = function() return end,
+  synchronize = function() return end,
+  desynchronize = function() return end,
 }
 wait = task.wait
 spawn = task.spawn
 delay = task.delay
 tick = function() __bx_clock = __bx_clock + 0.01; return __bx_clock end
 time = function() return math.floor(__bx_clock) end
-print = function(...) _BX_LOG[#_BX_LOG] = _BX_LOG[#_BX_LOG] or {} local t = {} for i = 1, select('#', ...) do t[#t + 1] = tostring(select(i, ...)) end if #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = table.concat(t, ' ') end end
+print = function(...) local t = {} for i = 1, select('#', ...) do t[#t + 1] = tostring(select(i, ...)) end if #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = table.concat(t, ' ') end end
 warn = print
+
+-- v2.12.0 (env-sanity suite / leaked detection 10): Luau's debug.info exists
+-- on every executor; fengari's 5.3 debug lib lacks it. A nil-returning shim
+-- keeps obfuscator probes alive without leaking a fake line number.
+debug.info = function(...) return nil end
 
 -- polyglot fallback: ANY missing global resolves to a value that tolerates
 -- indexing, calling, arithmetic and concat — obfuscator state machines that
