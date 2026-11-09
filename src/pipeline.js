@@ -405,7 +405,10 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
       // inventory — that is full source recovery, the real devirtualization.
       let luraphNote = null;
       let chunkVerifyOverride = null;
-      if (detected.id === 'luraph' && !binaryOutput) {
+      // tokrascript is the Luraph v14 numeric preset — the full Luraph devirt
+      // chain (chunk capture → v15 ext → v10-14 state-devirt → trace sweep →
+      // payload inventory) applies verbatim; only the id differs.
+      if ((detected.id === 'luraph' || detected.id === 'tokrascript') && !binaryOutput) {
         try {
           const h = await runLift(inputPath, detected, stage);
           const art = h ? pickChunkArtifact(h) : null;
@@ -716,7 +719,7 @@ function pickRoute(detected, lang, buffer) {
 // unknown Lua samples: run the VM init inside the jailed fengari sandbox and
 // capture the decrypted string pool.
 const HARVEST_ELIGIBLE = new Set([
-  'luraph', 'moonsec_v1', 'moonsec_v2', 'moonsec_v3', 'ironbrew1', 'ironbrew2', 'ironbrew3',
+  'luraph', 'tokrascript', 'moonsec_v1', 'moonsec_v2', 'moonsec_v3', 'ironbrew1', 'ironbrew2', 'ironbrew3',
   'psu', 'boronide', 'darksec', 'luaobfuscator_com', 'wearedevs', 'slua', 'moonveil',
   '77fuscator', 'xhider', 'goofyscator', 'ironveil', '25ms', 'synapsexen', 'wynfuscate',
   'clyde', 'luast', 'asteria', 'catph', 'devlyx', 'dexfuscator', 'realvux', 'lps',
@@ -899,6 +902,7 @@ async function runLift(inputPath, detected, stage) {
 
 const ENGINE_FAMILY_BY_DETECT_ID = {
   luraph: 'luraph',
+  tokrascript: 'luraph',
   moonsec_v3: "moonsec-v3",
   moonsec_v2: "moonsec-v2",
   moonsec_v1: 'moonsec-v1',

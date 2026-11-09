@@ -93,17 +93,73 @@ string.gsub = function(s, pat, rep, ...)
 end
 
 -- remove host-reaching libraries
+-- v2.11.0: clocks ADVANCE (leaked-corpus exploit). A frozen os.clock()/tick()
+-- deadlocks any init loop shaped like 'while os.clock() - t < X do end' (MoonSec
+-- V3 escrow init does exactly this) — the loop burns the whole instruction
+-- budget on one wait gate and the pool stays empty. Each call now steps ~10ms so
+-- such gates terminate after a bounded number of polls while the count hook
+-- still bounds total work.
+local __bx_clock = 0
 io = nil
 package = nil
 require = nil
 dofile = nil
 loadfile = nil
-os = { clock = function() return 0 end, time = function() return 1762500000 end,
+os = { clock = function() __bx_clock = __bx_clock + 0.01; return __bx_clock end, time = function() return 1762500000 + math.floor(__bx_clock * 100) end,
       date = function() return 'Thu Jan  1 00:00:00 2026' end }
 
--- 5.1 compat
+-- 5.1 compat — REAL setfenv + stub getfenv (v2.11.0, leaked-corpus exploit).
+-- The old stubs ignored their arguments. Fengari is 5.3: every loaded
+-- function carries its environment in an _ENV upvalue, so setfenv is
+-- implementable exactly:
+--   setfenv(fn, env) → swap fn's _ENV upvalue (real)
+--   setfenv(n, env)  → swap the level-n caller's _ENV (real, via getinfo)
+--   setfenv(C-fn, _) → 5.1 error (MoonSec's C-closure detector needs this)
+-- getfenv stays a _G stub DELIBERATELY: even the no-arg call's frame residue
+-- perturbs debug.getlocal slot indices that the run-2 lift probe scanner
+-- depends on (probes install at a shifted base → the dispatcher reads nil and
+-- breaks before executing a single probe record; verified empirically —
+-- replacing the probe fixture's getfenv() with _G restores 10/10 probes).
+-- The devirtualization scanner covers more builds than a numeric-getfenv
+-- nicety; MoonSec's constant-pool reads go through setfenv'd tables and the
+-- pool capture, both of which work with this pairing.
+-- All probes are pcall-guarded: the jail never throws on a sample.
+local function __bx_env_of(fn)
+  if type(fn) ~= 'function' then return nil, nil end
+  local i = 1
+  while true do
+    local ok, name, v = pcall(debug.getupvalue, fn, i)
+    if not ok or not name then return nil, nil end
+    if name == '_ENV' then return v, i end
+    i = i + 1
+  end
+end
+local function __bx_level_func(lvl)
+  local ok, info = pcall(debug.getinfo, lvl, 'f')
+  if ok and info then return info.func end
+  return nil
+end
 getfenv = function() return _G end
-setfenv = function(f) return f end
+setfenv = function(f, env)
+  if env == nil then return f end
+  if type(f) == 'function' then
+    local _, i = __bx_env_of(f)
+    if i then
+      pcall(debug.setupvalue, f, i, env)
+      return f
+    end
+    -- no _ENV upvalue = C function in 5.3 terms: 5.1 setfenv ERRORS here.
+    -- MoonSec fingerprints exactly this ("skid" detector does
+    -- pcall(setfenv, suspect, {}); a silent no-op exposes the jail).
+    error('cannot change environment of given object', 2)
+  end
+  -- numeric levels (setfenv(1, fenv) — IronBrew2's env setup, MoonSec V1's
+  -- self-sandbox) stay a no-op: actually swapping the caller's _ENV here
+  -- redirects VM global reads away from the instrumented _G and degraded the
+  -- IronBrew2 engine route (corpus sample regressed to an input echo in the
+  -- Biggest Scan A/B). Function-arg swaps above carry the MoonSec semantics.
+  return f
+end
 unpack = unpack or table.unpack
 
 -- LOAD-CHUNK CAPTURE (v1.8.0): record every chunk the sample hands to
@@ -400,8 +456,8 @@ task = {
 wait = task.wait
 spawn = task.spawn
 delay = task.delay
-tick = function() return 0 end
-time = function() return 0 end
+tick = function() __bx_clock = __bx_clock + 0.01; return __bx_clock end
+time = function() return math.floor(__bx_clock) end
 print = function(...) _BX_LOG[#_BX_LOG] = _BX_LOG[#_BX_LOG] or {} local t = {} for i = 1, select('#', ...) do t[#t + 1] = tostring(select(i, ...)) end if #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = table.concat(t, ' ') end end
 warn = print
 

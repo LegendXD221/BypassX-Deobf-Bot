@@ -1,0 +1,1 @@
+print(getrawmetatable(game).__metatable == getmetatable(game))

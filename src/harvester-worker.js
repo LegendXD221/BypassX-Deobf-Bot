@@ -140,11 +140,34 @@ const HEAP_CAP = 192e6;
 function heapOver() {
   try { return process.memoryUsage().heapUsed > HEAP_CAP; } catch { return false; }
 }
+// v2.11.0 spin-break (Biggest Scan exploit): MoonSec V3 escrow builds catch the
+// budget error with an inner pcall and re-spin — each cycle costs ~2 VM
+// instructions but re-fires the hook, so the budget never "runs out" from the
+// sample's perspective and the worker burns the whole wall-clock timeout with
+// ZERO captured strings. Fix: the first exhaustion raises the catchable error
+// (still lets pcall-based VMs flush a clean result); if instructions keep
+// flowing AFTER exhaustion, the sample is spinning — dump the partial pool and
+// exit hard from inside the hook. Partial capture beats a 124-timeout with
+// nothing. Same escalation applies to the heap guard.
+let budgetSpin = false;
+let heapSpin = false;
+function spinBreak(note) {
+  try { dumpAndExit(note); } catch { /* fall through to hard exit */ }
+  process.exit(0);
+}
 try {
   lua.lua_sethook(L, () => {
     budget -= HOOK_INTERVAL;
-    if (budget <= 0) lauxlib.luaL_error(L, to_luastring('bx: instruction budget exceeded'));
-    if (heapOver()) lauxlib.luaL_error(L, to_luastring('bx: memory budget exceeded'));
+    if (budget <= 0) {
+      if (budgetSpin) spinBreak('instruction budget — partial pool (spin-break)');
+      budgetSpin = true;
+      lauxlib.luaL_error(L, to_luastring('bx: instruction budget exceeded'));
+    }
+    if (heapOver()) {
+      if (heapSpin) spinBreak('memory budget — partial pool (spin-break)');
+      heapSpin = true;
+      lauxlib.luaL_error(L, to_luastring('bx: memory budget exceeded'));
+    }
   }, lua.LUA_MASKCOUNT, HOOK_INTERVAL);
 } catch { /* hooks unsupported — spawnHardened SIGKILL is the backstop */ }
 
@@ -211,8 +234,16 @@ function newState() {
   try {
     lua.lua_sethook(NL, () => {
       budget -= HOOK_INTERVAL;
-      if (budget <= 0) lauxlib.luaL_error(NL, to_luastring('bx: instruction budget exceeded'));
-      if (heapOver()) lauxlib.luaL_error(NL, to_luastring('bx: memory budget exceeded'));
+      if (budget <= 0) {
+        if (budgetSpin) spinBreak('instruction budget — partial pool (spin-break)');
+        budgetSpin = true;
+        lauxlib.luaL_error(NL, to_luastring('bx: instruction budget exceeded'));
+      }
+      if (heapOver()) {
+        if (heapSpin) spinBreak('memory budget — partial pool (spin-break)');
+        heapSpin = true;
+        lauxlib.luaL_error(NL, to_luastring('bx: memory budget exceeded'));
+      }
     }, lua.LUA_MASKCOUNT, HOOK_INTERVAL);
   } catch { /* hooks unsupported — spawnHardened SIGKILL is the backstop */ }
   const rc = lauxlib.luaL_dostring(NL, to_luastring(PRELUDE));

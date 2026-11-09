@@ -53,6 +53,12 @@ export const SERVICE_COMMANDS = [
     serviceId: 'luraph', accept: ['luraph'],
   },
   {
+    cmd: 'tokra', name: 'TokraScript',
+    blurb: 'Deobfuscate Any TokraScript (Luraph V14 Numeric Preset) File/URL',
+    slash: 'Deobfuscate Any TokraScript (Luraph V14 numeric preset) file/URL',
+    serviceId: 'tokrascript', accept: ['tokrascript'],
+  },
+  {
     cmd: 'clyde', name: 'Clyde',
     blurb: 'Deobfuscate Clyde',
     slash: 'Deobfuscate Clyde files or URLs',

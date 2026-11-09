@@ -1,6 +1,80 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.11.0 — THE BIGGEST SCAN: jail exploits from the leaked UnveilR-V3 intel, +43-sample corpus, TokraScript service #16
+
+**User directive: "Do The Biggest Scan Of Your Life On All Supported Services — find every
+weakness, bug, gap and vulnerability, exploit them to the maximum, make the bot the best in
+the world."** The scan doubled the corpus (45 → 94 samples, 34 families), mined the freshly
+extracted UnveilR-V3 engine intel (`research/unveilr-v3-notes.md` — the competitor's own
+per-obfuscator debug diary), and landed nine exploits. Full report:
+`research/WEAKNESSES-EXPLOITED.md`. Final matrix: **61 CLEAN / 11 PARTIAL / 0 FAIL.**
+
+### Jail exploits (from the leaked-corpus debug diary, all A/B-verified)
+
+- **Budget-hook spin-break** (`harvester-worker.js`, `vm-lift-worker.js`): MoonSec V3 escrow
+  builds catch the budget error with an inner pcall and re-spin — the worker burned the whole
+  150–560s wall clock with ZERO capture. First exhaustion still raises the catchable error; a
+  second hook fire proves spinning → flush the partial pool + hard-exit. MoonSec V3 158KB
+  sample: 0 strings/timeout → **145–215 strings in 65s**.
+- **Advancing clocks** (`jail-prelude.js`): frozen `os.clock()/tick()/time()` deadlocked any
+  init gate shaped `while os.clock()-t < X do end`. Each call steps ~10ms now.
+- **Real setfenv** (`jail-prelude.js`): function-arg swaps now actually swap the `_ENV`
+  upvalue (fengari is 5.3); `setfenv(cfunc, {})` **errors** — MoonSec's C-closure "skid
+  detector" fingerprints exactly this. Numeric `setfenv(1, env)` stays a no-op (A/B: real
+  numeric swaps degraded the IronBrew2 engine route to an input echo) and getfenv stays a
+  `_G` stub on purpose (its call residue shifts `debug.getlocal` slot indices and broke the
+  run-2 probe scanner — verified by replacing the fixture's `getfenv()` with `_G` → 10/10
+  probes restored).
+- **Graceful-first kill** (`security.js`): SIGTERM → 1.5s grace → SIGKILL. Workers'
+  dumpAndExit handlers now flush their partial pool on timeout instead of dying with it.
+- **Incremental run-1 flush** (`vm-lift-worker.js`): the instrumented lift phase can wedge
+  inside a single blocking fengari call (event loop stuck — no SIGTERM possible). Run 1's
+  result flushes to stdout BEFORE run 2; the parent takes the last parseable line, so a
+  wedged run 2 still delivers run 1's pool. MoonSec V3: **215 strings, ok:true.**
+- **Probe-rerun gate** (`vm-lift-worker.js`): tiny dispatch loops can exit between two hook
+  ticks (probes installed, zero events, deterministic phase). Up to 8 guest re-runs with a
+  phase-shifting no-op burn (attempt × 53) and a re-armed scanner; state snapshots preserved
+  across attempts (a lost snapshot stripped the luraph14 state-devirt stage).
+
+### TokraScript service (#16) + detector precision
+
+- **`.tokra` command + `tokrascript` family**: content-based detector (Luraph v14.x header +
+  binary-literal flood ≥300 + underscore-hex ≥10 + shadow params ≥5); fixture → conf 94,
+  v15 stays `luraph`, bannerless numeric-preset builds classify truthfully. Full Luraph devirt
+  chain wired (`engineFamily: 'luraph'` + pipeline gate + version capture).
+- **LIVE acceptance**: the real 807KB `TokraScript/Games/6961824067.luau` URL now runs the
+  state-devirt chain end-to-end in 3.2s → **168KB verified readable source (read=100)** —
+  was a 794KB payload-inventory echo at rough(50).
+- **New families: Junkie** (banner + jnkie.com + sdk globals + prelude fingerprint),
+  **LuArmor** (`_bsdata` loader), **SomeCoolObfuscator** (math/table prelude);
+  **wearedevs** +v1.0.0-header indicators; **Luraph** header widened to
+  protected/generated/obfuscated using|with|by (v13.4.3 `cerb.lua` now detected).
+- Two deliberate truth-wins: the `prometheus-custom` corpus sample is really **77fuscator
+  0.6.1 PRO** (its own watermark says so) and JunkieKeySys really embeds a **Prometheus
+  VMify core** (21-param wrapper found mid-file) — the detector out-scored our mining labels.
+
+### Corpus + scan tooling
+
+- `scripts/mine-corpus.js` (new): +43 samples from the leaked corpora → `var/corpus/` (94
+  total, sha256-deduped): UnveilR-V3's 12 Luraph v15 samples, hookop/hookop2/chilli/cerb
+  (v13/v14/v14.4.2-TokraScript), 25ms `38errors.lua`, wearedevs v1.0.0, Junkie ×3,
+  JunkieKeySys, LuArmor, SomeCool, moonveil, IronBrew1 (pandadev) + `larry old src/`
+  per-obfuscator set.
+- `scripts/final-scan.js`: per-sample incremental JSON flush + honest artifact masking
+  (pool-data/metadata lines no longer flag `__pc`/`ascii85` — they are captured DATA) +
+  constant-harvest outputs graded as data tables.
+- `test/service-commands.js`: 16-command registry + tokra family-pin checks (11/11).
+
+### Matrix (94-sample corpus, live pipeline)
+
+61 CLEAN(+data-table) / 11 PARTIAL / 0 FAIL across 34 families. The 11 remaining PARTIALs
+are the honest frontier (escrow-gated VM inits + richer-data harvests graded read=65) —
+the next lever is the UnveilR-style full runtime-trace engine, playbook documented in
+`research/unveilr-v3-notes.md`. Note: caomro2077/Deobfuscator-Luraph-V15 (pending eval) is
+gone from GitHub (404) — our vendored MIT v15 engine already covers it.
+
+
 ## v2.10.0 — leaked env-logger corpus mined: 25ms concat-capture + nested VM peel + OOM-proof jail
 
 **User directive: the leaked dumper/env-logger collection

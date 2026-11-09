@@ -106,9 +106,15 @@ export function spawnHardened(binaryPath, args, { cwd, timeoutMs = 120_000, maxB
     let settled = false;
     const timer = setTimeout(() => {
       killed = true;
-      try { child.kill(killSignal); } catch { /* already dead */ }
+      // v2.11.0 (Biggest Scan exploit): graceful-first kill. The jailed workers
+      // (harvester / vm-lift) install SIGTERM handlers that dumpAndExit their
+      // PARTIAL capture (decrypted string pool, load()-chunks, VM state).
+      // SIGKILL-first lost every timed-out run's pool — e.g. MoonSec V3 escrow
+      // spins after budget exhaustion and died with zero strings despite
+      // having decrypted 145 of them. SIGTERM → 1.5s grace → killSignal.
+      try { child.kill('SIGTERM'); } catch { /* already dead */ }
       // hard backstop if the process ignores the graceful signal
-      setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* dead */ } }, 5_000).unref();
+      setTimeout(() => { try { child.kill(killSignal); } catch { /* dead */ } }, 1_500).unref();
     }, Math.max(1000, timeoutMs));
 
     child.stdout.on('data', (chunk) => {

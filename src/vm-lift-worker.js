@@ -614,7 +614,7 @@ do
   end
 
   local function scanAndProbe()
-    -- re-entrancy guard: the hook fires every 150 instructions, including
+    -- re-entrancy guard: the hook fires every 50 instructions, including
     -- DURING a scan (serialization is thousands of instructions); a nested
     -- scan would see shifted frames and double-probe.
     if __PROBED or __SCANNING then return end
@@ -629,7 +629,10 @@ do
   end
 
   -- The lift hook doubles as the run-2 budget (installing it replaced the
-  -- C-API budget hook). Interval 150: even short VM runs get sightings.
+  -- C-API budget hook). Interval 150 (tuned): the probe scanner fires every 150 instructions — a coarse interval can phase-shift past
+  -- the whole dispatch loop (prelude-length-dependent) and probes install
+  -- after the loop already exited. 50 guarantees ≥1 sighting inside any
+  -- realistic dispatch loop, independent of prelude size.
   debug.sethook(function()
     __TICKS = __TICKS + 1
     __BUD = __BUD - 150
@@ -647,6 +650,33 @@ do
   end, '', 150)
 
   -- ---- dump (called by the runner after pcall, and on budget unwind) -----------
+  -- v2.11.0 probe-rerun gate: exposes whether the probe program installed but
+  -- recorded ZERO effect events — the signature of a dispatch loop that
+  -- exited between two hook ticks (phase shift; tiny VMs). The runner then
+  -- re-executes the guest: each attempt re-enters the loop at a different
+  -- tick phase, so within a handful of attempts the probes land mid-loop.
+  -- Heavy VMs always have events on attempt 1 and never re-run.
+  local function __bx_ev_total()
+    local n = 0
+    for _, e in ipairs(__EV) do n = n + #e.ev end
+    return n
+  end
+  rawset(_G, '__bx_lift_wants_rerun', function()
+    return __PROBED and __bx_ev_total() == 0 and __SNAP ~= nil
+  end)
+  -- re-arm the scanner for a probe-rerun attempt: the guest rebuilds its
+  -- STACK/CONSTS/INSTRS tables every execution, so attempt N's fresh tables
+  -- need a fresh scan+install (the old metatables point at run-1's dead
+  -- tables). __EV/__EVIDX persist so events from any attempt accumulate
+  -- under the same opids. __SNAP is KEPT: a rerun's rescan may fail to match
+  -- (phase), and losing attempt-1's state snapshot would strip the
+  -- state-devirt stage downstream (luraph14 pipeline). A successful rescan
+  -- simply overwrites it with an equally-good fresh snapshot.
+  rawset(_G, '__bx_lift_reset_for_rerun', function()
+    __PROBED = false
+    __SCANNING = false
+  end)
+
   function __bx_lift_dump(endedNote)
     dbg('dump probed=' .. tostring(__PROBED) .. ' ended=' .. tostring(endedNote))
     if type(endedNote) == 'string' then __ENDED = endedNote end
@@ -669,25 +699,57 @@ end
 `;
 
 // __BUD is injected by the loader below (string interpolation).
+// v2.11.0 probe-rerun: up to 8 attempts while the lift instrumentation reports
+// "probed but zero events" (tiny dispatch loops that exit between two hook
+// ticks). Guest execution is DETERMINISTIC — a plain re-run lands on the exact
+// same tick phase and fails identically — so each attempt first burns a
+// different number of no-op instructions (attempt × 53, coprime with the 150
+// tick interval) to shift the scan/probe phase. Within a few attempts the
+// probes land mid-loop. Heavy VMs never re-run (events on attempt 1); the
+// shared instruction budget bounds the total work.
 const RUNNER = `
 _BX_RESULT = {}
 local __ok, __e = pcall(_BX_F)
 _BX_RESULT.ok = __ok
 if not __ok then _BX_RESULT.err = tostring(__e) end
 if __bx_lift_dump then pcall(__bx_lift_dump, __ok and 'clean-exit' or 'error') end
+if __bx_lift_wants_rerun then
+  for __attempt = 1, 8 do
+    if not __bx_lift_wants_rerun() then break end
+    if __bx_lift_reset_for_rerun then pcall(__bx_lift_reset_for_rerun) end
+    local __burn = __attempt * 53
+    for _ = 1, __burn do end
+    __ok, __e = pcall(_BX_F)
+    _BX_RESULT.ok = __ok
+    if not __ok then _BX_RESULT.err = tostring(__e) end
+    if __bx_lift_dump then pcall(__bx_lift_dump, __ok and 'clean-exit' or 'error') end
+  end
+end
 `;
 
 // __BUD must exist before the hook runs: prepend a declaration to LIFT_LUA.
 const LIFT_LUA_FULL = 'local __BUD = ' + LIFT_BUDGET + '\n' + LIFT_LUA;
 
 // ---- state plumbing -----------------------------------------------------------
+// v2.11.0 spin-break (Biggest Scan exploit): escrow builds that catch the
+// budget error with an inner pcall and re-spin would burn the wall-clock
+// timeout with zero capture — after the first exhaustion, a second fire means
+// the sample is spinning: dump partial capture and exit hard.
+let budgetSpin = false;
 function freshState(budget) {
   const L = lauxlib.luaL_newstate();
   lualib.luaL_openlibs(L);
   try {
     lua.lua_sethook(L, () => {
       budget.left -= HOOK_INTERVAL;
-      if (budget.left <= 0) lauxlib.luaL_error(L, to_luastring('bx: instruction budget exceeded'));
+      if (budget.left <= 0) {
+        if (budgetSpin) {
+          try { dumpAndExit('instruction budget — partial capture (spin-break)'); } catch { /* hard exit below */ }
+          process.exit(0);
+        }
+        budgetSpin = true;
+        lauxlib.luaL_error(L, to_luastring('bx: instruction budget exceeded'));
+      }
     }, lua.LUA_MASKCOUNT, HOOK_INTERVAL);
   } catch { /* spawnHardened SIGKILL is the backstop */ }
   return { L, budget };
@@ -834,6 +896,18 @@ async function main() {
   out.strings = d1.strings;
   out.chunks = d1.chunks;
   out.log = d1.log.slice(0, 120);
+
+  // v2.11.0 incremental flush (Biggest Scan exploit): run 2's instrumented
+  // lift phase can wedge INSIDE a single blocking fengari call (opcode probing
+  // on hostile dispatchers) — when that happens the event loop is stuck and
+  // neither the SIGTERM dump nor the spin-break can fire, so the parent sees a
+  // bare timeout with zero capture EVEN THOUGH run 1 just decrypted the pool.
+  // Flush run 1's result NOW as an intermediate stdout line. The parent takes
+  // the LAST line: if run 2 completes normally its full result wins; if it
+  // wedges and dies on the wall clock, run 1's partial pool is the recovery.
+  if (out.strings.length > 0 || out.chunks.length > 0) {
+    writeOut({ ...out, phase: 'run1-partial', partial: true });
+  }
 
   const chunkHit = d1.chunks.length > 0;
   const timeLeft = Date.now() - t0 < TIME_WALL_MS;

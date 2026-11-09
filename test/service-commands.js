@@ -17,6 +17,9 @@
  * injected for the .l success path.
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 // Load the command registry FIRST — same order as src/index.js (benign import
 // cycle: deobf → keepalive → dashboard → commands-index → deobf).
 import '../src/commands-index.js';
@@ -28,6 +31,8 @@ import loggerCmd, { buildLoggerReport, buildRecordingText, runLogger } from '../
 import { commandByName } from '../src/commands-index.js';
 import { makeCtx } from '../src/ctx.js';
 import { checkCooldown } from '../src/rate-limit.js';
+
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 const uid = (n) => `22200000000${n}`;
 const calls = [];
@@ -72,7 +77,7 @@ async function check(name, fn) {
 }
 
 // ---- 1. registry --------------------------------------------------------------
-await check('registry: all 15 catalog commands exist (prefix + slash) with exact names', () => {
+await check('registry: all 16 catalog commands exist (prefix + slash) with exact names', () => {
   for (const spec of SERVICE_COMMANDS) {
     const cmd = commandByName(spec.cmd);
     assert.ok(cmd, `command .${spec.cmd} missing from registry`);
@@ -87,8 +92,25 @@ await check('registry: all 15 catalog commands exist (prefix + slash) with exact
     assert.match(json.name, /^[-_\p{L}\p{N}]{1,32}$/u, `.${spec.cmd} is not a valid slash command name`);
     if (spec.serviceId) assert.equal(cmd.serviceCmd, true, `.${spec.cmd} must flag serviceCmd`);
   }
-  assert.equal(SERVICE_COMMANDS.length, 15, 'catalog must list exactly 15 service commands');
+  assert.equal(SERVICE_COMMANDS.length, 16, 'catalog must list exactly 16 service commands');
   assert.equal(commandByName('l'), loggerCmd, '.l must be the environment logger');
+});
+
+// ---- 1b. tokra family pin ---------------------------------------------------------
+await check('tokra: new TokraScript command pins the numeric-preset family correctly', () => {
+  const cmd = commandByName('tokra');
+  assert.ok(cmd, 'command .tokra missing from registry');
+  assert.equal(cmd.serviceCmd, true, '.tokra must flag serviceCmd');
+  const spec = SERVICE_COMMANDS.find((s) => s.cmd === 'tokra');
+  assert.equal(spec.serviceId, 'tokrascript');
+  // detector: tokra fixture must classify as tokrascript, not plain luraph
+  const buf = fs.readFileSync(path.join(ROOT, 'test/fixtures/tokrascript-6961824067-sample.luau'));
+  const det = detectService(buf);
+  assert.equal(det.best.service.id, 'tokrascript', 'tokra fixture must detect as tokrascript');
+  // a v15 sample must NOT flip to tokrascript
+  const v15 = fs.readFileSync(path.join(ROOT, 'test/fixtures/luraph-v15.1-real-sample.lua'));
+  const d15 = detectService(v15);
+  assert.equal(d15.best.service.id, 'luraph', 'v15 sample must stay luraph');
 });
 
 // ---- 2. supported card ----------------------------------------------------------
