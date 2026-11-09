@@ -35,6 +35,12 @@ const MAX_STRINGS = 4000;
 const MAX_PAYLOADS = 64;
 const MIN_PAYLOAD_LEN = 16;
 const MAX_STRING_LEN = 256 * 1024;
+// v2.10.0 blob hygiene: high-entropy / binary constants (encrypted VM payload
+// blobs, encoded pools) are SUMMARIZED, never inlined into STRINGS. Inlining
+// them produced megabyte noise dumps that buried the real signal strings.
+const BLOB_MIN_LEN = 64;      // shorter strings are never blobs
+const BLOB_ENTROPY = 5.8;     // ≥ bits/byte ⇒ encrypted/encoded constant
+const BLOB_PRINTABLE = 0.80;  // < ratio ⇒ binary junk
 
 // ---- entropy -----------------------------------------------------------------
 function entropyBitsPerByte(buf) {
@@ -345,6 +351,16 @@ function printableRatio(buf) {
   return p / buf.length;
 }
 
+/** v2.10.0 — classify a string constant as an encrypted/encoded BLOB.
+ *  Blobs are reported (count + total bytes + PAYLOADS decode) but never
+ *  inlined into the STRINGS table — that was the noise exploit. */
+function isBlobConstant(bytes) {
+  if (!bytes || bytes.length < BLOB_MIN_LEN) return false;
+  const pr = printableRatio(bytes);
+  if (pr < BLOB_PRINTABLE) return true;
+  return entropyBitsPerByte(bytes) >= BLOB_ENTROPY;
+}
+
 /** Probe a string buffer for known encodings; return the best decoded candidate.
  *  Preference: readable decodes (printableRatio ≥ 0.85) win over high-entropy
  *  garbage — a hex string that decodes to ASCII text is the real payload, even
@@ -480,25 +496,40 @@ function luaEscape(s) {
     .replace(/[\x00-\x1f]/g, (c) => `\\${c.charCodeAt(0)}`);
 }
 
-function buildLuaOutput({ detected, strings, payloads, structure, sourceBytes, note }) {
+// v2.10.0 — emit long, escape-free constants as long-bracket strings: no
+// backslash storms (quote-escaped rows read as escape noise and buried the
+// signal), and multi-line text stays readable verbatim.
+function luaLiteral(s) {
+  if (s.length <= 32 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(s)) return `"${luaEscape(s)}"`;
+  let level = 0;
+  while (s.includes(`]${'='.repeat(level)}]`)) level += 1;
+  const eq = '='.repeat(level);
+  return `[${eq}[${s}]${eq}]`;
+}
+
+function buildLuaOutput({ detected, strings, payloads, structure, sourceBytes, note, blobs }) {
   const lines = [];
   lines.push('-- BypassX Deobf Bot — best-effort static peel');
   lines.push(`-- Detected: ${detected?.name || 'unknown'}${detected?.version ? ` ${detected.version}` : ''}`);
   lines.push('-- Method: pure-JS static extraction (no VM run, no execution).');
-  lines.push('-- Every string literal, decoded payload, function name, local');
+  lines.push('-- Every signal string literal, decoded payload, function name, local');
   lines.push('-- binding, and numeric constant recoverable from the raw bytes');
   lines.push('-- is listed below as a valid Lua table. This is the complete');
   lines.push('-- static picture — VM bytecode lifting is engine-0.13 work.');
+  if (blobs && blobs.count) {
+    lines.push(`-- Blob hygiene: ${blobs.count} high-entropy/binary constant(s) (${blobs.bytes} bytes)`);
+    lines.push('--   withheld from STRINGS — see PAYLOADS for decoded previews.');
+  }
   if (note) lines.push(`-- Note: ${note}`);
   lines.push(`-- Source: ${sourceBytes} bytes scanned.`);
   lines.push('');
-  lines.push(`local STRINGS = { -- ${strings.length} strings extracted`);
+  lines.push(`local STRINGS = { -- ${strings.length} signal strings extracted`);
   for (let i = 0; i < strings.length; i++) {
     const s = strings[i];
     if (s.length > 4096) {
-      lines.push(`  [${i + 1}] = "${luaEscape(s.slice(0, 4096))}…", -- truncated (${s.length} bytes)`);
+      lines.push(`  [${i + 1}] = ${luaLiteral(`${s.slice(0, 4096)}…`)}, -- truncated (${s.length} bytes)`);
     } else {
-      lines.push(`  [${i + 1}] = "${luaEscape(s)}",`);
+      lines.push(`  [${i + 1}] = ${luaLiteral(s)},`);
     }
   }
   lines.push('}');
@@ -520,7 +551,13 @@ function buildLuaOutput({ detected, strings, payloads, structure, sourceBytes, n
   lines.push(`local STRUCTURE = {`);
   lines.push(`  functions = { ${structure.functions.map((n) => `"${luaEscape(n)}"`).join(', ')} }, -- ${structure.functions.length}`);
   lines.push(`  locals = { ${structure.locals.map((n) => `"${luaEscape(n)}"`).join(', ')} }, -- ${structure.locals.length}`);
-  lines.push(`  numbers = { ${structure.numbers.map((n) => `${n}`).join(', ')} }, -- ${structure.numbers.length}`);
+  // v2.10.0: wrap the numeric list (10 per line) — a single inline list read
+  // as a numeric flood and as a very long line.
+  lines.push('  numbers = {');
+  for (let i = 0; i < structure.numbers.length; i += 10) {
+    lines.push(`    ${structure.numbers.slice(i, i + 10).join(', ')},`);
+  }
+  lines.push(`  }, -- ${structure.numbers.length}`);
   lines.push('}');
   lines.push('');
   lines.push('return { STRINGS = STRINGS, PAYLOADS = PAYLOADS, STRUCTURE = STRUCTURE }');
@@ -528,7 +565,7 @@ function buildLuaOutput({ detected, strings, payloads, structure, sourceBytes, n
   return lines.join('\n');
 }
 
-function buildJsOutput({ detected, strings, payloads, structure, sourceBytes, note }) {
+function buildJsOutput({ detected, strings, payloads, structure, sourceBytes, note, blobs }) {
   const esc = (s) => String(s)
     .replace(/\\/g, '\\\\')
     .replace(/\r/g, '\\r')
@@ -540,8 +577,12 @@ function buildJsOutput({ detected, strings, payloads, structure, sourceBytes, no
   lines.push('// BypassX Deobf Bot — best-effort static peel');
   lines.push(`// Detected: ${detected?.name || 'unknown'}${detected?.version ? ` ${detected.version}` : ''}`);
   lines.push('// Method: pure-JS static extraction (no eval, no execution).');
-  lines.push('// Every string literal, decoded payload, function name, binding,');
+  lines.push('// Every signal string literal, decoded payload, function name, binding,');
   lines.push('// and numeric constant recoverable from the raw bytes is below.');
+  if (blobs && blobs.count) {
+    lines.push(`// Blob hygiene: ${blobs.count} high-entropy/binary constant(s) (${blobs.bytes} bytes)`);
+    lines.push('//   withheld from STRINGS — see PAYLOADS for decoded previews.');
+  }
   if (note) lines.push(`// Note: ${note}`);
   lines.push(`// Source: ${sourceBytes} bytes scanned.`);
   lines.push('');
@@ -696,9 +737,20 @@ function _staticPeelInner(buffer, { detected = null, lang = 'unknown', note = nu
   }
 
   // ---- dedup strings, preserve discovery order, cap counts
+  // v2.10.0 blob hygiene: encrypted/encoded constants (VM payload blobs,
+  // encoded pools) are SUMMARIZED (count + bytes + PAYLOADS decode) instead of
+  // inlined — inlining them buried the real signal strings under megabytes of
+  // noise and scored the whole output as machine-grade.
   const seen = new Set();
   const strings = [];
+  let blobCount = 0;
+  let blobBytes = 0;
   const pushStr = (b) => {
+    if (isBlobConstant(b)) {
+      blobCount += 1;
+      blobBytes += b.length;
+      return;
+    }
     if (strings.length >= MAX_STRINGS) return;
     const text = b.length <= MAX_STRING_LEN ? b.toString('utf8') : b.subarray(0, MAX_STRING_LEN).toString('utf8');
     const key = text;
@@ -723,18 +775,19 @@ function _staticPeelInner(buffer, { detected = null, lang = 'unknown', note = nu
   }
 
   // ---- build output
-  const common = { detected, strings, payloads, structure, sourceBytes: srcBytes, note };
+  const blobs = { count: blobCount, bytes: blobBytes };
+  const common = { detected, strings, payloads, structure, sourceBytes: srcBytes, note, blobs };
   let code, codeName, how, partialNote;
   if (isJs) {
     code = buildJsOutput(common);
     codeName = 'recovered.js';
     how = 'static peel (JS strings + payloads + structure)';
-    partialNote = `Best-effort static peel: ${strings.length} string${strings.length === 1 ? '' : 's'} extracted, ${payloads.length} decoded payload${payloads.length === 1 ? '' : 's'}, ${structure.functions.length} function name${structure.functions.length === 1 ? '' : 's'}, ${structure.locals.length} binding${structure.locals.length === 1 ? '' : 's'}, ${structure.numbers.length} numeric constant${structure.numbers.length === 1 ? '' : 's'}. The full source is behind a VM/encoder layer that the engine cannot lift statically — this is the complete static picture, packaged as valid JS.`;
+    partialNote = `Best-effort static peel: ${strings.length} signal string${strings.length === 1 ? '' : 's'} extracted, ${blobCount} encrypted/blob constant${blobCount === 1 ? '' : 's'} summarized (${blobBytes} bytes), ${payloads.length} decoded payload${payloads.length === 1 ? '' : 's'}, ${structure.functions.length} function name${structure.functions.length === 1 ? '' : 's'}, ${structure.locals.length} binding${structure.locals.length === 1 ? '' : 's'}, ${structure.numbers.length} numeric constant${structure.numbers.length === 1 ? '' : 's'}. The full source is behind a VM/encoder layer that the engine cannot lift statically — this is the complete static picture, packaged as valid JS.`;
   } else {
     code = buildLuaOutput(common);
     codeName = 'recovered.lua';
     how = 'static peel (Lua strings + payloads + structure)';
-    partialNote = `Best-effort static peel: ${strings.length} string${strings.length === 1 ? '' : 's'} extracted, ${payloads.length} decoded payload${payloads.length === 1 ? '' : 's'}, ${structure.functions.length} function name${structure.functions.length === 1 ? '' : 's'}, ${structure.locals.length} local binding${structure.locals.length === 1 ? '' : 's'}, ${structure.numbers.length} numeric constant${structure.numbers.length === 1 ? '' : 's'}. VM bytecode lifting is engine-0.13 work; this is the complete static picture, packaged as valid Lua.`;
+    partialNote = `Best-effort static peel: ${strings.length} signal string${strings.length === 1 ? '' : 's'} extracted, ${blobCount} encrypted/blob constant${blobCount === 1 ? '' : 's'} summarized (${blobBytes} bytes), ${payloads.length} decoded payload${payloads.length === 1 ? '' : 's'}, ${structure.functions.length} function name${structure.functions.length === 1 ? '' : 's'}, ${structure.locals.length} local binding${structure.locals.length === 1 ? '' : 's'}, ${structure.numbers.length} numeric constant${structure.numbers.length === 1 ? '' : 's'}. VM bytecode lifting is engine-0.13 work; this is the complete static picture, packaged as valid Lua.`;
   }
 
   return { ok: true, code, codeName, how, partialNote, recoveredSize: code.length };

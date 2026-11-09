@@ -65,11 +65,12 @@ export const SERVICES = [
   },
   {
     id: 'ironbrew2', name: 'IronBrew 2', lang: 'lua', tier: TIER.FULL, engineFamily: 'ironbrew2',
-    versions: 'latest IronBrew2',
+    versions: 'latest IronBrew2 (bannerless builds via the classic prelude fingerprint)',
     indicators: [
       { re: /obfuscated by ironbrew/i, weight: 60, label: 'IronBrew2 header' },
       { re: /\bib2_[a-z]/, weight: 45, label: 'ib2_* tokens' },
       { re: /\bIronBrew\s*2\b|\bIronbrew2\b/i, weight: 40, label: 'IronBrew2 name' },
+      { re: /local \w+=string\.byte;local \w+=string\.char;local \w+=string\.sub;local \w+=table\.concat;local \w+=table\.insert;/, weight: 55, label: 'IronBrew prelude fingerprint' },
     ],
   },
   {
@@ -78,6 +79,7 @@ export const SERVICES = [
     indicators: [
       { re: /\bAztup\s*Brew\b|\baztupbrew\b/i, weight: 55, label: 'Aztup Brew name' },
       { re: /\bIronBrew\b(?!2|3)/i, weight: 40, label: 'IronBrew (classic)' },
+      { re: /generated using ironbrew/i, weight: 60, label: 'ironbrew1 generator header' },
     ],
   },
   {
@@ -108,16 +110,20 @@ export const SERVICES = [
   },
   {
     id: 'psu', name: 'PSU (Play raw script Units)', lang: 'lua', tier: TIER.PARTIAL, engineFamily: 'psu',
-    versions: 'PSU pipeline',
+    versions: 'PSU pipeline (incl. PSU Obfuscator 4.x banners)',
     indicators: [
+      { re: /obfuscated using PSU Obfuscator\s*v?([\d.A-Z]+)/i, weight: 60, version: 1, label: 'PSU 4.x banner' },
+      { re: /psu\.dev|discord\.gg\/psu/i, weight: 40, label: 'psu.dev links' },
       { re: /\bPSU[_A-Z]{2,}\b|--\s*PSU\b|\bpsu\.js\b/i, weight: 45, label: 'PSU markers' },
     ],
   },
   {
     id: 'boronide', name: 'Boronide', lang: 'lua', tier: TIER.PARTIAL, engineFamily: 'boronide',
-    versions: 'latest',
+    versions: 'latest (incl. herrtt\'s obfuscator branding)',
     indicators: [
       { re: /\bBoronide\b/i, weight: 50, label: 'Boronide name' },
+      { re: /herrtt's obfuscator,?\s*v?([\d.]+)/i, weight: 60, version: 1, label: "herrtt's obfuscator banner" },
+      { re: /errtts obf|discord\.gg\/BZEjFbeUvk/i, weight: 40, label: 'herrtt branding tokens' },
     ],
   },
   {
@@ -129,10 +135,11 @@ export const SERVICES = [
   },
   {
     id: 'luaobfuscator_com', name: 'luaobfuscator.com', lang: 'lua', tier: TIER.PARTIAL, engineFamily: 'luaobfuscator-com',
-    versions: 'latest online obfuscator',
+    versions: 'latest online obfuscator (bannerless builds via the vN prelude fingerprint)',
     indicators: [
       { re: /luaobfuscator\.com/i, weight: 55, label: 'luaobfuscator.com domain' },
       { re: /--[[-]\s*LuaObfuscator\b/i, weight: 35, label: 'LuaObfuscator banner' },
+      { re: /local v\d+=string\.char;local v\d+=string\.byte;local v\d+=string\.sub;local v\d+=bit32 or bit\s*;/, weight: 55, label: 'luaobfuscator.com prelude fingerprint' },
     ],
   },
   {
@@ -217,6 +224,55 @@ export const SERVICES = [
     id: 'luast', name: 'LuaST', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
     versions: 'luast.clv.cloud levels 1–3 (dedicated .luast command)',
     indicators: [],
+  },
+
+  // ---- emerging families — signatures extracted from REAL corpus samples ----
+  {
+    id: 'asteria', name: 'Asteria', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
+    versions: 'v1.x',
+    indicators: [
+      { re: /obfuscated by Asteria v?([\d.]+)/i, weight: 60, version: 1, label: 'Asteria header' },
+      { re: /\bAsteria\b/i, weight: 30, label: 'Asteria mention' },
+    ],
+  },
+  {
+    id: 'catph', name: 'Catph', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
+    versions: 'V2.x – V5.x (Prometheus-lineage pipeline)',
+    indicators: [
+      { re: /Protected By Catph V?([\d.]+)/i, weight: 60, version: 1, label: 'Catph header' },
+      { re: /discord\.gg\/uHU98Z3E8z/i, weight: 40, label: 'Catph discord' },
+    ],
+  },
+  {
+    id: 'devlyx', name: 'Devlyx', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
+    versions: 'current public build',
+    indicators: [
+      { re: /obfuscated by DEVLYX/i, weight: 60, label: 'DEVLYX header' },
+      { re: /devlyx\.netlify\.app/i, weight: 40, label: 'devlyx domain' },
+    ],
+  },
+  {
+    id: 'dexfuscator', name: 'Dexfuscator', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
+    versions: 'v5.x',
+    indicators: [
+      { re: /protected using Dexfuscator v?([\d.]+)/i, weight: 60, version: 1, label: 'Dexfuscator header' },
+      { re: /\.gg\/dexfinder|dexfuscator/i, weight: 40, label: 'Dexfuscator tokens' },
+    ],
+  },
+  {
+    id: 'realvux', name: 'RealVux', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
+    versions: 'v1.2.x',
+    indicators: [
+      { re: /Obfuscated Using RealVuxObfuscate V?([\d.]+)/i, weight: 60, version: 1, label: 'RealVux header' },
+      { re: /RealVuxObfuscate/i, weight: 45, label: 'RealVux name' },
+    ],
+  },
+  {
+    id: 'lps', name: 'LPS', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
+    versions: 'LPS-branded builds (LuaJIT numeric-literal style, Prometheus-lineage wrapper)',
+    indicators: [
+      { re: /\b0[XB][0-9A-F]+_\b/, weight: 40, label: 'LuaJIT-style 0X_/0B_ literals' },
+    ],
   },
 
   // ---- JavaScript ------------------------------------------------------------

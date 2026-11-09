@@ -77,7 +77,15 @@ export function makeCtx({ interaction = null, message = null, client }) {
           : interaction.reply(payload)).catch(() => {});
         return {
           async update(t) {
-            await interaction.editReply({ content: t, ...mentions }).catch(() => {});
+            // v2.10.0 delivery guarantee: interaction tokens expire after
+            // 15 minutes — a heavy multi-layer job can outrun them. When the
+            // edit fails, post the final status as a fresh channel message
+            // instead of silently dropping it.
+            try {
+              await interaction.editReply({ content: t, ...mentions });
+            } catch {
+              await interaction.channel?.send({ content: t, ...mentions }).catch(() => {});
+            }
           },
         };
       }
@@ -96,14 +104,24 @@ export function makeCtx({ interaction = null, message = null, client }) {
      * v2.7.1 — deliver a NEW message (followUp for slash, reply for prefix).
      * Used to hand over the finished result WITHOUT replacing the status
      * placeholder created by statusReply().
+     * v2.10.0 delivery guarantee: if the interaction token has expired
+     * (jobs > 15 min), fall back to a plain channel send so the result card
+     * ALWAYS lands.
      */
     async send(payload) {
       if (interaction) {
-        if (!interaction.deferred && !interaction.replied) {
-          await interaction.deferReply().catch(() => {});
+        try {
+          if (!interaction.deferred && !interaction.replied) {
+            await interaction.deferReply().catch(() => {});
+          }
+          return await (interaction.deferred || interaction.replied
+            ? interaction.followUp(payload)
+            : interaction.reply(payload));
+        } catch (e) {
+          const chan = interaction.channel;
+          if (!chan) throw e;
+          return chan.send(payload).catch(() => {});
         }
-        if (interaction.deferred || interaction.replied) return interaction.followUp(payload);
-        return interaction.reply(payload);
       }
       if (message) return message.reply(payload);
     },

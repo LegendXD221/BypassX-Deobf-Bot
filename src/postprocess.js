@@ -17,8 +17,14 @@ import path from 'node:path';
 const LUA_EXT = new Set(['.lua', '.luac', '.glua']);
 const JS_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.jsx', '.tsx']);
 
-const WALL_HEADER_RE = /^\s*--\s*=+\s*\n(?:^\s*--\s.*\n){0,12}^\s*--\s*=+\s*\n/gm;
-const HONEST_WALL_RE = /^\s*--\s*BypassX\s+Deobf\s*[—:-]\s+.*?(?:honest wall|annotated VM dump|stop-gap|VM dump|Pending|envelope payload decoded).*?\n(?:^\s*--.*\n){0,8}/gim;
+// v2.10.0 ReDoS fix: the anchors used to use `\s*` after `^` with the `m`
+// flag — `\s` crosses newlines, so on whitespace-heavy input (CRLF floods,
+// blank-line seas) the engine backtracked across the whole file per line:
+// 100k blank lines burned ~55 s across three passes. `[ ^\S\n ]` keeps the
+// same line-local semantics and stays linear.
+const NW = '[^\\S\n]';
+const WALL_HEADER_RE = new RegExp(`^${NW}*--${NW}*=+${NW}*\n(?:^${NW}*--${NW}.*\n){0,12}^${NW}*--${NW}*=+${NW}*\n`, 'gm');
+const HONEST_WALL_RE = new RegExp(`^${NW}*--${NW}*BypassX\\s+Deobf\\s*[—:-]\\s+.*?(?:honest wall|annotated VM dump|stop-gap|VM dump|Pending|envelope payload decoded).*?\n(?:^${NW}*--.*\n){0,8}`, 'gim');
 
 function stripWallMarkers(text) {
   let out = text.replace(HONEST_WALL_RE, '');
@@ -29,7 +35,7 @@ function stripWallMarkers(text) {
 
 function tidyTrailingJunk(text) {
   let out = text.replace(/\s+$/g, '\n');
-  out = out.replace(/^\s*-{3,}\s*$/gm, '');
+  out = out.replace(/^[^\S\n]*-{3,}[^\S\n]*$/gm, '');
   return out;
 }
 

@@ -1,6 +1,83 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.10.0 — leaked env-logger corpus mined: 25ms concat-capture + nested VM peel + OOM-proof jail
+
+**User directive: the leaked dumper/env-logger collection
+(github.com/timmytim12354-png/dumper-and-env-loggers) is legitimate — use it.**
+The repo carries the 25ms Luraph dumper, Larry/zala `debug.sethook` tracers,
+unveilr v1/v3, Mimic's fake-Roblox env, and per-obfuscator real-world samples.
+We extracted TECHNIQUES (never vendored code) and the sample corpus.
+
+### What landed
+
+- **`test/fixtures/thirdparty/`** (new, 17 immutable samples) — real-world
+  builds per family mined from the collection's `larry old src/`: Luraph ×5
+  (+2 heavy), IronBrew 1/2, MoonVeil, WeAreDevs ×2, Junkie ×2, 25ms,
+  LuaArmor, 77fuscator-lineage custom, Xhider-lineage custom. Instant
+  detection wins on our own corpus: custom → WeAreDevs (2,172 strings),
+  customprometheus → 77fuscator (5,768), somecoolobfuscator → Xhider,
+  junkie2 → Luraph.
+- **`src/harvester-worker.js` — tier 3, 25ms-style concat-capture injection**
+  (technique credit: leaked `25ms/luraphdump.lua`). Luraph/IronBrew VM
+  wrappers rebuild decrypted strings with RAW `..` concatenation of
+  pool-table reads (`S[m[V]]..S[w[V]]`) — a shape no string/function sink
+  sees. When strict + forgiving tiers starve (<3 usable strings), the source
+  is rewritten with a passthrough `_BXCAP(...)` around every such expression;
+  the capturer records each joined string the instant the VM builds it.
+  Fires on real samples: luraph1/2/5 + ironbrew1 all match the wrapper shape.
+- **`src/harvester-worker.js` — nested VM-chunk peel (dynamic multi-layer)**.
+  Chunks the sample hands to load() that are themselves VM builds
+  (`return(function(…`) re-run in a FRESH jailed fengari state so the INNER
+  obfuscator decrypts its pool into our sinks too. Bounded: 2 largest chunks,
+  shared instruction budget with a hard floor, best-effort (depth-0 data
+  always stands alone). Technique credit: 25ms loadstring interception,
+  applied recursively.
+- **OOM-proof jail** — pre-existing fatal flaw found BY the corpus: 400KB-class
+  Luraph v14 builds (luraph4/6) ballooned fengari past the 2GB V8 default →
+  uncatchable `--heap abort`, partial pool lost, cgroup-OOM risk for the whole
+  Render container. Triple fix: `--max-old-space-size=256` on the harvest
+  worker (vm-lift keeps default — 14 suites pin its big lift workloads), a
+  heap guard inside the instruction hook (`heapUsed > 192MB` → `luaL_error`,
+  a normal Lua error the runner pcalls absorb → partial dump), and a 2MB byte
+  budget on the retained sink (`MAX_SINK` 60k → 24k). Side effect: ironbrew2
+  went from 30s-timeout-kill (GC thrash at 2GB) to **15,114 strings in 4.4s**;
+  luraph4/6 now exit clean with graceful partials instead of aborting.
+- **`src/jail-prelude.js`** — `_BXCAP` capturer installed in the shared jail
+  (passthrough, `_BX_MUTE`-aware), sink byte budget. One jail, one behavior
+  for both workers, as before.
+- **Merged the in-tree v2.10.0 work from the previous session** (was uncommitted):
+  `src/ctx.js` delivery guarantees (interaction-token expiry >15min jobs no
+  longer drop the status/result — falls back to a plain channel send),
+  `src/pipeline.js` junk-output gate (engine "recoveries" bigger than the
+  input at readability <20 are rejected → falls through to real signal;
+  live-seen on Hercules v1.6.x: 366KB beautified template noise),
+  `src/static-peel.js` blob hygiene (high-entropy/binary constants
+  summarized, never inlined — the megabyte-noise exploit), `src/postprocess.js`
+  wall-header handling, `src/detect.js` corpus-mined signatures: new families
+  Asteria, Catph, Devlyx, Dexfuscator, RealVux, LPS + PSU 4.x banners,
+  herrtt's obfuscator (Boronide), IronBrew prelude/generator fingerprints,
+  luaobfuscator.com prelude fingerprint, bannerless IronBrew2.
+- **`test/thirdparty-samples.js`** (new, 20 checks): tier3 injection recovers
+  raw-concat strings end-to-end (strict tiers starve by construction),
+  nested-peel executes a `return(function(…` chunk in a fresh jail and
+  captures its strings, per-sample worker contract (parseable JSON, no
+  throw, ok:false always carries a reason), calibrated capture floors per
+  fixture (regression floor — a drop means jail regression, the files are
+  immutable), majority-capture aggregate.
+
+### Verified
+- **ALL 17 TEST SUITES PASSED** (16 existing + thirdparty-samples), including
+  harvest-chunks (env shaping), layers (multi-layer peel), luraph14, vm-lift,
+  service-commands — the jail changes regress nothing.
+- Corpus floors observed at v2.10.0: ironbrew2 15,114 · customprometheus
+  5,768 · custom 2,172 · wearedevs2 1,751 · luraph2 1,206 · ironbrew1 283 ·
+  wearedevs 136 · luraph4/6 graceful partials · 9/17 samples capture >0.
+
+### Version
+- 2.9.0 → 2.10.0.
+
+
 ## v2.9.0 — Every service gets its own command + `.l` Environment Logger
 
 **User directive: "Each service should have its own command" — the exact

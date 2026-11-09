@@ -242,8 +242,8 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
 
       if (route === 'pyarmor') outcome = await runPyarmorRoute(inputPath, detected, stage, buffer);
       else if (route === 'webcrack') outcome = await runWebcrackRoute(inputPath, buffer, stage);
-      else if (route === 'lua-engine') outcome = await runLuaEngineRoute(inputPath, detected, stage);
-      else outcome = await runAutoRoute(inputPath, detected, stage);
+      else if (route === 'lua-engine') outcome = await runLuaEngineRoute(inputPath, detected, stage, buffer.length);
+      else outcome = await runAutoRoute(inputPath, detected, stage, buffer.length);
 
       if (!outcome.ok) {
         // Last resort: opposite toolchain — engine auto for JS-looking input
@@ -306,9 +306,10 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
       }
 
       // Choose the best recovered file — accuracy-first: drop passthrough
-      // echoes, post-process, then pick the FIRST candidate whose output
-      // parses (verifyBest semantics). Verification rides the result so the
-      // reply can show a real "syntax ✓" badge instead of a promise.
+      // echoes, drop JUNK (v2.10.0 quality gate), post-process, then pick the
+      // FIRST candidate whose output parses (verifyBest semantics).
+      // Verification rides the result so the reply can show a real
+      // "syntax ✓" badge instead of a promise.
       const verifyLang = lang === 'js' ? 'js' : lang === 'lua' ? 'lua' : null;
       let picked = null; // { name, data, post, verification }
       const candidateCount = Math.min(outcome.files.length, 6);
@@ -326,7 +327,20 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
         let nuls = 0;
         for (const b of probe) if (b === 0) nuls += 1;
         const binaryOutput = nuls > probe.length * 0.05;
+
         const post = binaryOutput ? { data: raw, passes: [] } : postprocessFile(f.name, raw);
+
+        // v2.10.0 junk-output gate (text candidates, AFTER post-processing —
+        // beautify can inflate a machine-grade template further, seen live on
+        // Hercules v1.6.x: 349 KB in → 232 KB engine out → 366 KB beautified at
+        // readability 10). Such output is the engine's runner template, not
+        // recovered code — skipping it falls through to harvest/static-peel,
+        // which deliver real signal instead of noise.
+        if (!binaryOutput && isJunkEngineOutput(post.data, buffer.length)) {
+          stage('accuracy:junk', `candidate ${i + 1}/${candidateCount} (${f.name}) is ${post.data.length}B machine-grade expansion — rejected`);
+          continue;
+        }
+
         const verification = binaryOutput
           ? { status: 'unverifiable', lang: 'binary', detail: 'binary output — no source parser' }
           : verifyCode(post.data.toString('utf8'), { lang: verifyLang, filename: f.name });
@@ -705,7 +719,7 @@ const HARVEST_ELIGIBLE = new Set([
   'luraph', 'moonsec_v1', 'moonsec_v2', 'moonsec_v3', 'ironbrew1', 'ironbrew2', 'ironbrew3',
   'psu', 'boronide', 'darksec', 'luaobfuscator_com', 'wearedevs', 'slua', 'moonveil',
   '77fuscator', 'xhider', 'goofyscator', 'ironveil', '25ms', 'synapsexen', 'wynfuscate',
-  'clyde', 'luast',
+  'clyde', 'luast', 'asteria', 'catph', 'devlyx', 'dexfuscator', 'realvux', 'lps',
   'unknown',
 ]);
 
@@ -928,6 +942,21 @@ function engineMarkerShim(buffer, detectedId) {
   return { buffer, shimLine: null };
 }
 
+/**
+ * v2.10.0 — junk-output detector. An engine "recovery" that is BIGGER than
+ * the input and machine-grade (readability < 20) is the engine's own runner
+ * template, not recovered code. Real deobfuscated source shrinks or at least
+ * reads like code; never deliver template noise when harvest/static-peel can
+ * deliver signal.
+ */
+function isJunkEngineOutput(outData, inLen) {
+  try {
+    if (outData.length <= inLen * 1.02) return false;
+    const rs = readabilityScore(outData.toString('utf8'), 'lua');
+    return Number.isFinite(rs?.score) && rs.score < 20;
+  } catch { return false; }
+}
+
 function isPassthrough(outData, inBuffer, shimLine, detectedId) {
   try {
     if (outData.equals(inBuffer)) return true;
@@ -953,7 +982,20 @@ function isPassthrough(outData, inBuffer, shimLine, detectedId) {
 }
 
 // ---- routes -----------------------------------------------------------------
-async function runLuaEngineRoute(inputPath, detected, stage) {
+
+/** v2.10.0 — a sweep "hit" must actually peel: outputs within ~5% of the
+ *  input size are engine echoes (seen live: the prometheus family "hit" on
+ *  IronBrew2 samples returned the input + 20 B). Echoes fall through so the
+ *  harvest/static-peel tiers deliver real signal. */
+function sweepHitIsReal(outcome, inLen) {
+  try {
+    const sz = outcome.files?.[0]?.size ?? outcome.files?.[0]?.buffer?.length ?? 0;
+    if (!sz) return true; // unknown size — accept (downstream guards still apply)
+    return sz < inLen * 0.95;
+  } catch { return true; }
+}
+
+async function runLuaEngineRoute(inputPath, detected, stage, inLen = 0) {
   const fam = ENGINE_FAMILY_BY_DETECT_ID[detected.id];
   if (fam) {
     stage('lua-peel', `targeted family ${fam}`);
@@ -963,26 +1005,32 @@ async function runLuaEngineRoute(inputPath, detected, stage) {
   }
   stage('auto', 'engine auto pipeline (depth 6)');
   const b = await engine.autoRun(inputPath, { maxDepth: 6 });
-  if (b.ok) return { ...b, how: 'engine auto' };
+  if (b.ok && sweepHitIsReal(b, inLen)) return { ...b, how: 'engine auto' };
+  if (b.ok) stage('auto:echo', `output ≈ input — not a real peel`);
   if (b.workDir) await engine.cleanupWorkDir(b.workDir);
   stage('sweep', 'all engine lua families');
   for (const f of engine.ENGINE_LUA_FAMILIES) {
     if (f === fam) continue;
     const c = await engine.luaPeel(inputPath, f);
-    if (c.ok) { stage('sweep:hit', f); return { ...c, how: `lua sweep (${f})` }; }
+    if (c.ok && sweepHitIsReal(c, inLen)) { stage('sweep:hit', f); return { ...c, how: `lua sweep (${f})` }; }
+    if (c.ok) stage('sweep:echo', `${f} — output ≈ input, not a real peel`);
+    if (c.workDir) await engine.cleanupWorkDir(c.workDir);
   }
   return { ok: false, note: familyWallNote(detected) };
 }
 
-async function runAutoRoute(inputPath, _detected, stage) {
+async function runAutoRoute(inputPath, _detected, stage, inLen = 0) {
   stage('auto', 'engine auto pipeline (depth 6, packer chains included)');
   const b = await engine.autoRun(inputPath, { maxDepth: 6 });
-  if (b.ok) return { ...b, how: 'engine auto' };
+  if (b.ok && sweepHitIsReal(b, inLen)) return { ...b, how: 'engine auto' };
+  if (b.ok) stage('auto:echo', 'output ≈ input — not a real peel');
   if (b.workDir) await engine.cleanupWorkDir(b.workDir);
   stage('sweep', 'all engine lua families');
   for (const f of engine.ENGINE_LUA_FAMILIES) {
     const c = await engine.luaPeel(inputPath, f);
-    if (c.ok) { stage('sweep:hit', f); return { ...c, how: `lua sweep (${f})` }; }
+    if (c.ok && sweepHitIsReal(c, inLen)) { stage('sweep:hit', f); return { ...c, how: `lua sweep (${f})` }; }
+    if (c.ok) stage('sweep:echo', `${f} — output ≈ input, not a real peel`);
+    if (c.workDir) await engine.cleanupWorkDir(c.workDir);
   }
   return { ok: false, note: 'The engine auto pipeline (packer chains included) recovered nothing from this sample.' };
 }
@@ -999,6 +1047,12 @@ const FAMILY_WALL_NOTES = {
   moonsec_v2: "This MoonSec V2 build derives its keys at runtime (escrow mode). The jailed VM runs this dispatcher end-to-end against a production-shaped Roblox environment (Is* probes return production booleans, executor-only methods read nil, PlaceId/JobId real-shaped) and replays its key schedule. v1.9.0 behavioral VM lifting: instruction stream + decrypted constant pool captured at the dispatcher, every opcode probed against the build's own handlers, bytecode transpiled into a runnable runner. Decrypt-then-load variants hand their full decrypted source to load() for complete recovery. The very newest anti-dump builds may still fragment.",
   clyde: 'Clyde wraps its payload behind a custom loader. The jailed dumper run captures decrypted load() chunks and the string pool, and the unconditional static peel recovers every readable constant — the .clyde command runs this chain end-to-end.',
   luast: 'LuaST (luast.clv.cloud) levels 1–3 are wrapper/string-array schemes. The static peel + jailed dumper run recover constants, captured chunks and readable structure — the .luast command runs this chain end-to-end.',
+  asteria: 'Asteria v1.x drives the payload through a numbered function-table dispatcher. The jailed dumper captures the decrypted chunks and pool; the static peel recovers the constants.',
+  catph: 'Catph builds on a Prometheus-lineage wrapper with an encoded-name bootstrap table. The pipeline sweeps the Prometheus engine family, then the jailed dumper + static peel recover the readable layer.',
+  devlyx: 'Devlyx wraps its payload behind a branded loader. The jailed dumper captures decrypted load() chunks and the string pool; the static peel recovers every readable constant.',
+  dexfuscator: 'Dexfuscator v5.x uses call-wrapping and encoded constants. The static peel + jailed dumper run recover the readable constants and any load() chunks.',
+  realvux: 'RealVux builds resolve stdlib names through byte-arithmetic at runtime. The jailed dumper replays that resolution and captures the decrypted chunks and pool.',
+  lps: 'LPS builds use a Prometheus-lineage VM wrapper with LuaJIT-style numeric literals. The pipeline sweeps the Prometheus engine family, then the jailed dumper + static peel recover the readable layer.',
 };
 
 function familyWallNote(detected) {

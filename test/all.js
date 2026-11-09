@@ -27,6 +27,7 @@ const SUITES = [
   { name: 'deobf-ack.js', timeoutMs: 120_000 },  // .deobf mention-status + background delivery (v2.7.1)
   { name: 'final-scan-fixes.js', timeoutMs: 120_000 }, // utf8-safe conversion + pool reconstruction (v2.8.0)
   { name: 'service-commands.js', timeoutMs: 300_000 }, // per-service commands + environment logger (v2.8.0)
+  { name: 'thirdparty-samples.js', timeoutMs: 420_000 }, // leaked-corpus regression floor + 25ms techniques (v2.10.0)
 ];
 
 let failed = 0;

@@ -23,7 +23,7 @@
  */
 
 export const MAX_STR = 8192;
-export const MAX_SINK = 60_000;
+export const MAX_SINK = 24_000;
 export const MAX_CHUNKS = 64;
 export const MAX_CHUNK_BYTES = 2 * 1024 * 1024;
 export const MAX_CHUNKS_TOTAL = 3 * 1024 * 1024;
@@ -35,6 +35,7 @@ _BX_LOG = {}
 _BX_CHUNKS = {}
 local __N = 0
 local __C = 0
+local __B = 0
 function __bx_rec(v)
   -- _BX_MUTE: instrumentation (lift worker serialization/probing) sets this
   -- while building its own strings so jail chatter never pollutes the pool.
@@ -43,11 +44,27 @@ function __bx_rec(v)
   if rawget(_G, '_BX_MUTE') then return end
   if type(v) == 'string' then
     local n = #v
-    if n >= 3 and n <= ${MAX_STR} and __N < ${MAX_SINK} then
+    -- v2.10.0 byte budget: retained sink bytes are capped so decryptors that
+    -- synthesize megabytes of string data cannot balloon the VM heap (the
+    -- 2GB-abort class of failure). The best strings arrive early; late noise
+    -- is dropped, not retained.
+    if n >= 3 and n <= ${MAX_STR} and __N < ${MAX_SINK} and __B + n <= 2097152 then
       __N = __N + 1
+      __B = __B + n
       _BX_SINK[__N] = v
     end
   end
+end
+
+-- _BXCAP: passthrough capturer for source-transform instrumentation
+-- (v2.10.0). The harvester's 25ms-style concat-injection tier rewrites
+-- pool-table concat expressions into _BXCAP(<expr>) before the run; strings
+-- the VM builds by raw '..' concatenation — invisible to the function sinks
+-- above — are recorded the moment they are joined. Passthrough keeps
+-- expression semantics identical.
+function _BXCAP(v)
+  __bx_rec(v)
+  return v
 end
 
 -- string/table sinks

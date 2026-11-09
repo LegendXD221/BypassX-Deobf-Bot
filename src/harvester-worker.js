@@ -58,13 +58,21 @@ if (!INPUT) {
 
 let L = null;
 let dumped = false;
+// v2.10.0 nested-peel accumulators: data captured from re-running VM chunks
+// in fresh jail states (merged into the result by dumpAndExit).
+const extraStrings = [];
+const extraChunks = [];
+const extraLog = [];
+const nestedStates = [];
 
 function dumpAndExit(note) {
   if (dumped) return;
   dumped = true;
   try {
     const rawStrings = L ? readStrings('_BX_SINK', MAX_SINK) : [];
+    for (const s of extraStrings) rawStrings.push(s);
     const logLines = L ? readStrings('_BX_LOG', 200) : [];
+    for (const s of extraLog) if (!logLines.includes(s)) logLines.push(s);
     let ran = false;
     let runError = null;
     if (L) {
@@ -95,6 +103,13 @@ function dumpAndExit(note) {
       if (bytes > 4 * 1024 * 1024) break;
     }
     const chunks = readChunks();
+    let chunkBytes = chunks.reduce((a, s) => a + s.length, 0);
+    for (const s of extraChunks) {
+      if (chunks.length >= MAX_CHUNKS || chunkBytes >= MAX_CHUNKS_TOTAL) break;
+      if (s.length < 8 || chunks.includes(s)) continue;
+      chunks.push(s);
+      chunkBytes += s.length;
+    }
     writeOut({ ok: true, ran, runError, budgetHit: budget <= 0, partial: Boolean(note), note: note || null, strings, chunks, log: logLines.slice(0, 50) });
   } catch {
     writeOut({ ok: true, ran: false, strings: [], chunks: [], log: [] });
@@ -115,12 +130,21 @@ try {
 L = lauxlib.luaL_newstate();
 lualib.luaL_openlibs(L);
 
-// ---- instruction budget -----------------------------------------------------
+// ---- instruction + memory budget --------------------------------------------
 let budget = BUDGET_TOTAL;
+// v2.10.0: heap guard — fatal V8 OOM aborts are UNCAUGHT-BY-DESIGN and lose
+// the partial pool; a luaL_error from inside the count hook is a normal Lua
+// error the runner pcalls absorb. Checked every hook fire (2.5M instr) —
+// allocation overshoot between fires is bounded far below the 256MB flag.
+const HEAP_CAP = 192e6;
+function heapOver() {
+  try { return process.memoryUsage().heapUsed > HEAP_CAP; } catch { return false; }
+}
 try {
   lua.lua_sethook(L, () => {
     budget -= HOOK_INTERVAL;
     if (budget <= 0) lauxlib.luaL_error(L, to_luastring('bx: instruction budget exceeded'));
+    if (heapOver()) lauxlib.luaL_error(L, to_luastring('bx: memory budget exceeded'));
   }, lua.LUA_MASKCOUNT, HOOK_INTERVAL);
 } catch { /* hooks unsupported — spawnHardened SIGKILL is the backstop */ }
 
@@ -128,6 +152,20 @@ try {
 // Shared jailed prelude lives in jail-prelude.js (identical for the harvester
 // and the VM lifter — one jail, one behavior). v1.9.0: extracted verbatim.
 const PRELUDE = jailPrelude.PRELUDE;
+
+/** 25ms-style concat-capture injection (v2.10.0, retry tier 3 — technique
+ *  credit: the leaked 25ms luraphdump.lua). Luraph-family VM wrappers rebuild
+ *  decrypted strings with RAW `..` concatenation of pool-table reads
+ *  (`v_a[v_b[v_c]] .. v_a[v_b[v_d]]`) — a shape no string/function sink ever
+ *  sees. Wrapping each such expression in _BXCAP(...) records the joined
+ *  string the instant the VM builds it; the capturer is a passthrough so
+ *  expression semantics are unchanged. */
+function injectConcatCapture(code) {
+  const re = /([A-Za-z][A-Za-z]?\[[A-Za-z][A-Za-z]?\[[\w_]+\]\]\s*\.\.\s*[A-Za-z][A-Za-z]?\[[A-Za-z][A-Za-z]?\[[\w_]+\]\])/g;
+  let matches = 0;
+  const out = code.replace(re, (m) => { matches += 1; return `_BXCAP(${m})`; });
+  return { code: out, matches };
+}
 
 /** Forgiving-stack source transform (retry tier 2): give every `local x={}`
  *  a metatable defaulting numeric reads to 0 so VM dispatchers that read
@@ -165,21 +203,66 @@ function usableCount() {
   } catch { return 0; }
 }
 
+/** Fresh jailed state: new fengari VM + budget hook (shared budget) + prelude.
+ *  Used by the nested-peel tier to run captured VM chunks in isolation. */
+function newState() {
+  const NL = lauxlib.luaL_newstate();
+  lualib.luaL_openlibs(NL);
+  try {
+    lua.lua_sethook(NL, () => {
+      budget -= HOOK_INTERVAL;
+      if (budget <= 0) lauxlib.luaL_error(NL, to_luastring('bx: instruction budget exceeded'));
+      if (heapOver()) lauxlib.luaL_error(NL, to_luastring('bx: memory budget exceeded'));
+    }, lua.LUA_MASKCOUNT, HOOK_INTERVAL);
+  } catch { /* hooks unsupported — spawnHardened SIGKILL is the backstop */ }
+  const rc = lauxlib.luaL_dostring(NL, to_luastring(PRELUDE));
+  return rc === lua.LUA_OK ? NL : null;
+}
+
+/** v2.10.0 multi-layer peel: chunks the sample handed to load() that are
+ *  themselves VM builds (`return(function(…` — Luraph-style) are re-run in a
+ *  FRESH jail so the inner obfuscator decrypts ITS pool into our sinks too
+ *  (technique credit: 25ms loadstring interception, applied recursively).
+ *  Bounded: 2 chunks max, largest first, shared instruction budget with a
+ *  hard floor so depth-0 data is never starved. */
+function tryNestedPeel() {
+  try {
+    const eligible = readChunks()
+      .filter((s) => /^return\s*\(?\s*function\s*\(/.test(s.slice(0, 64)) && s.length >= 512)
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 2);
+    for (let i = 0; i < eligible.length; i += 1) {
+      if (budget <= 20e6) break;
+      const NL = newState();
+      if (!NL) break;
+      nestedStates.push(NL);
+      let r;
+      try { r = runOnceOn(NL, eligible[i]); } catch { r = null; }
+      const got = readStringsFrom(NL, '_BX_SINK', MAX_SINK);
+      extraStrings.push(...got);
+      extraChunks.push(...readStringsFrom(NL, '_BX_CHUNKS', 32));
+      extraLog.push(`peel: nested chunk ${i + 1} (${eligible[i].length}B) → ${got.length} strings${r && r.err ? ` — ${String(r.err).slice(0, 80)}` : ''}`);
+    }
+  } catch { /* peel is best-effort — depth-0 data stands alone */ }
+}
+
 /** One jailed run over `source`. Loads + pcalls it, leaves the sink populated. */
-function runOnce(source) {
+function runOnceOn(state, source) {
   const chunk = to_luastring(source, true);
-  let rc = lauxlib.luaL_loadbuffer(L, chunk, chunk.length, to_luastring('@bypassx'));
-  if (rc !== lua.LUA_OK) return { loaded: false, err: safeToJsString(L, -1, 'load error').slice(0, 200) };
-  lua.lua_setglobal(L, to_luastring('_BX_F'));
-  rc = lauxlib.luaL_dostring(L, to_luastring(`
+  let rc = lauxlib.luaL_loadbuffer(state, chunk, chunk.length, to_luastring('@bypassx'));
+  if (rc !== lua.LUA_OK) return { loaded: false, err: safeToJsString(state, -1, 'load error').slice(0, 200) };
+  lua.lua_setglobal(state, to_luastring('_BX_F'));
+  rc = lauxlib.luaL_dostring(state, to_luastring(`
     _BX_RESULT = {}
     local __ok, __e = pcall(_BX_F)
     _BX_RESULT.ok = __ok
     if not __ok then _BX_RESULT.err = tostring(__e) end
   `));
-  if (rc !== lua.LUA_OK) return { loaded: true, err: `runner: ${safeToJsString(L, -1, 'runner error').slice(0, 160)}` };
+  if (rc !== lua.LUA_OK) return { loaded: true, err: `runner: ${safeToJsString(state, -1, 'runner error').slice(0, 160)}` };
   return { loaded: true, err: null };
 }
+
+function runOnce(source) { return runOnceOn(L, source); }
 
 let rcPrelude = lauxlib.luaL_dostring(L, to_luastring(PRELUDE));
 if (rcPrelude !== lua.LUA_OK) fail(`prelude failed: ${safeToJsString(L, -1, 'prelude error')}`);
@@ -218,33 +301,54 @@ try {
     }
     if (best && best.usable >= 3) break;
   }
+  // v2.10.0 tier 3 (25ms concat-capture injection): only when the sinks are
+  // still starving — instrumented runs are a last resort, never the default.
+  if (!best || best.usable < 3) {
+    for (const source of [transformed, code]) {
+      if (!source || budget <= 20e6) continue;
+      const inj = injectConcatCapture(source);
+      if (inj.matches < 1 || inj.code === source) continue;
+      let r;
+      try { r = runOnce(inj.code); } catch { continue; }
+      const usable = usableCount();
+      if (!best || usable > best.usable) {
+        best = { usable, tier: 'concat-inject', note: r && r.err ? String(r.err).slice(0, 120) : null };
+      }
+      if (best.usable >= 3) break;
+    }
+    extraLog.push(`tier3 concat-inject: ${best ? `${best.usable} usable strings (tier ${best.tier})` : 'no effect'}`);
+  }
   // The sink currently reflects the LAST run; if the best tier was an earlier
   // attempt we cannot rewind a destroyed state — accept last-run data when it
   // is at least as good, which the usableCount check above guarantees for the
   // common case (first successful tier wins because we stop at >= 3).
-  if (best && best.note) dumpAndExit(`retry tier ${best.tier}: ${best.note}`);
+  if (best && best.note && budget <= 0) dumpAndExit(`retry tier ${best.tier}: ${best.note}`);
 } catch (e) {
   const budgetHit = budget <= 0;
   if (!budgetHit) fail(`run aborted: ${String(e && e.message || e).slice(0, 200)}`);
 }
 
+// v2.10.0: captured VM chunks get their own jailed pass before the dump.
+tryNestedPeel();
 dumpAndExit(null);
-function readStrings(name, cap) {
+function readStringsFrom(state, name, cap) {
   const out = [];
-  lua.lua_getglobal(L, to_luastring(name));
-  if (!lua.lua_istable(L, -1)) { lua.lua_pop(L, 1); return out; }
-  const n = lua.lua_rawlen(L, -1);
+  lua.lua_getglobal(state, to_luastring(name));
+  if (!lua.lua_istable(state, -1)) { lua.lua_pop(state, 1); return out; }
+  const n = lua.lua_rawlen(state, -1);
   for (let i = 1; i <= Math.min(n, cap); i += 1) {
-    lua.lua_rawgeti(L, -1, i);
-    if (lua.lua_isstring(L, -1)) {
-      const s = safeToJsString(L, -1);
+    lua.lua_rawgeti(state, -1, i);
+    if (lua.lua_isstring(state, -1)) {
+      const s = safeToJsString(state, -1);
       if (s) out.push(s);
     }
-    lua.lua_pop(L, 1);
+    lua.lua_pop(state, 1);
   }
-  lua.lua_pop(L, 1);
+  lua.lua_pop(state, 1);
   return out;
 }
+
+function readStrings(name, cap) { return readStringsFrom(L, name, cap); }
 
 /** Read captured load()/loadstring() chunks (byte-budgeted, deduped). */
 function readChunks() {
