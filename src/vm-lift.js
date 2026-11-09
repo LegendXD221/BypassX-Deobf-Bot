@@ -65,16 +65,20 @@ function pcAnalysis(probes) {
   timeline.sort((a, b) => a.pc - b.pc);
   // jump delta per op: for a probe record served at pc, the NEXT served pc
   // (in op order) minus pc — >1 means the handler moved the pc.
-  const jumps = new Map();
+  const jumps = new Map(); // op -> max observed delta
+  const deltas = new Map(); // op -> ALL observed deltas (v2.13.0 CHECK*-lite)
   for (const [op, pcs] of byOp) {
-    const deltas = [];
+    const all = [];
     for (let i = 0; i < pcs.length; i++) {
       const next = byOp.get(op)[i + 1];
-      if (next !== undefined && next - pcs[i] > 1) deltas.push(next - pcs[i]);
+      if (next !== undefined && next - pcs[i] !== 1) all.push(next - pcs[i]);
     }
-    if (deltas.length) jumps.set(op, Math.max(...deltas));
+    if (all.length) {
+      jumps.set(op, Math.max(...all));
+      deltas.set(op, [...new Set(all)].sort((a, b) => a - b));
+    }
   }
-  return { byOp, jumps, timeline };
+  return { byOp, jumps, deltas, timeline };
 }
 
 const ARITH_NAME = {
@@ -183,7 +187,7 @@ export function liftFromHarvest(lift, { detectedName = 'VM', version = '' } = {}
   const rows = snap.instrs.filter((r) => Array.isArray(r) && r.length >= 1);
   if (rows.length < 4) return { ok: false, note: 'instruction stream too small' };
 
-  const { jumps } = pcAnalysis(lift.probes);
+  const { jumps, deltas: opDeltas } = pcAnalysis(lift.probes);
   // the opid that exited cleanly = RETURN semantics
   const lastPc = lift.probes
     .flatMap((p) => p.ev.filter((e) => /^PC/.test(e)).map((e) => Number(e.slice(2))))
@@ -223,6 +227,10 @@ export function liftFromHarvest(lift, { detectedName = 'VM', version = '' } = {}
   L.push('-- method: jailed VM run — instruction stream + constant pool captured at the');
   L.push('-- dispatcher, every opcode probed against the obfuscator\'s own handlers,');
   L.push('-- semantics learned from behavior, bytecode transpiled to this runner.');
+  L.push('-- branch mode: CHECK*-lite — every conditional/unconditional edge carries a');
+  L.push('-- branch comment ("ran, if id: N" / "didnt run (else)") in the leaked');
+  L.push('-- SecureEnv CHECKIF style; skip deltas are the skip the handler itself');
+  L.push('-- performed on probed operands, not a guess.');
   L.push('');
   L.push(`-- decrypted constant pool (${consts.length} entries)`);
   for (let i = 0; i < Math.min(consts.length, 64); i++) {
@@ -305,15 +313,36 @@ export function liftFromHarvest(lift, { detectedName = 'VM', version = '' } = {}
         }
         break;
       }
+      case 'jmp': {
+        // v2.13.0: JMP used to fall into the default (unclassified) arm and
+        // advance by 1 — silently corrupting control flow. Emit the real edge:
+        // the delta the handler itself performed on probed operands.
+        const dl = (opDeltas.get(op) || []).filter((d) => d !== 0);
+        const d0 = dl.length ? dl[dl.length - 1] : Math.max(1, jumps.get(op) || 1);
+        const target = pc + 1 + d0; // 1-based target pc label
+        const back = d0 < 0;
+        L.push(`    ${head} → [${target}]${back ? ' (loop back-edge)' : ''} · raw { ${raw} }`);
+        L.push(`    __pc = __pc + ${d0} -- CHECK*-lite: unconditional → [${target}]${dl.length > 1 ? ` · observed deltas ${dl.map((d) => (d > 0 ? '+' + d : String(d))).join('/')}` : ''}`);
+        break;
+      }
       case 'test': {
         const opSym = cls.cmp === 'eq' ? '==' : cls.cmp === 'lt' ? '<' : '<=';
-        // conditional skip: jump operand guessed from the highest-record field
-        const delta = Math.max(...row.slice(1).filter((x) => typeof x === 'number'), 1);
+        // v2.13.0 CHECK*-lite: prefer the skip the handler OBSERVED to perform
+        // on probed operands; structural guess (max numeric operand field) is
+        // only the fallback.
+        const observed = (opDeltas.get(op) || []).filter((d) => d > 1);
+        const delta = observed.length
+          ? observed[observed.length - 1]
+          : Math.max(...row.slice(1).filter((x) => typeof x === 'number'), 1);
+        const takenAt = pc + 1 + delta;
+        const elseAt = pc + 2;
+        const obsTxt = observed.length ? `probed skip +${delta}` : `skip +${delta} (guessed from operand fields)`;
         L.push(`    ${head} if V${a} ${opSym} V${b} skips ${delta} · raw { ${raw} }`);
+        L.push(`    -- CHECK*-lite branch if id: ${pc + 1} · ${obsTxt} · taken → [${takenAt}] · not taken → [${elseAt}] (fall through)`);
         L.push(`    if V${a} ${opSym} V${b} then`);
-        L.push(`      __pc = __pc + ${delta}`);
+        L.push(`      __pc = __pc + ${delta} -- ran, if id: ${pc + 1} (taken)`);
         L.push('    else');
-        L.push('      __pc = __pc + 1');
+        L.push(`      __pc = __pc + 1 -- didnt run (else) → [${elseAt}]`);
         L.push('    end');
         break;
       }
@@ -326,7 +355,7 @@ export function liftFromHarvest(lift, { detectedName = 'VM', version = '' } = {}
         L.push('    __pc = __pc + 1');
         continue;
     }
-    if (cls.kind !== 'test' && cls.kind !== 'return') L.push(`    __pc = __pc + 1`);
+    if (cls.kind !== 'test' && cls.kind !== 'return' && cls.kind !== 'jmp') L.push(`    __pc = __pc + 1`);
   }
   L.push('  else');
   L.push('    return -- fell off the program');
@@ -336,13 +365,15 @@ export function liftFromHarvest(lift, { detectedName = 'VM', version = '' } = {}
 
   const code = L.join('\n') + '\n';
   const v = verifyCode(code, { lang: 'lua', filename: 'devirtualized.lua' });
+  const branchCount = realOpIds.filter((op) => ['test', 'jmp'].includes(classes.get(op).kind)).length;
   return {
     ok: true,
     code,
     classified,
     total: realOpIds.length,
     unknown,
-    how: `VM devirtualization — ${classified}/${realOpIds.length} opcodes behaviorally classified, ${rows.length} instructions transpiled (${v.status === 'verified' ? 'syntax verified' : v.status})`,
+    branches: branchCount,
+    how: `VM devirtualization — ${classified}/${realOpIds.length} opcodes behaviorally classified, ${rows.length} instructions transpiled, ${branchCount} branch edge(s) annotated CHECK*-lite (${v.status === 'verified' ? 'syntax verified' : v.status})`,
     note: v.status !== 'verified' ? v.detail : null,
   };
 }

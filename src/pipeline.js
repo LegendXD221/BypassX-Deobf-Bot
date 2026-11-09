@@ -6,6 +6,7 @@
  * Discord reply can show exactly what happened.
  */
 import fsp from 'node:fs/promises';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CONFIG, ensureVarDir } from './config.js';
@@ -17,6 +18,7 @@ import { postprocessFile } from './postprocess.js';
 import { spawnHardened } from './security.js';
 import { harvestConstants, harvestToLua, liftVM } from './harvest.js';
 import { verifyCode } from './validate.js';
+import { prometheusDeepPass } from './prometheus-deep.js';
 import { transformLuauToLua } from './luau-shim.js';
 import { parsePayload, captureKeyCarriers, looksLikeLuraphInventory, formatReport } from './luraph15.js';
 import { staticPeel } from './static-peel.js';
@@ -1002,6 +1004,28 @@ function sweepHitIsReal(outcome, inLen) {
 async function runLuaEngineRoute(inputPath, detected, stage, inLen = 0) {
   const fam = ENGINE_FAMILY_BY_DETECT_ID[detected.id];
   if (fam) {
+    // v2.13.0 — Prometheus deep static pass BEFORE the engine peel: undoes the
+    // ConstantArray + rotation + custom-alphabet string decoder BEHAVIORALLY
+    // (the obfuscator's own decoder runs in a jailed Lua state) and inlines
+    // every decoded string at its call site. The engine peel alone only
+    // delivers the pool dump for these builds.
+    if (fam === 'prometheus') {
+      stage('prom-deep', 'string-table rotation + decoder undo (behavioral)');
+      try {
+        const deep = await prometheusDeepPass(fs.readFileSync(inputPath));
+        if (deep) {
+          stage('prom-deep:hit', `${deep.decoded}/${deep.poolSize} pool strings decoded, ${deep.inlined} call site(s) inlined`);
+          return {
+            ok: true,
+            files: [{ name: 'deobfuscated.lua', buffer: Buffer.from(deep.code, 'utf8') }],
+            how: 'prometheus deep static (rotation + decoder undo, behavioral)',
+          };
+        }
+        stage('prom-deep:miss', 'shape not matched — falling through to engine peel');
+      } catch (e) {
+        stage('prom-deep:miss', `error: ${String(e && e.message || e).slice(0, 120)}`);
+      }
+    }
     stage('lua-peel', `targeted family ${fam}`);
     const a = await engine.luaPeel(inputPath, fam);
     if (a.ok) return { ...a, how: `lua peel (${fam})` };

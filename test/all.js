@@ -21,7 +21,8 @@ const SUITES = [
   { name: 'links.js' },          // url detection / normalization / SSRF guards
   { name: 'env-sanity.js' },     // jail exploit floor + detection catalog + unparser alignment (v2.12.0)
   { name: 'luau-shim.js' },      // Luau shim: compound assigns + if-expressions (v1.6.0)
-  { name: 'vm-lift.js', timeoutMs: 300_000 },        // VM devirtualization engine (v1.9.0)
+  { name: 'vm-lift.js', timeoutMs: 300_000 },        // VM devirtualization engine (v1.9.0) + CHECK*-lite branch comments (v2.13.0)
+  { name: 'prometheus-deep.js', timeoutMs: 300_000 }, // Prometheus deep static pass — behavioral decoder undo (v2.13.0)
   { name: 'luraph-ext.js', timeoutMs: 300_000 }, // vendored v15 full-source lift (v2.1.0)
   { name: 'layers.js', timeoutMs: 420_000 },     // multi-layer peel loop + readability (v2.4.0)
   { name: 'luraph14.js', timeoutMs: 420_000 },   // Luraph v14 runtime-state devirtualizer (v2.6.0)

@@ -1,6 +1,104 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.13.0 — external repo scan (5 repos), CHECK*-lite branch comments on the vm-lift devirt output, Prometheus deep static pass
+
+**User directive: "Check if these repos are useful … And also CHECK*-lite branch comments on the vm-lift devirt output."**
+Five external repos evaluated hands-on (two turned out to be dead links; the
+live ones were *executed against real generated samples*, not just read), and
+both asks landed with test-backed results. 19 suites, all green.
+
+### Repo verdicts (full detail: `research/external-repos-2026-11.md`)
+
+- **0x251/Prometheus-DeobfuscatorV2** (55★, live) — useful, mined: PRNG
+  string-decrypt reconstruction, proxy-locals undo, dispatcher flattening.
+  Our new deep pass covers its core ground with a stronger method (§ below).
+- **jte/lua-decompiler** (Rust, actively maintained) — reference-grade
+  Lua 5.1–5.5/LuaJIT/Luau-bytecode decompiler with proven-equivalent-only
+  deobfuscation passes and JMP-spaghetti unflattening. Logged as the future
+  bytecode-lifting node behind our capture stage (not integrated this sweep).
+- **Sk8rz/lua-deobf-actions** (0★) — aggregator whose real value is the
+  vendored tools it carries: a complete static Luraph v14 deserializer in C#
+  (concrete profile intel: `protoFormat 2`, `charTableXorMask 127`,
+  `lcgMultiplier 65 / increment 117`, `floatTag 82`, `stringTag 240`,
+  operand-mode table `0=constant 1=relForward 2=closureRef 4=relBackward
+  7=register` — cross-validation for our behavioral v14 chain), a Java Luraph
+  AST-pass set, a Rust Luau decompiler (medal), and **White**, a Node
+  Prometheus deobfuscator.
+- **White — tested and rejected**: on real Prometheus Weak-preset output it
+  emitted a 7-byte `do end` husk; on its target shapes it produced
+  undecrypted constants and nil-injected garbage (its remove-unused-locals →
+  cleanup-vm-remnants loop destroys live code it cannot prove). Only its
+  sound luaparse AST helpers/emitter were vendored (`vendor/white/`).
+- **Virtualfluembody/prometheus-deobfuscator-rblx** and
+  **WhoIsGenn/deobfuscator** — both 404/dead; nothing to mine.
+
+### New: CHECK*-lite branch comments on the vm-lift devirt output (`src/vm-lift.js`)
+
+Every edge in the devirtualized pc-runner now carries a branch comment in the
+leaked SecureEnv CHECKIF style (`-- ran, if id: N` / `-- didnt run (else)`),
+closing the loop between the UnveilR-V3 intel and our own output format:
+
+- **TEST ops** get `-- CHECK*-lite branch if id: N · <skip provenance> ·
+  taken → [target] · not taken → [target] (fall through)`, and both branch
+  bodies carry the ran/didnt-run comments. The skip delta now prefers the
+  **handler's observed probed behavior** (the skip it actually performed on
+  the probe operands — `pcAnalysis` keeps ALL deltas now, not just the max)
+  and only falls back to the operand-field guess, honestly labeled
+  `(guessed from operand fields)`.
+- **JMP ops — real control-flow bug fixed**: JMP-classified opcodes used to
+  fall into the default `(unclassified)` arm and advance `__pc` by 1,
+  silently corrupting the lifted program's control flow. They now emit the
+  real edge (`__pc = __pc + delta -- CHECK*-lite: unconditional → [target]`)
+  with target label and loop-back-edge marking for negative deltas.
+- Branch stats (`N branch edge(s) annotated CHECK*-lite`) ride the `how`
+  string; `liftFromHarvest` returns `branches`.
+- Suite `test/vm-lift.js` extended to 8 tests: CHECK*-lite markers on the
+  fixture devirt output + a synthetic capture asserting the JMP edge emits
+  correctly and never reaches `(unclassified)`.
+
+### New: Prometheus deep static pass (`src/prometheus-deep.js`, wired into the prometheus route)
+
+The `.prom` route's engine peel only ever delivered the decrypted **string
+pool** for ConstantArray builds (seen live: 4778 B Weak-preset build → 248 B
+pool dump). The new pass runs BEFORE the engine peel and undoes the string
+scaffolding **behaviorally** — zero reimplementation of the obfuscator's
+encoder (it changes between Prometheus versions/configs):
+
+1. luaparse-parse with ranges; locate the wrapper `return(function(...)…)`.
+2. Match, as raw source slices: the all-string **string table** local, the
+   `ipairs({{1,17},…})` two-pointer **rotation loop**, the `A(n) → U[n-K]`
+   **accessor**, and the first `do … end` **decoder block** referencing the
+   table (the custom-alphabet base64/base85 decoders).
+3. Execute those slices **verbatim in a jailed fengari state** (stdlib minus
+   io/os/load, JS-side count-hook budget) — the obfuscator decodes its own
+   pool in place — and read the decoded values back index-by-index.
+4. Inline every `A(<num>)` call site (anywhere in the chunk, including the
+   wrapper's own argument list) with the decoded literal; delete the four
+   scaffolding statements.
+5. **Gates, all-or-nothing**: 100% of literal call sites must resolve; a
+   **scope-aware dangling-reference check** must find zero unshadowed
+   references to the accessor/table names (the obfuscator reuses short names
+   in nested scopes — a naive global search false-aborts); output must
+   re-verify under fengari. Any miss → clean fall-through to the existing
+   engine route (verified live on a 104 KB Medium-preset build: no
+   regression, the multi-layer loop still runs).
+
+**Result:** 4778 B → 4696 B verified code body with `"LocalPlayer"`,
+`"GetService"`, `"WalkSpeed"`, `table.unpack` … visible at their call sites
+(pastefy before/after in the sweep log). Ground-truth fixture pair generated
+with the *actual* Prometheus obfuscator (levno-710, Weak preset, seed 42) is
+vendored at `test/fixtures/prometheus-weak-{src,obf}.lua`; new suite
+`test/prometheus-deep.js` (4 tests: real-build quality, clean-miss safety,
+half-shape destructive-input safety, pipeline wiring asserting the
+`prom-deep:hit` stage wins delivery).
+
+### Notes
+- `test/all.js` now runs 19 suites (`ALL 19 TEST SUITES PASSED`).
+- The 77fuscator-watermarked `customprometheus-obf.lua` fixture is a
+  flattened-dispatch shape, intentionally untouched by the deep pass — it
+  keeps flowing through the engine/harvest chain as before.
+
 ## v2.12.0 — env-sanity suite (the leaked intel is now a permanent regression floor), unparser-aligned output, jail env hardened
 
 **User directive: "Complete every pending task in one sweep — I want result and success."**

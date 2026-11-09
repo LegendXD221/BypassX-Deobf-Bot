@@ -71,6 +71,46 @@ test('liftFromHarvest: table-dispatch → 10/10 classified, verified, constants 
   assert.ok(r.code.includes('TEST-EQ'), 'TEST op missing from output');
 });
 
+test('liftFromHarvest: CHECK*-lite branch comments on the devirt output (v2.13.0)', async () => {
+  const { liftFromHarvest } = await import(path.join(root, 'src', 'vm-lift.js'));
+  const { verifyCode } = await import(path.join(root, 'src', 'validate.js'));
+  const d = runWorker(path.join(root, 'test', 'fixtures', 'vm-table-dispatch.lua'));
+  const r = liftFromHarvest(d.lift, { detectedName: 'MoonSec V3 (fixture)', version: 'escrow' });
+  assert.equal(r.ok, true, r.note);
+  const v = verifyCode(r.code, { lang: 'lua', filename: 'devirtualized.lua' });
+  assert.equal(v.status, 'verified', v.detail);
+  // CHECK*-lite markers: leaked SecureEnv CHECKIF comment style on every edge
+  assert.ok(r.code.includes('branch mode: CHECK*-lite'), 'header missing');
+  assert.ok(r.code.includes('CHECK*-lite branch if id:'), 'branch-id comment missing');
+  assert.ok(r.code.includes('-- ran, if id:'), '"ran, if id" comment missing');
+  assert.ok(r.code.includes('-- didnt run (else)'), '"didnt run (else)" comment missing');
+  assert.ok(r.code.includes('· taken → ['), 'taken target missing');
+  assert.ok(r.code.includes('(fall through)'), 'fall-through label missing');
+  assert.ok(r.branches >= 1, `branch count: ${r.branches}`);
+  assert.ok(/branch edge\(s\)/.test(r.how), 'how string missing branch stat');
+});
+
+test('liftFromHarvest: JMP opcodes emit real edges, not (unclassified) (v2.13.0 fix)', async () => {
+  const { liftFromHarvest } = await import(path.join(root, 'src', 'vm-lift.js'));
+  const { verifyCode } = await import(path.join(root, 'src', 'validate.js'));
+  // synthetic capture: op 1 = LOADK (CR1 + SW2), op 2 = JMP (PC reads 5 → 8 → 11 = delta 3)
+  const lift = {
+    snap: { mode: 'rows', rows: 4, opids: [1, 2], instrs: [[1, 1], [2, 1], [1, 2], [2, 1]], consts: ['print'] },
+    probes: [
+      { op: 1, ev: ['PC5', 'PC6', 'PC7', 'PC8', 'CR1', 'SW2:x', 'CR2', 'SW3:x'] },
+      { op: 2, ev: ['PC5', 'PC8', 'PC11'] },
+    ],
+    ended: 'error',
+  };
+  const r = liftFromHarvest(lift, { detectedName: 'Synthetic VM' });
+  assert.equal(r.ok, true, r.note);
+  const v = verifyCode(r.code, { lang: 'lua', filename: 'devirtualized.lua' });
+  assert.equal(v.status, 'verified', v.detail);
+  assert.ok(r.code.includes('] JMP → [5]'), `JMP edge missing:\n${r.code}`);
+  assert.ok(r.code.includes('__pc = __pc + 3 -- CHECK*-lite: unconditional → [5]'), 'JMP target advance missing');
+  assert.ok(!r.code.includes('(unclassified)'), 'unclassified arm reached — JMP fell through');
+});
+
 test('liftFromHarvest: if-chain → verified transpile (Luraph-style shape)', async () => {
   const { liftFromHarvest } = await import(path.join(root, 'src', 'vm-lift.js'));
   const { verifyCode } = await import(path.join(root, 'src', 'validate.js'));
