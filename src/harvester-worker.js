@@ -304,19 +304,24 @@ if (rcPrelude !== lua.LUA_OK) fail(`prelude failed: ${safeToJsString(L, -1, 'pre
 // stack transform keeps unwritten-register reads alive so VM dispatchers
 // finish decrypting their pool instead of dying on nil arithmetic.
 let best = null;
+let transformed = code;
+let repaired = null; // v2.14.0 — lenient invalid-\X-escape repair tier
 try {
-  let transformed = code;
-  try {
-    const mod = await import('./luau-shim.js');
-    if (mod.hasLuauCompoundAssign(code)) transformed = mod.transformLuauToLua(code);
-  } catch { /* shim unavailable — original path */ }
+  const mod = await import('./luau-shim.js');
+  // v2.14.0: same fix as vm-lift-worker — normalize ANY Luau-only syntax
+  // (binary literals / separators / continue), not just compound assigns.
+  if (mod.hasLuauCompoundAssign(code) || mod.hasLuauOnlyLiterals(code)) transformed = mod.transformLuauToLua(code);
+  const rep = mod.repairInvalidEscapes(transformed);
+  if (rep.changed && rep.code !== transformed) repaired = rep.code;
+} catch { /* shim unavailable — original path */ }
 
-  const attempts = [
-    { name: 'strict', sources: [transformed, code].filter((s, i, a) => s && a.indexOf(s) === i) },
-    { name: 'forgiving-stack', sources: [forgivingStack(transformed), forgivingStack(code)].filter((s, i, a) => s && a.indexOf(s) === i) },
-  ];
+try { // outer guard — budget longjmp / internal abort keeps sink data
+const attempts = [
+  { name: 'strict', sources: [transformed, repaired, code].filter((s, i, a) => s && a.indexOf(s) === i) },
+  { name: 'forgiving-stack', sources: [forgivingStack(transformed), forgivingStack(code)].filter((s, i, a) => s && a.indexOf(s) === i) },
+];
 
-  for (const tier of attempts) {
+for (const tier of attempts) {
     for (const source of tier.sources) {
       let r;
       try { r = runOnce(source); } catch (e) {

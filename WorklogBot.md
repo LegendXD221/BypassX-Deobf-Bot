@@ -1,6 +1,104 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.14.0 — THE BIGGEST SCAN continues: the instant-bail parse walls are gone, structured devirt output, jte bytecode-lift node
+
+**User directive: "Now Finally Do The Biggest Scan Of Your Life … Exploit Them
+As Much As We Can … Fully Into Readable Lua … Complete Every Single Pending
+Task In One Sweep … Improve Every Thing In The Code … I Want Perfect Results
+Dont Stop Until We Reach The Success."**
+
+Every PARTIAL in the v2.11.0 scan matrix was re-probed sample-by-sample through
+the real lift worker (`scripts/probe-partials.js`) before touching anything —
+the fixes below are all A/B verified against the live failing samples, not
+guessed. **20 suites green** (was 19).
+
+### Fixed — the instant-bail bug family (0–1 s death, zero capture)
+
+Five PARTIAL builds (moonveil ×2, luraph-v14 423 KB, luraph-v15 41 KB, and the
+junkie/luraph-old parse class) died before the VM ever ran. Four real bugs:
+
+1. **Luau shim gated on compound assigns only** (`vm-lift-worker.js` +
+   `harvester-worker.js`): binary literals (`0B100111`), digit separators
+   (`0x80__`) and `continue` killed the load untouched. The shim now runs for
+   ANY Luau-only syntax (`hasLuauOnlyLiterals` added to the gate).
+2. **`continue` → goto pass ran before if-expression rewriting**: a raw
+   `if c then a else b` has no `end` — the continue-walk's block stack shifted
+   by one per if-expression and loop-end labels landed on wrong closers
+   (verified live: `no visible label '__bxc68_m4n'` on the 140 KB moonveil
+   dispatcher). Pass order fixed to if-exprs → compound → literals/continue;
+   label binding also stops at function boundaries (a goto can't be visible
+   across one) and accepts identifier/numeric statement ends
+   (`…,oc continue else` — moonveil's exact shape).
+3. **Invalid string escapes**: Luraph's own string encryption emits lenient
+   escapes (`\x4Cur\x61\z ph \z Sc\z \114\i` decodes as "Luraph Script:" —
+   `\i` is not a real Lua escape but the intended byte). New
+   `repairInvalidEscapes` pass (string/comment/long-bracket-aware) becomes the
+   third source tier in both workers: strict → forgiving → esc-repaired.
+4. **bit32 shims fed floats into Lua 5.3 bitwise ops** (`number has no
+   integer representation`): all bit32/bit ops now reduce inputs mod 2^32 via
+   `__n32` (math.tointeger after floor+mod — the mod of a float is still a
+   float), matching real bit32 semantics; string.char/string.rep coerce
+   fractional counts the same way.
+
+**Result:** moonveil parses + runs (its VM init now exits silently — escrow
+env gate, honestly logged); luraph-v14/v15 parse + run to the per-build
+key-derivation wall (`arithmetic on nil (field '?')`) — from instant parse
+death to the real escrow frontier.
+
+### New — structured block emission in the VM devirt output (`src/vm-lift.js`)
+
+The pc-runner previously emitted one `if __pc == N` dispatch per instruction.
+Branch edges are now analyzed (entry points = jump targets + branch
+fall-throughs) and the runner dispatches **once per basic block**:
+
+- straight-line VM code reads as linear Lua with absolute `__pc = <target>`
+  advances (CHECK*-lite branch comments on every conditional/unconditional
+  edge, v2.13.0 style preserved);
+- a branch-free program decompiles to **pure linear Lua with no dispatch loop
+  at all** (`-- linear program (single block, no branch edges)`);
+- vm-lift suite extended to 10 tests: linear block advance + branch-free
+  emission shapes pinned synthetically.
+
+### New — readable pool dumps (`src/harvest.js`)
+
+`harvestToLua` renders long/multi-line pool strings as collision-checked Lua
+long-bracket literals (`[==[ … ]==]`): URLs, embedded scripts and multi-line
+payloads are scannable instead of escaped one-line walls. Byte-exact round
+trip proven through fengari (`\r`/`\0` classes stay quoted — the lexer
+normalizes `\r` inside long brackets and would silently corrupt data).
+final-scan-fixes suite extended (7 checks).
+
+### New — jte bytecode-lift node (`src/jte-lift.js` + `scripts/build-jte.sh`)
+
+The v2.13.0 follow-up is CLOSED: the vendored jte Rust decompiler
+(research/jte-lua-decompiler) is wired behind a capability probe. Captured
+load()-bytecode chunks (RSB1 Luau / `\x1bLua`) are sniffed and decompiled to
+readable source (deobfuscation + CFF unflatten) when `bin/jte` is built;
+without the binary the raw-bytecode delivery is unchanged with an honest
+pointer in the note. Suite `test/jte-lift.js` (#20): sniffing, graceful
+absence, real-luac decompile when present.
+
+### Evaluated
+
+- **caomro2077/Deobfuscator-Luraph-V15** (pending since v2.10): 404/dead,
+  logged in research/external-repos-2026-11.md §8 — nothing to mine.
+- **Dashboard verified complete**: 42 registered commands, all 16 deobf
+  services render in the commands tab (`.l .prom .ms3 .ms2 .lph .tokra
+  .clyde .psu .ib2 .hcs .lo .mv .iv .77 .goofy .luast`).
+- **research/WEAKNESSES-EXPLOITED.md §9** carries the full A/B tables and the
+  honest remaining frontier (escrow key-derivation wall, moonveil anti-tamper
+  gate, IronBrew2/PSU string-mode lift path).
+
+### Verified (local, real samples)
+
+- moonveil 136 KB: parse death <1 s → loads + runs in-jail (transformed
+  source verified against fengari directly, then through the worker).
+- luraph-v15 41 KB: parse death <1 s → runs through bit32-heavy decrypt
+  arithmetic to the key-derivation wall.
+- luraph-v14 423 KB: parse death <1 s → runs to the same wall.
+- 20/20 suites green (`node test/all.js`).
+
 ## v2.13.0 — external repo scan (5 repos), CHECK*-lite branch comments on the vm-lift devirt output, Prometheus deep static pass
 
 **User directive: "Check if these repos are useful … And also CHECK*-lite branch comments on the vm-lift devirt output."**

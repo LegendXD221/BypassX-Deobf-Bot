@@ -868,29 +868,41 @@ process.on('SIGINT', () => dumpAndExit('interrupted'));
 
 async function main() {
   let transformed = code;
+  let repaired = null; // v2.14.0 — lenient invalid-\X-escape repair tier
   try {
     const mod = await import('./luau-shim.js');
-    if (mod.hasLuauCompoundAssign(code)) transformed = mod.transformLuauToLua(code);
+    // v2.14.0: compound assignments are not the ONLY Luau-only syntax —
+    // binary literals (0B100111), digit separators (0x80__), `continue` and
+    // \u{…} kills the load just as dead (verified live: luraph-v14/v15
+    // tokrascript + moonveil builds bailed in <1s with zero capture because
+    // they carry binary literals but no compound assign). Normalize for any
+    // Luau-only syntax.
+    if (mod.hasLuauCompoundAssign(code) || mod.hasLuauOnlyLiterals(code)) transformed = mod.transformLuauToLua(code);
+    // v2.14.0: Luraph's own string encryption emits LENIENT escapes (\i → i);
+    // a strict Lua 5.3 lexer refuses the whole file. Build a repaired tier.
+    const rep = mod.repairInvalidEscapes(transformed);
+    if (rep.changed && rep.code !== transformed) repaired = rep.code;
   } catch { /* shim unavailable — original path */ }
 
   // ---- run 1: plain harvest (identical jail to harvester-worker) ---------------
   const s1 = freshState({ left: Math.floor(BUDGET_TOTAL * 0.55) });
   runLua(s1, jail.PRELUDE, 'prelude');
-  const l1 = loadSample(s1, transformed);
+  const run1Sources = [transformed, repaired, code].filter((s, i, a) => s && a.indexOf(s) === i);
+  let l1 = { loaded: false, err: null };
   let d1 = { ran: false, runError: null, strings: [], chunks: [], log: [] };
-  if (l1.loaded) {
-    try { runLua(s1, RUNNER, 'runner'); } catch { /* budget longjmp — sink survives */ }
-    d1 = dumpState(s1, { withLift: false });
-  } else {
-    d1.runError = l1.err || 'load failed';
-    const s1b = freshState({ left: Math.floor(BUDGET_TOTAL * 0.3) });
-    runLua(s1b, jail.PRELUDE, 'prelude');
-    const l1b = loadSample(s1b, code);
-    if (l1b.loaded) {
-      try { runLua(s1b, RUNNER, 'runner'); } catch { /* budget longjmp */ }
-      d1 = dumpState(s1b, { withLift: false });
+  for (const src of run1Sources) {
+    const s1x = freshState({ left: Math.floor(BUDGET_TOTAL * 0.55) });
+    runLua(s1x, jail.PRELUDE, 'prelude');
+    const l = loadSample(s1x, src);
+    if (l.loaded) {
+      l1 = l;
+      try { runLua(s1x, RUNNER, 'runner'); } catch { /* budget longjmp — sink survives */ }
+      d1 = dumpState(s1x, { withLift: false });
+      break;
     }
+    l1.err = l.err;
   }
+  if (!l1.loaded) d1.runError = l1.err || 'load failed';
   out.ran = d1.ran;
   out.runError = d1.runError;
   out.strings = d1.strings;
@@ -957,6 +969,7 @@ async function main() {
       { src: transformed, tag: 'strict', ops: null },
       { src: forgivingStack(transformed), tag: 'forgiving', ops: null },
     ];
+    if (repaired && repaired !== transformed) passes.push({ src: repaired, tag: 'esc-repaired', ops: null });
     let cleanExitOp = null;
     for (let pass = 0; pass < passes.length + 2 && Date.now() - t0 < TIME_WALL_MS; pass++) {
       let spec = passes[pass];

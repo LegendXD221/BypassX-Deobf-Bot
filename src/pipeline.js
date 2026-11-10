@@ -23,6 +23,7 @@ import { transformLuauToLua } from './luau-shim.js';
 import { parsePayload, captureKeyCarriers, looksLikeLuraphInventory, formatReport } from './luraph15.js';
 import { staticPeel } from './static-peel.js';
 import { liftFromHarvest } from './vm-lift.js';
+import { jteDecompile, isLuauBytecode, isLuaBytecode, jteBinaryPresent } from './jte-lift.js';
 import { residualObfuscation, detectLayers, peelSummary } from './layers.js';
 import { makeReadableLua, makeReadableJs, readabilityScore } from './readable.js';
 
@@ -776,11 +777,41 @@ function pickChunkArtifact(h) {
   return null;
 }
 
-/** Build the pipeline result for a chunk artifact (source or bytecode). */
-function chunkArtifactResult(art, h, detected, stages, t0, inBuffer, lang) {
+/** Build the pipeline result for a chunk artifact (source or bytecode).
+ *  v2.14.0: async — attempts jte decompilation of captured bytecode first.
+ *  `stage` rides in on the options bag because the stage helper is scoped to
+ *  the pipeline run that owns the stages array. */
+async function chunkArtifactResult(art, h, detected, stages, t0, inBuffer, lang, { stage = (name, detail) => stages.push({ name, detail }) } = {}) {
   const durationMs = Date.now() - t0;
   if (art.kind === 'bytecode') {
+    // v2.14.0: try the jte bytecode decompiler first (research/jte-lua-decompiler).
+    // When the binary is built, captured bytecode chunks come back as REAL
+    // readable source instead of opaque binary artifacts; without the binary
+    // the raw-bytecode delivery below is unchanged.
     const buf = Buffer.from(art.text, 'latin1');
+    if (isLuauBytecode(buf) || isLuaBytecode(buf)) {
+      const jte = await jteDecompile(buf, { deobfuscate: true, flatten: true }).catch(() => null);
+      if (jte && jte.ok && jte.code && jte.code.length > 24) {
+        const post = postprocessFile('recovered.lua', Buffer.from(jte.code, 'utf8'));
+        const v = verifyCode(post.data.toString('utf8'), { lang: 'lua', filename: 'recovered.lua' });
+        stage('jte-decompile', `${buf.length}-byte ${art.format} bytecode → ${post.data.length}-byte source (${jte.how})${v.status === 'verified' ? ', syntax verified' : ''}`);
+        return {
+          ok: true,
+          code: post.data.toString('utf8'),
+          binaryOutput: false,
+          outputBuffer: null,
+          codeName: 'recovered.lua',
+          detected, stages, durationMs, lang,
+          verification: v,
+          originalSize: inBuffer.length,
+          recoveredSize: post.data.length,
+          how: `jailed VM run — ${buf.length}-byte ${art.format} bytecode captured at load(), decompiled to source (jte)`,
+          partialNote: `Full source recovered: the obfuscator handed **bytecode** to load() inside the jailed VM — the ${buf.length}-byte ${art.format} chunk was captured and decompiled to readable Lua (${jte.how}). ${h.strings.length} pool strings were also decrypted.`,
+          engine: null,
+        };
+      }
+      stage('jte-decompile:miss', (jte && jte.note) || 'unavailable — delivering raw bytecode');
+    }
     return {
       ok: true,
       code: '',
@@ -792,7 +823,7 @@ function chunkArtifactResult(art, h, detected, stages, t0, inBuffer, lang) {
       originalSize: inBuffer.length,
       recoveredSize: buf.length,
       how: `jailed VM run — decrypted ${art.format} bytecode captured at load()`,
-      partialNote: `Full bytecode recovered: the obfuscator decrypted its compiled chunk and handed it to load() inside the jailed VM. The ${buf.length}-byte ${art.format} bytecode is attached (decompilation of raw bytecode is engine-0.13 work). ${h.strings.length} pool strings were also decrypted.`,
+      partialNote: `Full bytecode recovered: the obfuscator decrypted its compiled chunk and handed it to load() inside the jailed VM. The ${buf.length}-byte ${art.format} bytecode is attached${jteBinaryPresent() ? '' : ' (build the jte decompiler via scripts/build-jte.sh to get readable source automatically)'}. ${h.strings.length} pool strings were also decrypted.`,
       engine: null,
     };
   }
@@ -825,7 +856,7 @@ async function tryHarvest(inputPath, detected, lang, stage, stages, t0, inBuffer
   const art = pickChunkArtifact(h);
   if (art) {
     stage('chunk-capture', `${art.kind} (${art.kind === 'source' ? art.lang : art.format}) — complete recovery via load()-hook`);
-    return chunkArtifactResult(art, h, detected, stages, t0, inBuffer, lang);
+    return chunkArtifactResult(art, h, detected, stages, t0, inBuffer, lang, { stage });
   }
   // Devirtualization: behavioral opcode lift → real transpiled Lua.
   const lift = liftFromHarvest(h.lift, { detectedName: detected.name, version: detected.version || '' });

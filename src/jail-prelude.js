@@ -224,14 +224,14 @@ string.char = function(...)
   local t = {}
   for i = 1, n do
     local v = select(i, ...)
-    if type(v) == 'number' then v = v - v % 1 end
+    if type(v) == 'number' then v = math.tointeger(v - v % 1) or 0 end
     t[i] = v
   end
   return __uchar(table.unpack(t, 1, n))
 end
 local __urep = string.rep
 string.rep = function(s, n, sep)
-  if type(n) == 'number' then n = n - n % 1 end
+  if type(n) == 'number' then n = math.tointeger(n - n % 1) or 0 end
   return __urep(s, n, sep)
 end
 
@@ -255,28 +255,39 @@ coroutine.close = function(co) return true end
 
 -- bit32 / bit over native 5.3 int ops (full Luau surface incl. countlz etc.)
 local __f = 0xffffffff
+-- v2.14.0: Lua 5.3 bitwise ops demand integers — Luraph v15's decrypt
+-- arithmetic feeds FLOATS into bit32 (verified live: 'number (local v) has no
+-- integer representation' killed the loader at bit32.bxor). bit32 semantics:
+-- every input is reduced mod 2^32 (floats floored, negatives normalized).
+local __n32 = function(v)
+  if type(v) ~= 'number' then v = 0 end
+  -- math.floor(v) % 2^32 returns a FLOAT when the left operand is float —
+  -- bitwise ops still reject it. math.tointeger makes the value a real
+  -- integer; inf/nan fall back to 0.
+  return math.tointeger(math.floor(v) % 4294967296) or 0
+end
 bit32 = {
-  band = function(...) local r = -1 for _, v in ipairs({ ... }) do r = r & v end return r & __f end,
-  bor = function(...) local r = 0 for _, v in ipairs({ ... }) do r = r | v end return r & __f end,
-  bxor = function(...) local r = 0 for _, v in ipairs({ ... }) do r = r ~ v end return r & __f end,
-  bnot = function(a) return (~a) & __f end,
-  lshift = function(a, b) b = b % 32 return (a << b) & __f end,
-  rshift = function(a, b) b = b % 32 return (a >> b) & __f end,
-  arshift = function(a, b) b = b % 32 return a >> b end,
-  tobit = function(a) return a & __f end,
+  band = function(...) local r = -1 for _, v in ipairs({ ... }) do r = r & __n32(v) end return r & __f end,
+  bor = function(...) local r = 0 for _, v in ipairs({ ... }) do r = r | __n32(v) end return r & __f end,
+  bxor = function(...) local r = 0 for _, v in ipairs({ ... }) do r = r ~ __n32(v) end return r & __f end,
+  bnot = function(a) return (~__n32(a)) & __f end,
+  lshift = function(a, b) b = __n32(b) % 32 return (__n32(a) << b) & __f end,
+  rshift = function(a, b) b = __n32(b) % 32 return (__n32(a) >> b) & __f end,
+  arshift = function(a, b) b = __n32(b) % 32 return __n32(a) >> b end,
+  tobit = function(a) return __n32(a) end,
   btest = function(...) return bit32.band(...) ~= 0 end,
-  extract = function(n, f, w) w = w or 1 if f < 0 then f = 0 end if w <= 0 then return 0 end
+  extract = function(n, f, w) n = __n32(n) w = w or 1 if f < 0 then f = 0 end if w <= 0 then return 0 end
     return (n >> f) & ((1 << w) - 1) end,
-  replace = function(n, v, f, w) w = w or 1 if f < 0 then f = 0 end if w <= 0 then return n & __f end
+  replace = function(n, v, f, w) n = __n32(n) v = __n32(v) w = w or 1 if f < 0 then f = 0 end if w <= 0 then return n & __f end
     local mask = ((1 << w) - 1) << f
     return ((n & __f) & ~mask) | ((v << f) & mask) end,
-  countlz = function(n) n = n & __f if n == 0 then return 32 end local r = 0 while n < 0x80000000 do r = r + 1; n = n << 1 end return r end,
-  countrz = function(n) n = n & __f if n == 0 then return 32 end local r = 0 while n & 1 == 0 do r = r + 1; n = n >> 1 end return r end,
-  byteswap = function(n) n = n & __f
+  countlz = function(n) n = __n32(n) if n == 0 then return 32 end local r = 0 while n < 0x80000000 do r = r + 1; n = n << 1 end return r end,
+  countrz = function(n) n = __n32(n) if n == 0 then return 32 end local r = 0 while n & 1 == 0 do r = r + 1; n = n >> 1 end return r end,
+  byteswap = function(n) n = __n32(n)
     return ((n & 0xff) << 24) | ((n & 0xff00) << 8) | ((n >> 8) & 0xff00) | ((n >> 24) & 0xff) end,
-  lrotate = function(n, d) d = d % 32 if d == 0 then return n & __f end
+  lrotate = function(n, d) n = __n32(n) d = d % 32 if d == 0 then return n & __f end
     return (((n & __f) << d) | ((n & __f) >> (32 - d))) & __f end,
-  rrotate = function(n, d) d = d % 32 if d == 0 then return n & __f end
+  rrotate = function(n, d) n = __n32(n) d = d % 32 if d == 0 then return n & __f end
     return (((n & __f) >> d) | ((n & __f) << (32 - d))) & __f end,
 }
 bit = bit32

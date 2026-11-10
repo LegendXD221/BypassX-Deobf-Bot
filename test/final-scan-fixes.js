@@ -71,6 +71,37 @@ await check('harvestToLua: header reports filtered counts, body has only real st
   assert.equal(verifyCode(text, { lang: 'lua' }).status, 'verified');
 });
 
+await check('harvestToLua: long/multi-line strings use long-bracket literals, values round-trip byte-exact (v2.14.0)', async () => {
+  const longUrl = 'https://example.com/' + 'a'.repeat(300) + '/end';
+  const multiLine = 'local x = 1\nlocal y = 2\nreturn x + y\n-- ]] trap\nprint("inside")';
+  const withCr = 'line1\r\nline2\r\n';          // \r must stay quoted (lexer normalizes \r in long brackets)
+  const withNul = 'a\x00b';                      // \0 must stay quoted
+  const text = harvestToLua({ strings: [longUrl, multiLine, withCr, withNul, 'short'] }, { detectedName: 'IronBrew 2' });
+  assert.equal(verifyCode(text, { lang: 'lua' }).status, 'verified', 'dump must stay valid Lua');
+  assert.ok(text.includes('[[') && text.includes(']]'), 'long-bracket literal missing');
+  assert.ok(!text.includes('https://example.com/aaa\\'), 'long URL must not be one-line escaped');
+  assert.ok(text.includes('"line1\\r\\nline2\\r\\n"'), '\\r string must stay quoted');
+  // \0 strings are binary — reconstructPool filters them upstream (defensive
+  // longForm guard still exists for direct callers)
+  assert.ok(!text.includes('"a\\0b"'), '\\0 string must be filtered, not emitted');
+  // fengari round-trip: load the dump, compare every slot against the original
+  const { lua, lauxlib, lualib, to_luastring } = fengari;
+  const L = lauxlib.luaL_newstate();
+  lualib.luaL_openlibs(L);
+  const rc = lauxlib.luaL_dostring(L, to_luastring(text));
+  assert.equal(rc, lua.LUA_OK, lua.lua_tojsstring(L, -1));
+  // the dump is `local STRINGS = {...} return STRINGS` — the table is the
+  // return value already sitting at the top of the stack after dostring
+  const want = [longUrl, multiLine, withCr, 'short'];
+  for (let i = 0; i < want.length; i++) {
+    lua.lua_pushinteger(L, i + 1);
+    lua.lua_gettable(L, -2);
+    const got = safeToJsString(L, -1, '');
+    assert.equal(got, want[i], `slot ${i + 1} round-trip mismatch`);
+    lua.lua_pop(L, 1);
+  }
+});
+
 await check('yield primitives: wait/spawn resolve — no abort error', async () => {
   const prelude = (await import('node:fs')).readFileSync(new URL('../src/jail-prelude.js', import.meta.url), 'utf8');
   assert.ok(/wait = function\(\) return 0 end/.test(prelude), 'wait must resolve, not error');

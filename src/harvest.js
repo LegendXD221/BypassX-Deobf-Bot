@@ -131,9 +131,12 @@ export function harvestToLua(h, { detectedName, version } = {}) {
   const { kept, dropped } = reconstructPool(h.strings);
   const header = [
     '-- BypassX Deobf Bot — dynamic constant recovery',
-    `-- Detected: ${detectedName || 'unknown'}${version ? ` ${version}` : ''} (escrow/anti-tamper build)`,
+    `-- Detected: ${detectedName || 'unknown'}${version ? ` ${version} ` : ''}(escrow/anti-tamper build)`,
     '-- Method: jailed in-memory VM run (no host, no network); decrypted string',
     '-- constants captured from the VM constant pool during init.',
+    '-- Presentation: long/multi-line strings use Lua long-bracket literals',
+    '-- ([==[ ... ]==], collision-checked per string) so URLs, embedded code',
+    '-- and scripts stay readable instead of escaped one-line walls.',
     `-- Recovered ${kept.length} pool strings`
       + (dropped ? ` (${dropped} binary/encrypted/duplicate fragments filtered).` : '.'),
     '',
@@ -146,6 +149,24 @@ export function harvestToLua(h, { detectedName, version } = {}) {
     .replace(/\t/g, '\\t')
     .replace(/"/g, '\\"')
     .replace(/\0/g, '\\0');
-  const body = kept.map((s, i) => `  [${i + 1}] = "${esc(s)}",`).join('\n');
+  // v2.14.0: long-bracket presentation for big/multi-line pool strings.
+  // \r and \0 stay quoted — Lua's lexer normalizes \r inside long-bracket
+  // literals, which would silently corrupt byte-exact pool data.
+  const longForm = (s) => {
+    if (s.includes('\r') || s.includes('\0')) return null;
+    if (s.length <= 160 && !s.includes('\n')) return null;
+    for (let n = 0; n < 6; n++) {
+      const close = `]${'='.repeat(n)}]`;
+      if (!s.includes(close)) return { open: `[${'='.repeat(n)}[`, close };
+    }
+    return null; // collision at every level ≤5 — quoted fallback
+  };
+  const body = kept.map((s, i) => {
+    const lf = longForm(s);
+    // No newline before the closer: Lua strips exactly the newline that
+    // follows the opening bracket, so the value round-trips byte-exact.
+    if (lf) return `  [${i + 1}] = ${lf.open}\n${s}${lf.close},`;
+    return `  [${i + 1}] = "${esc(s)}",`;
+  }).join('\n');
   return `${header.join('\n')}\n${body}\n}\n\nreturn STRINGS\n`;
 }

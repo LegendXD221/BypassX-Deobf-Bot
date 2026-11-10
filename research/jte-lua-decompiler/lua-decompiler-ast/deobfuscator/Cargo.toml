@@ -1,0 +1,8 @@
+[package]
+name = "deobfuscator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lua_ast = { path = "../lua_ast" }
+regex = "1"

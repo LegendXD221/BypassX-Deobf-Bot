@@ -61,9 +61,11 @@ test('liftFromHarvest: table-dispatch → 10/10 classified, verified, constants 
   const v = verifyCode(r.code, { lang: 'lua', filename: 'devirtualized.lua' });
   assert.equal(v.status, 'verified', v.detail);
   // real content: decrypted strings inline, globals resolved, runner structure
+  // (v2.14.0: structured blocks — one dispatch per block, blocks advance with
+  // absolute `__pc = N -- → [N]` instead of per-instruction +1 bumps)
   for (const needle of [
     '"Hello from MoonSec VM"', '"ReplicatedStorage"', 'VM_OUT', 'V1 = print',
-    'while true do', 'GetService', '__pc = __pc + 1',
+    'while true do', 'GetService', 'ran, if id: 15 (taken)', 'elseif __pc ==',
   ]) {
     assert.ok(r.code.includes(needle), `output missing: ${needle}`);
   }
@@ -107,7 +109,7 @@ test('liftFromHarvest: JMP opcodes emit real edges, not (unclassified) (v2.13.0 
   const v = verifyCode(r.code, { lang: 'lua', filename: 'devirtualized.lua' });
   assert.equal(v.status, 'verified', v.detail);
   assert.ok(r.code.includes('] JMP → [5]'), `JMP edge missing:\n${r.code}`);
-  assert.ok(r.code.includes('__pc = __pc + 3 -- CHECK*-lite: unconditional → [5]'), 'JMP target advance missing');
+  assert.ok(r.code.includes('__pc = 5 -- CHECK*-lite: unconditional → [5]'), 'JMP target advance missing');
   assert.ok(!r.code.includes('(unclassified)'), 'unclassified arm reached — JMP fell through');
 });
 
@@ -122,6 +124,54 @@ test('liftFromHarvest: if-chain → verified transpile (Luraph-style shape)', as
   assert.equal(v.status, 'verified', v.detail);
   assert.ok(r.code.includes('"Hello from the if-chain VM"'));
   assert.ok(r.code.includes('IFCHAIN_OUT'));
+});
+
+test('liftFromHarvest: structured blocks — linear run advances with absolute target (v2.14.0)', async () => {
+  const { liftFromHarvest } = await import(path.join(root, 'src', 'vm-lift.js'));
+  const { verifyCode } = await import(path.join(root, 'src', 'validate.js'));
+  // op1 = LOADK, op2 = JMP(delta 2): pcs 0-1 linear, pc2 jumps over pc3 to pc4,
+  // pc3 runs linearly then falls into pc4, pc4 jumps off-program.
+  const lift = {
+    snap: { mode: 'rows', rows: 5, opids: [1, 2],
+      instrs: [[1, 1, 1], [1, 2, 2], [2, 1], [1, 3, 3], [2, 1]],
+      consts: ['alpha', 'beta', 'gamma'] },
+    probes: [
+      { op: 1, ev: ['CR1', 'SW2:x', 'CR2', 'SW3:x'] },
+      { op: 2, ev: ['PC1', 'PC3', 'PC5'] },
+    ],
+    ended: 'error',
+  };
+  const r = liftFromHarvest(lift, { detectedName: 'Synthetic linear' });
+  assert.equal(r.ok, true, r.note);
+  const v = verifyCode(r.code, { lang: 'lua', filename: 'devirtualized.lua' });
+  assert.equal(v.status, 'verified', v.detail);
+  assert.ok(r.code.includes('-- ══ block 1 · instructions [1..4] ══'), 'block header missing');
+  assert.ok(r.code.includes('__pc = 5 -- → [5]'), `linear block advance missing:\n${r.code}`);
+  assert.ok(r.code.includes('V1 = "alpha"'), 'const alpha missing');
+  assert.ok(r.code.includes('V3 = "gamma"'), 'const gamma missing');
+});
+
+test('liftFromHarvest: branch-free program decompiles to pure linear Lua (v2.14.0)', async () => {
+  const { liftFromHarvest } = await import(path.join(root, 'src', 'vm-lift.js'));
+  const { verifyCode } = await import(path.join(root, 'src', 'validate.js'));
+  const lift = {
+    snap: { mode: 'rows', rows: 4, opids: [1, 3],
+      instrs: [[1, 1, 1], [3, 2], [1, 2, 2], [1, 3, 3]],
+      consts: ['one', 'two', 'three'] },
+    probes: [
+      { op: 1, ev: ['CR1', 'SW2:x', 'CR2', 'SW3:x'] },
+      { op: 3, ev: ['CALLR2:x', 'SR1'] },
+    ],
+    ended: 'error',
+  };
+  const r = liftFromHarvest(lift, { detectedName: 'Synthetic straight' });
+  assert.equal(r.ok, true, r.note);
+  const v = verifyCode(r.code, { lang: 'lua', filename: 'devirtualized.lua' });
+  assert.equal(v.status, 'verified', v.detail);
+  assert.ok(r.code.includes('-- linear program (single block, no branch edges)'), 'linear marker missing');
+  assert.ok(r.code.includes('V1 = "one"') && r.code.includes('V3 = "three"'), 'constants missing');
+  assert.ok(!r.code.includes('while true do'), 'dispatch loop should be absent for branch-free programs');
+  assert.ok(!r.code.includes('__pc'), 'pc state should be absent for branch-free programs');
 });
 
 test('jail prelude: Luau buffer library available (Luraph v15.1 loaders bind it)', async () => {

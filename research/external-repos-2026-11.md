@@ -136,3 +136,20 @@ deobfuscators. The chest is worth more than the wrapper:
 - jte/lua-decompiler as a bytecode-lifting node (Rust binary) behind a
   capability probe.
 - `UndoProxifyLocals`-style post-restore pass for Prometheus family outputs.
+
+## 8. v2.14.0 addendum — jte vendored + adapter landed; caomro repo dead
+
+- **jte/lua-decompiler vendored** at `research/jte-lua-decompiler/lua-decompiler-ast/`
+  (full Rust workspace, 1.6 MB, MIT/Apache-2.0) and **integrated as the
+  bytecode-lift node**: `src/jte-lift.js` resolves the binary ($JTE_BIN →
+  `bin/jte`), sniffs RSB1 Luau / `\x1bLua` signatures, and decompiles captured
+  load()-bytecode chunks to readable source (deobfuscation + CFF unflatten
+  flags on). Wired into `chunkArtifactResult`: bytecode artifact → jte attempt
+  → verified readable source, or the raw-bytecode delivery as before. The
+  follow-up "jte behind a capability probe" is CLOSED. Build once per image:
+  `scripts/build-jte.sh` (cargo build --release -p cli → bin/jte).
+- **caomro2077/Deobfuscator-Luraph-V15** (pending since the v2.10 era):
+  **404 / dead** — nothing to mine (same class as the two dead links in §1).
+- Empty scaffolding dirs `research/external-0x251` / `research/external-white`
+  removed; the mined White pieces live at `vendor/white/`, the 0x251 intel in
+  this file + `src/prometheus-deep.js`.

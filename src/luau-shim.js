@@ -40,14 +40,16 @@ export function hasLuauCompoundAssign(src) {
  */
 export function transformLuauToLua(src) {
   if (!src) return src;
-  // PASS 0 — literal normalizer (binary/hex separators/unicode escapes/continue)
-  const lit = normalizeLuauLiterals(src);
-  if (lit.changed) src = lit.code;
+  // v2.14.0 ORDER FIX — if-expressions MUST be rewritten before the
+  // continue→goto block walk: a raw `if c then a else b` has NO `end`, so
+  // every unconverted if-expression shifted the continue-walk's block stack
+  // by one and the loop-end labels landed on wrong closers (verified live:
+  // `no visible label '__bxc68_m4n'` on a 140KB moonveil dispatcher).
+  // Order is now: if-exprs → compound assigns → literals/continue.
   const { ifEdits, compoundEdits } = collectLuauEdits(src);
-  if (!ifEdits.length && !compoundEdits.length) return src;
+  let out = src;
 
   // PASS 1 — apply if-expression edits (positions are src-space)
-  let out = src;
   if (ifEdits.length) {
     ifEdits.sort((a, b) => b.start - a.start);
     let lastStart = Infinity;
@@ -68,6 +70,11 @@ export function transformLuauToLua(src) {
       out = out.slice(0, e.start) + e.replacement + out.slice(e.end);
     }
   }
+
+  // PASS 3 — literal normalizer LAST (binary/separators/\u/continue→goto);
+  // re-scans its own output, so the walk sees only balanced if/end pairs.
+  const lit = normalizeLuauLiterals(out);
+  if (lit.changed) out = lit.code;
   return out;
 }
 
@@ -168,23 +175,136 @@ export function hasLuauOnlyLiterals(src) {
   return /\bcontinue\b/.test(stripped);
 }
 
+// ---- v2.14.0: invalid string-escape repair ---------------------------------
+// Obfuscators embed their encrypted payload inside short-string literals and
+// their own string-encryption emits LENIENT escapes: `\x4Cur\x61\z ph \z Sc\z
+// \114\i\z p\116\x3A` decodes to "Luraph Script:" — `\i` is not a real Lua
+// escape but the intended byte is literally `i`. A strict Lua 5.3 lexer (the
+// jailed fengari VM) refuses the whole file on it. The repair pass rewrites
+// only escapes that are INVALID in Lua 5.3, inside short strings only, and
+// always to the char the lenient reading intends (`\X` → `X`).
+
+const VALID_SIMPLE_ESCAPES = new Set(['a', 'b', 'f', 'n', 'r', 't', 'v', '\\', '"', "'", 'z', '\n', '\r']);
+
+/** Quick probe: any invalid escape sequence inside a short string? */
+export function hasInvalidEscapes(src) {
+  let out;
+  try { out = repairInvalidEscapes(src); } catch { return false; }
+  return out.changed;
+}
+
+/** Rewrite invalid `\X` escapes to the literal char X inside short strings.
+ *  Long strings/comments are skipped (their content is raw). Never throws.
+ *  @returns {{ changed: boolean, code: string, repaired: number }} */
+export function repairInvalidEscapes(src) {
+  const edits = [];
+  let i = 0;
+  const n = src.length;
+  const LONG_EQ = /^\]*=*\[/; // not used; explicit scans below
+  while (i < n) {
+    const c = src[i];
+    if (c === '-' && src[i + 1] === '-') {
+      // comment — long comment?[[ level ]] else line comment
+      const m = /^-{2}(=*\[)/.exec(src.slice(i, i + 40));
+      if (m) {
+        const level = m[1].length - 1; // number of '='
+        const openTok = '[' + '='.repeat(level) + '[';
+        const closeTok = ']' + '='.repeat(level) + ']';
+        const end = src.indexOf(closeTok, i + openTok.length);
+        i = end < 0 ? n : end + closeTok.length;
+      } else {
+        const end = src.indexOf('\n', i);
+        i = end < 0 ? n : end + 1;
+      }
+      continue;
+    }
+    if (c === '[') {
+      const m = /^\[=*\[/.exec(src.slice(i, i + 40));
+      if (m) {
+        const level = m[0].length - 2;
+        const closeTok = ']' + '='.repeat(level) + ']';
+        const end = src.indexOf(closeTok, i + m[0].length);
+        i = end < 0 ? n : end + closeTok.length;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      const quote = c;
+      let j = i + 1;
+      while (j < n) {
+        const d = src[j];
+        if (d === '\\') {
+          const e = src[j + 1];
+          if (e === undefined) { j += 1; continue; }
+          if (VALID_SIMPLE_ESCAPES.has(e)) { j += 2; continue; }
+          if (e === 'x') {
+            if (/^[0-9a-fA-F]{2}/.test(src.slice(j + 2, j + 4))) { j += 4; continue; }
+            edits.push({ start: j, end: j + 2 }); // \x without 2 hex digits → drop backslash+x
+            j += 2;
+            continue;
+          }
+          if (e === 'u' && src[j + 2] === '{') {
+            const endB = src.indexOf('}', j + 3);
+            if (endB > 0 && endB - j < 12) { j = endB + 1; continue; }
+            edits.push({ start: j, end: j + 2 });
+            j += 2;
+            continue;
+          }
+          if (e >= '0' && e <= '9') {
+            const dm = /^\d{1,3}/.exec(src.slice(j + 1, j + 4));
+            const dd = dm ? dm[0] : '';
+            if (Number(dd) <= 255) { j += 1 + dd.length; continue; }
+            edits.push({ start: j, end: j + 1 }); // >255 — drop backslash, keep digits
+            j += 1;
+            continue;
+          }
+          // INVALID escape — lenient decode: drop the backslash, keep the char
+          edits.push({ start: j, end: j + 1 });
+          j += 1;
+          continue;
+        }
+        if (d === quote) { j += 1; break; }
+        if (d === '\n') break; // unterminated on this line — bail out of this string
+        j += 1;
+      }
+      i = Math.max(j, i + 1);
+      continue;
+    }
+    i += 1;
+  }
+  if (!edits.length) return { changed: false, code: src, repaired: 0 };
+  // apply back-to-front
+  let code = src;
+  for (const ed of edits.reverse()) {
+    code = code.slice(0, ed.start) + code.slice(ed.end);
+  }
+  return { changed: true, code, repaired: edits.length };
+}
+
 /** Statement-position check for `continue` (machine-generated code separates
  *  statements with `;`; identifiers named `continue` never sit in this exact
  *  boundary shape). */
 function isStatementContinue(stripped, at) {
   // previous non-space char must end a statement / open a branch
+  // v2.14.0: widened — obfuscators emit `continue` after ANY statement end:
+  //   `W'',5266 continue` (moonveil — string literal end + numeric literal end)
+  //   `x = [[…]] continue` (long-bracket end), `f(1) continue` was already OK.
   let p = at;
   while (p > 0 && (stripped[p - 1] === ' ' || stripped[p - 1] === '\t')) p -= 1;
   if (p > 0) {
     const ch = stripped[p - 1];
-    if (ch === ';' || ch === '}' || ch === ')' ) {
-      // ok — statement boundary
+    if (ch === ';' || ch === '}' || ch === ')'
+      || ch === "'" || ch === '"' || ch === ']') {
+      // ok — statement boundary (string end / long-bracket end)
+    } else if (/[A-Za-z0-9_]/.test(ch)) {
+      // v2.14.0: identifiers, numeric literals and the literal keywords all
+      // end statements — `a_,ge=…,oc continue` (moonveil) has a local-name
+      // prev; machine code never uses `continue` as an identifier, and the
+      // NEXT-side check below still guards the right boundary.
     } else {
-      // allow preceding keyword (then/do/else/repeat/end/until/elseif)
-      let w = p;
-      while (w > 0 && p - w < 8 && /[A-Za-z_]/.test(stripped[w - 1])) w -= 1;
-      const word = stripped.slice(w, p);
-      if (!/^(then|do|else|repeat|end|until|elseif)$/.test(word)) return false;
+      return false; // operator / open bracket — not a statement end
     }
   }
   // next non-space char must start a statement end / branch keyword
@@ -326,22 +446,25 @@ export function normalizeLuauLiterals(src) {
     for (let wi = 0; wi < words.length; wi++) {
       const { w, at } = words[wi];
       if (w === 'if' || w === 'function') {
-        stack.push({ isLoop: false, conts: [] });
+        // v2.14.0: mark function blocks — a `continue` can never bind across
+        // a function boundary (its goto+label would be invisible from inside
+        // the closure, verified live: `no visible label '__bxc68_m4n'`).
+        stack.push({ isLoop: false, isFunction: w === 'function', conts: [] });
         pendingThen = w === 'if';
       } else if (w === 'for' || w === 'while') {
         pendingLoop = true;
       } else if (w === 'then') {
         // `then` belongs to the if/elseif already on the stack; only a stray
         // one (blanked header edge) pushes a balancing block
-        if (!pendingThen) stack.push({ isLoop: false, conts: [] });
+        if (!pendingThen) stack.push({ isLoop: false, isFunction: false, conts: [] });
         pendingThen = false;
       } else if (w === 'elseif') {
         pendingThen = true; // its `then` belongs to the SAME if-block (no push)
       } else if (w === 'do') {
-        stack.push({ isLoop: pendingLoop, conts: [] });
+        stack.push({ isLoop: pendingLoop, isFunction: false, conts: [] });
         pendingLoop = false;
       } else if (w === 'repeat') {
-        stack.push({ isLoop: true, conts: [] });
+        stack.push({ isLoop: true, isFunction: false, conts: [] });
       } else if (w === 'end' || w === 'until') {
         const blk = stack.pop();
         if (blk && blk.conts.length) {
@@ -353,7 +476,10 @@ export function normalizeLuauLiterals(src) {
           continues += blk.conts.length;
         }
       } else if (w === 'continue' && isStatementContinue(stripped, at)) {
+        // bind to the innermost enclosing loop IN THE SAME FUNCTION — never
+        // cross a function boundary (Lua label visibility rule)
         for (let si = stack.length - 1; si >= 0; si--) {
+          if (stack[si].isFunction) break;
           if (stack[si].isLoop) { stack[si].conts.push(at); break; }
         }
       }
