@@ -20,6 +20,7 @@ const SUITES = [
   { name: 'chunk-paste.js' },    // pastefy chunking round-trips
   { name: 'links.js' },          // url detection / normalization / SSRF guards
   { name: 'env-sanity.js' },     // jail exploit floor + detection catalog + unparser alignment (v2.12.0)
+  { name: 'antitamper.js' },     // AntiTamper engine: catalog + neutralizer + profiles + sanity gate (v2.15.0)
   { name: 'luau-shim.js' },      // Luau shim: compound assigns + if-expressions (v1.6.0)
   { name: 'vm-lift.js', timeoutMs: 300_000 },        // VM devirtualization engine (v1.9.0) + CHECK*-lite branch comments (v2.13.0)
   { name: 'prometheus-deep.js', timeoutMs: 300_000 }, // Prometheus deep static pass — behavioral decoder undo (v2.13.0)

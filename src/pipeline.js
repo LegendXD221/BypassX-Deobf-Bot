@@ -26,6 +26,7 @@ import { liftFromHarvest } from './vm-lift.js';
 import { jteDecompile, isLuauBytecode, isLuaBytecode, jteBinaryPresent } from './jte-lift.js';
 import { residualObfuscation, detectLayers, peelSummary } from './layers.js';
 import { makeReadableLua, makeReadableJs, readabilityScore } from './readable.js';
+import { prepareAntitamper } from './antitamper/index.js';
 
 // v2.4.0 "Total Deobf": the pipeline is a PEEL LOOP. Each pass strips one
 // obfuscation layer (VM, escrow, string-array, loader wrapper — whatever the
@@ -242,6 +243,34 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
       let outcome = null;
       const route = pickRoute(detected, lang, buffer);
       stage('detect', `${detected.name} ${detected.version || ''} (${detected.confidence}%) → route ${route}${forcedSvc ? ` [forced via .${forced.tag}]` : ''}`);
+
+      // v2.15.0 AntiTamper: scan + disarm known anti-tamper constructs BEFORE
+      // any engine sees the input (LPH_CRASH/LPH_PRECHECK traps, LPH_ macro
+      // wrappers, setmetatable(game) tamper residue). Verify-gated: the
+      // rewritten input only replaces the original when it still parses at
+      // least as well as before; the scan report surfaces either way.
+      try {
+        const baseText = shim.buffer.toString('utf8');
+        const at = prepareAntitamper(baseText, detected.id);
+        if (at.changed && lang !== 'js') {
+          const vNew = verifyCode(at.code, { lang: 'lua', filename: 'input.lua' });
+          if ((VERIFY_RANK[vNew.status] ?? 1) >= 1) {
+            await fsp.writeFile(inputPath, Buffer.from(at.code, 'utf8'), { mode: 0o600 });
+          } else {
+            at.changed = false;
+            stage('antitamper:skip', 'rewrite failed syntax verification — original input kept');
+          }
+        }
+        for (const s of at.stages) stage(s.name, s.detail);
+        if (at.hits.length || at.scan.length) {
+          detected.antitamper = {
+            summary: at.summary,
+            disarmed: at.hits.reduce((a, h) => a + h.count, 0),
+            signatures: at.scan.reduce((a, s) => a + s.count, 0),
+            profile: at.profile.label,
+          };
+        }
+      } catch { /* antitamper never fails a job */ }
 
       if (route === 'pyarmor') outcome = await runPyarmorRoute(inputPath, detected, stage, buffer);
       else if (route === 'webcrack') outcome = await runWebcrackRoute(inputPath, buffer, stage);

@@ -1,6 +1,103 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.15.0 — AntiTamper v1: the anti-tamper ENGINE (catalog + neutralizer + hardening profiles + 53-check behavioral sanity gate)
+
+**User directive: "Now's lets develope our anti temper. Search popular public
+Repos for codes, inspiration. Don't think of this anti temper as a small code
+think of it as big — we want our anti temper to be the best in the world with
+success. I want results not errors."**
+
+Five new modules under `src/antitamper/`, wired into the pipeline as a
+verify-gated pre-run pass. **21 suites green** (was 20), including a new
+26-check `test/antitamper.js` suite.
+
+### Research sweep (public repos → our design)
+- **UNCCheckEnv.lua** (unified-naming-convention) — the full executor-global
+  probing surface (closures, metatables, debug, instances, scripts) = our
+  hardening checklist.
+- **sUNC** (~8k lines of behavioral checks) — the design lesson: names are
+  not enough, BEHAVIOR must match; adopted as the sanity-gate standard.
+- **aihkw/exe-test** (701 lines) — service probes validate exact Luau error
+  strings ("Argument 1 missing or nil"); our stubs must be message-exact.
+- **pqr-692/Roblox-Detections** — defender-side patterns (DexEnvLeak,
+  IndexCheck, XpcallPath, __namecall integrity) = attack catalog entries.
+- **Luraph official docs** — `LPH_PRECHECK` confirmed: "embed whitelist,
+  anti-tamper, or environment validation whose failure prevents execution".
+- All folded into the catalog with sources; cross-checked against the
+  vendored UnveilR-V3 intel (research/unveilr-v3-notes.md).
+
+### New — the five modules
+1. **`src/antitamper/catalog.js`** — 55 anti-tamper mechanisms across all 40
+   supported families: Luraph LPH traps + tostring fingerprint + setfenv
+   probes, MoonSec getfenv-pool/skid-detector/clock-gates/garbage-keys,
+   Prometheus pc-flattening + base64 pool, 25ms CFrame/task tamper probes,
+   WeAreDevs garbage globals, IronBrew rawset/pcall shapes, UNC-derived
+   identity/hook/namecall/index/xpcall checks, telemetry (HttpGet/WebSocket/
+   request), dump guards (string.dump, RSB1, chunk hashing), residue classes.
+   Every entry: probe mechanism, countermeasure, severity, service mapping.
+2. **`src/antitamper/neutralize.js`** — pre-run static disarmer: LPH_CRASH /
+   LPH_CRACH traps → `_BXAntiTamperNoop()` (valid in statement AND
+   expression positions), LPH_PRECHECK wrappers dropped WITH their validator
+   bodies (no long-comment `]]`-corruption risk, no residue in output),
+   JIT/ENC macro wrappers unwrapped via a balanced-paren scanner (handles
+   nesting through repeated passes), `setmetatable(game|workspace|script)`
+   tamper mutations stripped in BOTH the direct and `pcall(setmetatable, …)`
+   comma forms. Lua-grammar discipline: level-1 comments only, `]]`-escaped,
+   idempotent by construction, never throws on binary garbage.
+3. **`src/antitamper/env-hardening.js`** — per-family hardening profiles
+   (label, notes, optional prelude extension). Default policy: the base
+   prelude is already the A/B-verified shape, extensions are opt-in only —
+   nothing guessed for unknown families.
+4. **`src/antitamper/sanity.js`** — the **53-check behavioral sanity gate**
+   (sUNC-style): nil probe surface, host-lib absence, loadstring error
+   shapes, chunk capture, advancing clocks, task completeness, DataModel
+   identity, telemetry nils, setfenv semantics, bit32/buffer/stdlib surface,
+   sink liveness. Runs in fresh fengari states with instruction budgets;
+   gate threshold 95%.
+5. **`src/antitamper/index.js`** — orchestrator: `prepareAntitamper(source,
+   family)` → { code, hits, scan, profile, stages, summary } — scan report
+   always survives even when rewrites are gated; `fullReport` +
+   `catalogLinesForFamily` for owner surfaces.
+
+### Pipeline integration (one hook, every engine covered)
+`deobfuscateOnce` runs the AntiTamper pass right after detection, BEFORE any
+engine sees the input: rewrites are verify-gated (a rewrite that fails
+syntax verification never ships), stage lines (`antitamper: …`) surface in
+user replies via the standard stage stream, and `detected.antitamper` carries
+{ disarmed, signatures, profile } for downstream formatting.
+
+### Caught by the new gate (research findings, documented + parked)
+- The gate's first run exposed that a "real-Luau parity" bit32 rewrite
+  (unsigned returns, logical shifts, fixed high-constant coercion) and a
+  signed-pack buffer rewrite **REGRESS the real Luraph v15.1 sample** (pool →
+  0 strings, spin-break) — the loader's decrypt loop is verified against the
+  shipped fengari signed-int32 semantics. Both rewrites were reverted and
+  the shipped behavior is now LOCKED by 6 bit32 + 4 buffer behavioral checks
+  with a do-not-"fix"-without-corpus-reverification note in the suite.
+- Fengari facts locked by tests: hex literals ≥ 2^31 parse SIGNED,
+  `math.tointeger` fails outside int32, `string.pack '<I4'` rejects ≥ 2^31.
+- The v15.1 baseline (10 pool strings + the `local 'Y'` arithmetic runError)
+  is unchanged by this release (prelude byte-identical to v2.14.0).
+
+### Verified (local, all real suites)
+- `test/antitamper.js` 26/26 (catalog integrity, neutralizer behavior incl.
+  idempotency + parse-verification + garbage safety, profile coverage,
+  53/53 gate across luraph/moonsec_v3/25ms/unknown, orchestrator E2E).
+- Full `test/all.js` matrix: 21/21 suites green (antitamper registered
+  between env-sanity and luau-shim).
+- Pipeline smoke: prepareAntitamper stage lines flow through the standard
+  stage stream; no changes to command surface.
+
+### Next
+- Feed profile extensions into the lift/harvester workers (opt-in per
+  family; worker IPC plumbing) — the profiles are ready, the jail call
+  sites are the remaining wire.
+- Identity masquerade profiles for whitelist-gated families (known-executor
+  paths), behind the same opt-in extension mechanism.
+- Luraph v15.1 corpus re-verification harness before ANY future prelude
+  numeric-semantics change (the gate now guards this).
+
 ## v2.14.0 — THE BIGGEST SCAN continues: the instant-bail parse walls are gone, structured devirt output, jte bytecode-lift node
 
 **User directive: "Now Finally Do The Biggest Scan Of Your Life … Exploit Them
