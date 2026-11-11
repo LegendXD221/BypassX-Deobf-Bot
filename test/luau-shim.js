@@ -44,6 +44,83 @@ function run(src) {
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
+// ---- v2.18.0: backtick interpolated strings (25ms family) ---------------------
+test('backtick: plain literals rewrite to double-quoted strings', () => {
+  const src = 'local t = `44MjFfa=`; return t';
+  const out = transformLuauToLua(src);
+  assert.ok(!out.includes('`'), 'no backticks remain');
+  assert.ok(out.includes('"44MjFfa="'), 'literal rewritten');
+  assert.ok(compiles(out), 'output parses');
+});
+test('backtick: interpolation becomes a tostring concat chain', () => {
+  const out = transformLuauToLua('return `a{1+2}b`');
+  assert.ok(out.includes('"a"..tostring(1+2)..\"b"'), 'concat chain: ' + out);
+  assert.ok(compiles(out), 'output parses');
+});
+test('backtick: backtick inside a comment/string is data, not syntax', () => {
+  const src = '-- `not code` \nlocal s = "has ` inside"; return s';
+  const out = transformLuauToLua(src);
+  assert.equal(out, src, 'untouched');
+});
+test('backtick: 25ms-shaped pool parses and runs', () => {
+  // real shape: backtick literals are table items (25ms pool), never statements
+  const src = 'local t={`44MjFfa=`;`Iw7lgO==`,`7GRnsuS=`}; return type(t)';
+  const out = transformLuauToLua(src);
+  assert.ok(compiles(out), 'output parses');
+  assert.equal(run(out).value, 'table', 'runtime value intact');
+});
+
+// ---- v2.18.0: Luau type annotations (25ms) ------------------------------------
+test('type annotations: local <id>:<type> = is stripped (erased by Luau anyway)', () => {
+  const out = transformLuauToLua('local j:str=function(J) return J end; return j(5)');
+  assert.ok(!out.includes(':str='), 'annotation gone');
+  assert.ok(compiles(out), 'output parses');
+  assert.equal(run(out).value, 5, 'runtime value intact');
+});
+test('type annotations: non-type lookalikes are untouched', () => {
+  const src = 'local a = b:c(1) return a';
+  assert.equal(transformLuauToLua(src), src, 'method call untouched');
+});
+
+// ---- v2.18.0: compound-assign scanner hardening -------------------------------
+test('compound: arithmetic-index LHS rewrites (25ms/SomeCool shape)', () => {
+  // 866570+-866567 == 3 — the compound targets K[3]
+  const out = transformLuauToLua('local K = {[3]=0}; K[866570+-866567]+=534326+-534325 return K[3]');
+  assert.ok(!out.includes('+='), 'no compound remains');
+  assert.ok(compiles(out), 'output parses');
+  assert.equal(run(out).value, 1, 'K[3] == 1');
+});
+test('compound: paren-root LHS rewrites (25ms (C)[k] shape)', () => {
+  const out = transformLuauToLua('local C = {10}; local r = {1}; (C)[(r)[1]] += 5 return C[1]');
+  assert.ok(!out.includes('+='), 'no compound remains');
+  assert.ok(compiles(out), 'output parses');
+  assert.equal(run(out).value, 15, 'C[1] == 15');
+});
+test('compound: call-result LHS is REJECTED (would evaluate twice)', () => {
+  const src = 'local t = {}; local function f() return t end; f()[1]+=1';
+  const out = transformLuauToLua(src);
+  assert.ok(out.includes('+='), 'untransformed — honest parse failure beats double side effect');
+});
+test('compound: statement adjacency after indexed RHS rewrites (]glue)', () => {
+  // real one-liner shape: the previous assignment's RHS closes at `]` and the
+  // next statement starts without a separator
+  const out = transformLuauToLua('local X={[1]=0};local K={[1]=0};X[1]=X[1]K[1]+=2 return K[1]');
+  assert.ok(!out.includes('+='), 'no compound remains');
+  assert.ok(compiles(out), 'output parses');
+  assert.equal(run(out).value, 2, 'K[1] == 2');
+});
+test('compound: wrap paren never emits unbalanced code (balance guard)', () => {
+  const src = 'K[980183+-980181]+=X[913623+-913622][L(646677-702050)]K[866570+-866567]+=534326+-534325 return K';
+  const out = transformLuauToLua(src);
+  assert.ok(compiles(out), 'output parses');
+});
+test('compound: keyword inside a longer identifier does not break the RHS scan', () => {
+  // `for` contains `or` — the old scan broke INSIDE the word and split it
+  const out = transformLuauToLua('local t = {[1]=0}; t[1]+=1 for i=1,2 do t[1]=t[1]+i end return t[1]');
+  assert.ok(compiles(out), 'output parses');
+  assert.equal(run(out).value, 4, 't[1] == 4 after loop');
+});
+
 // ---- compound assignment ------------------------------------------------------
 test('compound: basic += rewrite and value', () => {
   const out = transformLuauToLua('local x = 1; x += 2; return x');

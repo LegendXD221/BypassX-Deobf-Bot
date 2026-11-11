@@ -38,6 +38,10 @@ const writeOut = (obj) => {
 import fengari from 'fengari';
 import { safeToJsString } from './fengari-safe.js';
 import * as jailPrelude from './jail-prelude.js';
+// v2.18.0 — antitamper identity escalation (tier4): the V2 catalog's
+// 'escalate' counter wired into the recon path.
+import { EXECUTOR_IDENTITIES } from './antitamper/catalog.js';
+import { executorLua } from './antitamper/env-hardening.js';
 
 const { lua, lauxlib, lualib, to_luastring, to_jsstring } = fengari;
 
@@ -315,6 +319,84 @@ try {
   if (rep.changed && rep.code !== transformed) repaired = rep.code;
 } catch { /* shim unavailable — original path */ }
 
+// ---- v2.18.0 helpers: parse filter, escalation bridge, static floor ----------
+
+/** Compile-only check on the jailed state: does this source parse? (never runs) */
+function parsable(s) {
+  try {
+    const rc = lauxlib.luaL_loadstring(L, to_luastring(s));
+    const ok = rc === lua.LUA_OK;
+    lua.lua_pop(L, 1);
+    return ok;
+  } catch { return false; }
+}
+
+/** Push recon strings straight into the jailed sink (tier5 static floor). */
+function pushSinkStrings(arr) {
+  try {
+    lua.lua_getglobal(L, to_luastring('_BX_SINK'));
+    if (!lua.lua_istable(L, -1)) { lua.lua_pop(L, 1); return; }
+    let at = lua.lua_rawlen(L, -1);
+    for (const s of arr) {
+      at += 1;
+      lua.lua_pushstring(L, s);
+      lua.lua_rawseti(L, -2, at);
+    }
+    lua.lua_pop(L, 1);
+  } catch { /* sink missing — nothing to push into */ }
+}
+
+/** Static short-string literal extraction (code position, ≥4 chars, deduped,
+ *  capped). Raw escaped text — exactly what the source ships. */
+function extractStaticStrings(src) {
+  if (!src || src.length < 8) return [];
+  const out = [];
+  const seen = new Set();
+  let i = 0;
+  const n = src.length;
+  while (i < n && out.length < 5000) {
+    const c = src[i];
+    if (c === '-' && src[i + 1] === '-') {
+      const m = /^--\[(=*)\[/.exec(src.slice(i, i + 64));
+      if (m) {
+        const close = ']' + m[1] + ']';
+        const e = src.indexOf(close, i + m[0].length);
+        i = e < 0 ? n : e + close.length;
+      } else {
+        const e = src.indexOf('\n', i);
+        i = e < 0 ? n : e + 1;
+      }
+      continue;
+    }
+    if (c === '[') {
+      const m = /^\[(=*)\[/.exec(src.slice(i, i + 64));
+      if (m) {
+        const close = ']' + m[1] + ']';
+        const e = src.indexOf(close, i + m[0].length);
+        i = e < 0 ? n : e + close.length;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      let raw = '';
+      while (j < n) {
+        if (src[j] === '\\') { raw += src.slice(j, j + 2); j += 2; continue; }
+        if (src[j] === c || src[j] === '\n') break;
+        raw += src[j];
+        j += 1;
+      }
+      i = j + 1;
+      if (raw.length >= 4 && !seen.has(raw)) { seen.add(raw); out.push(raw); }
+      continue;
+    }
+    i += 1;
+  }
+  return out;
+}
+
 try { // outer guard — budget longjmp / internal abort keeps sink data
 const attempts = [
   { name: 'strict', sources: [transformed, repaired, code].filter((s, i, a) => s && a.indexOf(s) === i) },
@@ -323,6 +405,11 @@ const attempts = [
 
 for (const tier of attempts) {
     for (const source of tier.sources) {
+      // v2.18.0 pre-parse filter: a source that cannot COMPILE can never run —
+      // spend no budget on it and say why in the log. This kills wasted runs
+      // of corrupted repair variants (verified live: moonveil's repaired
+      // source broke syntax and burned two full runs per harvest).
+      if (!parsable(source)) { extraLog.push(`tier ${tier.name}: skip — source does not parse`); continue; }
       let r;
       try { r = runOnce(source); } catch (e) {
         // budget longjmp / internal abort — sink data so far is still valid
@@ -330,6 +417,7 @@ for (const tier of attempts) {
         r = { loaded: true, err: 'budget' };
       }
       const usable = usableCount();
+      extraLog.push(`tier ${tier.name}: ${usable} usable strings${r && r.err ? ` — err: ${String(r.err).slice(0, 140)}` : ''}`);
       if (!best || usable > best.usable) {
         best = { usable, tier: tier.name, note: r && r.err ? String(r.err).slice(0, 120) : null };
       }
@@ -353,6 +441,45 @@ for (const tier of attempts) {
       if (best.usable >= 3) break;
     }
     extraLog.push(`tier3 concat-inject: ${best ? `${best.usable} usable strings (tier ${best.tier})` : 'no effect'}`);
+  }
+  // v2.18.0 tier4 — antitamper identity escalation: silent guard exits
+  // (production-shaped env reads nil → `if not x then return end`) starve the
+  // sinks with ZERO errors (verified live: junkie/luarmor/25ms finish in 0.1s
+  // without a single capture or error line). Re-run the best parsing source
+  // under an executor identity layer from the AntiTamper V2 catalog.
+  if (!best || best.usable < 3) {
+    const escSources = [transformed, code].filter((s, i, a) => s && parsable(s) && a.indexOf(s) === i);
+    if (escSources.length) {
+      for (const id of EXECUTOR_IDENTITIES) {
+        try {
+          const rcE = lauxlib.luaL_dostring(L, to_luastring(executorLua(id)));
+          if (rcE !== lua.LUA_OK) { lua.lua_pop(L, 1); extraLog.push(`tier4 escalate(${id.key}): layer install failed`); continue; }
+        } catch { extraLog.push(`tier4 escalate(${id.key}): layer threw`); continue; }
+        let got = usableCount();
+        for (const source of escSources) {
+          try { runOnce(source); } catch { /* sink data so far survives */ }
+          got = usableCount();
+          if (got >= 3) break;
+        }
+        extraLog.push(`tier4 escalate(${id.key}): ${got} usable strings`);
+        if (!best || got > best.usable) best = { usable: got, tier: `escalate:${id.key}`, note: null };
+        if (best.usable >= 3) break;
+      }
+    }
+  }
+  // v2.18.0 tier5 — static literal floor: NEVER return zero recon. Loaders
+  // and config stubs (LuArmor _bsdata, Junkie loader config, 25ms pool heads)
+  // keep their static string table even when every runtime tier starves.
+  if (!best || best.usable < 3) {
+    const statics = extractStaticStrings(code || '');
+    if (statics.length) {
+      pushSinkStrings(statics);
+      const got = usableCount();
+      extraLog.push(`tier5 static-literals: +${statics.length} strings → ${got} usable`);
+      if (!best || got > best.usable) best = { usable: got, tier: 'static-literals', note: null };
+    } else {
+      extraLog.push('tier5 static-literals: 0 found');
+    }
   }
   // The sink currently reflects the LAST run; if the best tier was an earlier
   // attempt we cannot rewind a destroyed state — accept last-run data when it

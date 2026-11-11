@@ -107,23 +107,26 @@ await ok('nested VM chunks are peeled in a fresh jail', async () => {
 
 // Per-sample contract + baseline. The floor is the calibrated minimum from the
 // v2.10.0 mining run; a drop means a jail regression (env shaping, sinks,
-// budget) — not sample drift, the files are immutable.
+// budget) — not sample drift, the files are immutable. v2.18.0 floors raised
+// from 0 where the Biggest Scan unblocked the sample (backtick/type-annotation
+// shim, compound-assign scanner fixes, pre-parse filter, escalation + static
+// floor tiers) — a drop below THESE now also fails, pinning the wins.
 const BASELINE = {
-  '25ms-obf.lua': 0,
+  '25ms-obf.lua': 500,
   'custom-obf.lua': 1000,
   'customprometheus-obf.lua': 2500,
   'ironbrew1-obf.lua': 100,
   'ironbrew2-obf.lua': 5000,
   'junkie-obf.lua': 0,
-  'junkie-obf2.lua': 0,
-  'luarmor-obf.lua': 0,
+  'junkie-obf2.lua': 30,
+  'luarmor-obf.lua': 5,
   'luraph1-obf.lua': 0,
   'luraph2-obf.lua': 500,
   'luraph4-obf.lua': 1,
   'luraph5-obf.lua': 0,
   'luraph6-obf.lua': 1,
-  'moonveil-obf.lua': 0,
-  'somecoolobfuscator-obf.lua': 0,
+  'moonveil-obf.lua': 100,
+  'somecoolobfuscator-obf.lua': 1000,
   'wearedevs-obf.lua': 50,
   'wearedevs-obf2.lua': 800,
 };

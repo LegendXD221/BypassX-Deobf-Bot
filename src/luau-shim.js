@@ -40,14 +40,30 @@ export function hasLuauCompoundAssign(src) {
  */
 export function transformLuauToLua(src) {
   if (!src) return src;
+  // v2.18.0: backtick interpolated strings FIRST — every later pass scans for
+  // quotes/keywords and treats a backtick as data; rewriting them up front
+  // means the if-expr / compound / literal passes always see backtick-free
+  // source. 25ms (Luraph macro family) seals its whole string pool in
+  // backticks — without this pass every tier bails at parse time.
+  let inSrc = src;
+  try {
+    const bt = rewriteBacktickStrings(inSrc);
+    if (bt.changed) inSrc = bt.code;
+  } catch { /* the pre-pass never blocks the pipeline */ }
+  // v2.18.0: type annotations are erased by the Luau compiler — stripping
+  // them is semantics-preserving by construction (25ms: `local j:str=…`).
+  try {
+    const ta = stripTypeAnnotations(inSrc);
+    if (ta.changed) inSrc = ta.code;
+  } catch { /* same contract */ }
   // v2.14.0 ORDER FIX — if-expressions MUST be rewritten before the
   // continue→goto block walk: a raw `if c then a else b` has NO `end`, so
   // every unconverted if-expression shifted the continue-walk's block stack
   // by one and the loop-end labels landed on wrong closers (verified live:
   // `no visible label '__bxc68_m4n'` on a 140KB moonveil dispatcher).
   // Order is now: if-exprs → compound assigns → literals/continue.
-  const { ifEdits, compoundEdits } = collectLuauEdits(src);
-  let out = src;
+  const { ifEdits, compoundEdits } = collectLuauEdits(inSrc);
+  let out = inSrc;
 
   // PASS 1 — apply if-expression edits (positions are src-space)
   if (ifEdits.length) {
@@ -140,9 +156,15 @@ export function collectLuauEdits(src) {
       const lhsText = pre.slice(lhs.start, at);
       const rhsText = pre.slice(at + op.length, rhs.end);
       const luaOp = op === '..=' ? '..' : op === '//=' ? '//' : op.slice(0, 1);
+      const replacement = `${lhsText}= ${lhsText.trim()} ${luaOp} (${rhsText.trim()})`;
+      // v2.18.0 insurance: the wrap paren must never emit unbalanced code.
+      // On corrupt sources (rar-damaged one-liners) the RHS scan can end at
+      // unmatched depth — rejecting the edit leaves the original `+=` for the
+      // parse filter to report honestly instead of corrupting valid regions.
+      if (!balancedDelims(replacement)) continue;
       compoundEdits.push({
         start: lhs.start, end: rhs.end,
-        replacement: `${lhsText}= ${lhsText.trim()} ${luaOp} (${rhsText.trim()})`,
+        replacement,
       });
       idx = rhs.end;
     }
@@ -165,6 +187,10 @@ const LUAU_WORD_RE = /[A-Za-z_]+/g;
 
 /** Quick probe: any Luau-only literal/statement present in the source? */
 export function hasLuauOnlyLiterals(src) {
+  // v2.18.0: backtick interpolated strings are Luau-only syntax — the 25ms
+  // family seals its pool in them. Code-position scan (a backtick inside a
+  // comment/string is data).
+  try { if (hasBacktickStrings(src)) return true; } catch { /* fall through */ }
   const stripped = stripForScan(src);
   let m;
   LUAU_NUM_RE.lastIndex = 0;
@@ -722,21 +748,63 @@ function matchLhs(s, at) {
         i -= 1;
       }
       if (depth !== 0 || i <= 0) return null;
-      // reject expressions inside [] that are too complex (calls, arithmetic)
-      const inner = s.slice(i, at);
-      if (/\(|\)|\bfunction\b|\*|\+|\bor\b|\band\b/.test(inner.replace(/^\[[^\[]*/, '').replace(/\]\]*$/, ''))) return null;
+      // v2.18.0: the LHS text is copied VERBATIM into the replacement, so the
+      // only correctness risk is a side-effectful expression evaluating
+      // TWICE (`t[f(x)] += 1` runs f twice; `t[a+b] += 1` is pure). The old
+      // check rejected ANY arithmetic — but 25ms/SomeCool build every index
+      // from obfuscated arithmetic (`X[(394056+-455100)+-227382]`), which
+      // sealed hundreds of real compound assignments behind the rejection.
+      // Reject only calls / method calls / varargs / function expressions.
+      const inner = s.slice(i, at).replace(/^\[[^\[]*/, '').replace(/\]\]*$/, '');
+      if (/\bfunction\b|\.\.\./.test(inner)) return null;
+      if (/[\w)\]"\']\s*\(/.test(inner)) return null; // call: `f(`, `)(`, `"s`(`
+      if (/[\w)\]"\']\s*\{/.test(inner)) return null; // table-literal call
+      if (/[\w)\]"\']\s*["']/.test(inner)) return null; // string-literal call
+      if (/:\s*[A-Za-z_]\w*\s*[({"']/.test(inner)) return null; // method call
       while (i > 0 && s[i - 1] === ' ') { i -= 1; hadSpace = true; }
       if (i > 0 && s[i - 1] === '.') { i -= 1; continue; }
       continue; // consume the root identifier / another suffix next
+    }
+    if (c === ')') {
+      // v2.18.0: paren-root target `(C)[k] += v` — valid Lua var (prefixexp
+      // suffixes). 25ms assigns through `(C)[(r)[…]]` shapes. The LHS text is
+      // copied verbatim and evaluated TWICE, so the paren inner must be
+      // side-effect-free (identifier/arithmetic — no calls), and a call
+      // before the paren (`f(C)[k]`) is rejected.
+      let depth = 0;
+      while (i > 0) {
+        const ch = s[i - 1];
+        if (ch === ')') depth += 1;
+        else if (ch === '(') { depth -= 1; if (depth === 0) { i -= 1; break; } }
+        i -= 1;
+      }
+      if (depth !== 0 || i <= 0) return null;
+      const core = parenInner(s, i);
+      if (!core) return null;
+      if (/\bfunction\b|\.\.\./.test(core)) return null;
+      if (/[\w)\]"\']\s*[({"']/.test(core)) return null;
+      if (/:\s*[A-Za-z_]\w*\s*[({"']/.test(core)) return null;
+      let j = i;
+      while (j > 0 && s[j - 1] === ' ') j -= 1;
+      if (j > 0 && /[A-Za-z0-9_]/.test(s[j - 1])) return null; // `f(C)[k]` — call result
+      i = j;
+      while (i > 0 && s[i - 1] === ' ') { i -= 1; hadSpace = true; }
+      if (i > 0 && s[i - 1] === '.') { i -= 1; continue; }
+      break; // `(C)` root consumed — a complete var
     }
     return null;
   }
   if (i <= 0) return { start: i }; // LHS at chunk start is valid
   const before = s[i - 1];
-  // fused-token reject: an identifier glued to alnum or `]` can't start a
-  // statement. `)` IS allowed — machine-generated Luau puts the first
-  // statement directly after the param list (`function(P)P%=4294967296`).
-  if (!hadSpace && /[A-Za-z0-9_\]]/.test(before)) return null;
+  // fused-token reject: an identifier glued to alnum can't start a statement
+  // (`x=1y+=2` — the parser reads `1y` and dies). `)` IS allowed — machine
+  // Luau puts the first statement directly after the param list
+  // (`function(P)P%=4294967296`) — and v2.18.0 allows `]` too: one-liner
+  // output juxtaposes statements without separators, so `X[...]K[...]+=…`
+  // (previous RHS closes at `]`, next assignment starts at `K`) is a valid
+  // statement boundary. Verified live: SomeCool/25ms emit thousands of these;
+  // the old reject sealed every compound assignment after an indexed RHS.
+  if (!hadSpace && /[A-Za-z0-9_]/.test(before)) return null;
   if (!hadSpace && (before === '=' || before === '<' || before === '>')) return null;
   return { start: i };
 }
@@ -778,14 +846,340 @@ function matchRhs(s, from, maxChars = 0) {
         const prev = s.slice(from, i).trimEnd().slice(-1);
         if (!/[+\-*/%^#~<>=,(.[]/.test(prev)) break;
       }
-      if (/^(then|do)\b/.test(s.slice(i, i + 5))) break;
-      if (/^end\b/.test(s.slice(i, i + 4))) break;
-      if (/^and\b/.test(s.slice(i, i + 4))) break;
-      if (/^or\b/.test(s.slice(i, i + 3))) break;
+      // v2.18.0: an identifier right after a CLOSER (`)for`, `]end`) is a
+      // statement boundary — `(expr)name` is never a valid expression
+      // continuation. One-liner obfuscator output juxtaposes statements
+      // without separators; without this rule the scan walked INTO the next
+      // statement and the wrap paren split keywords mid-word.
+      if (/[A-Za-z_]/.test(c) && i > from && /[)\]}]/.test(s[i - 1])) break;
+      // v2.18.0: keyword-prefix breaks require a LEFT word boundary — the
+      // `or` inside `for` (and `end` inside any identifier) must not break
+      // the scan. Verified live: SomeCoolObfuscator's 879KB one-liner has
+      // `...=(-492372-(-492372))for i,F in pairs(...)` — the old check broke
+      // INSIDE the word `for`, the wrap paren then split it into `f)or` and
+      // the whole transform emitted unbalanced parens (`')' expected near
+      // 'K'`).
+      if (i === 0 || !/[A-Za-z0-9_]/.test(s[i - 1])) {
+        if (/^(then|do)\b/.test(s.slice(i, i + 5))) break;
+        if (/^end\b/.test(s.slice(i, i + 4))) break;
+        if (/^and\b/.test(s.slice(i, i + 4))) break;
+        if (/^or\b/.test(s.slice(i, i + 3))) break;
+      }
     }
     i += 1;
   }
   const end = i;
   if (end === from) return null;
   return { end };
+}
+
+// ---- v2.18.0: delimiter-balance insurance -----------------------------------
+// The compound-assign wrap paren must never emit unbalanced code. Counts
+// (), [], {} outside string literals; depth must never go negative and must
+// end at zero. Exported for tests.
+
+/** Inner text of the paren group whose `(` sits at openAt (null if unbalanced). */
+function parenInner(s, openAt) {
+  let depth = 0;
+  for (let k = openAt; k < s.length; k += 1) {
+    const ch = s[k];
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) return s.slice(openAt + 1, k);
+    } else if (ch === '"' || ch === "'") {
+      k = skipShortString(s, k) - 1;
+    }
+  }
+  return null;
+}
+
+export function balancedDelims(s) {
+  let pa = 0, sq = 0, cu = 0;
+  let i = 0;
+  const n = s.length;
+  while (i < n) {
+    const c = s[i];
+    if (c === "'" || c === '"') {
+      const q = c;
+      i += 1;
+      while (i < n) {
+        if (s[i] === '\\') { i += 2; continue; }
+        if (s[i] === q) { i += 1; break; }
+        i += 1;
+      }
+      continue;
+    }
+    if (c === '(') pa += 1;
+    else if (c === ')') { pa -= 1; if (pa < 0) return false; }
+    else if (c === '[') sq += 1;
+    else if (c === ']') { sq -= 1; if (sq < 0) return false; }
+    else if (c === '{') cu += 1;
+    else if (c === '}') { cu -= 1; if (cu < 0) return false; }
+    i += 1;
+  }
+  return pa === 0 && sq === 0 && cu === 0;
+}
+
+// ---- v2.18.0: Luau backtick interpolated strings -----------------------------
+// 25ms (Luraph macro family, discord.gg/25ms) wraps its ENTIRE string pool in
+// backtick literals: `44MjFfa=` — Luau interpolated strings, which Lua 5.3's
+// lexer rejects outright ("unexpected symbol near '`'") so every tier bails
+// at parse time and the pool stays sealed. Rewrite each backtick literal:
+//   • without {expr}  → double-quoted string
+//   • with {expr}     → concat chain with tostring(expr) per interpolation
+//     (Luau interpolated strings stringify values — tostring semantics)
+// The scanner is comment/long-string/short-string aware: a backtick inside
+// --, --[[ ]], [=[ ]=], '…' or "…" is data, never syntax.
+
+function skipShortString(src, start) {
+  const q = src[start];
+  let j = start + 1;
+  const n = src.length;
+  while (j < n) {
+    if (src[j] === '\\') { j += 2; continue; }
+    if (src[j] === q) return j + 1;
+    if (src[j] === '\n') return j; // unterminated — bail, leave as-is
+    j += 1;
+  }
+  return j;
+}
+
+/** Quick probe: any backtick literal in CODE position? */
+export function hasBacktickStrings(src) {
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i];
+    if (c === '-' && src[i + 1] === '-') {
+      const m = /^--\[(=*)\[/.exec(src.slice(i, i + 64));
+      if (m) {
+        const close = ']' + m[1] + ']';
+        const e = src.indexOf(close, i + m[0].length);
+        i = e < 0 ? n : e + close.length;
+      } else {
+        const e = src.indexOf('\n', i);
+        i = e < 0 ? n : e + 1;
+      }
+      continue;
+    }
+    if (c === '[') {
+      const m = /^\[(=*)\[/.exec(src.slice(i, i + 64));
+      if (m) {
+        const close = ']' + m[1] + ']';
+        const e = src.indexOf(close, i + m[0].length);
+        i = e < 0 ? n : e + close.length;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+    if (c === '"' || c === "'") { i = skipShortString(src, i); continue; }
+    if (c === '`') return true;
+    i += 1;
+  }
+  return false;
+}
+
+/** Parse one backtick literal starting at src[start] === '`'.
+ *  @returns {{ end: number, parts: Array<{lit?:string, expr?:string}> }} or null */
+function parseBacktickLiteral(src, start) {
+  const parts = [];
+  let lit = '';
+  let i = start + 1;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i];
+    if (c === '\\') {
+      const e = src[i + 1];
+      if (e === undefined) return null;
+      if (e === '`' || e === '{' || e === '}') { lit += e; i += 2; continue; }
+      if (e === 'u' && src[i + 2] === '{') {
+        const m = /^\\u\{([0-9a-fA-F]+)\}/.exec(src.slice(i, i + 12));
+        if (!m) return null;
+        const cp = parseInt(m[1], 16);
+        if (!Number.isFinite(cp) || cp > 0x10ffff) return null;
+        const bytes = cp <= 0x7f ? [cp]
+          : cp <= 0x7ff ? [0xc0 | (cp >> 6), 0x80 | (cp & 63)]
+            : cp <= 0xffff ? [0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63)]
+              : [0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63)];
+        lit += bytes.map((b) => '\\' + String(b).padStart(3, '0')).join('');
+        i += m[0].length;
+        continue;
+      }
+      if ('abfnrtv\\\'"'.includes(e)) { lit += '\\' + e; i += 2; continue; }
+      if (e === 'z') { lit += '\\z'; i += 2; continue; }
+      if (/[0-9]/.test(e)) {
+        const m = /^\\([0-9]{1,3})/.exec(src.slice(i, i + 5));
+        if (!m) return null;
+        lit += '\\' + String(parseInt(m[1], 10)).padStart(3, '0');
+        i += m[0].length;
+        continue;
+      }
+      if (e === '\n' || e === '\r') { lit += '\\n'; i += 2; continue; }
+      // Luau lenient punctuation escape → bare char (matches the literal pass)
+      lit += e;
+      i += 2;
+      continue;
+    }
+    if (c === '`') {
+      parts.push({ lit });
+      return { end: i + 1, parts };
+    }
+    if (c === '{') {
+      let depth = 1;
+      let j = i + 1;
+      while (j < n && depth > 0) {
+        const d = src[j];
+        if (d === "'" || d === '"') { j = skipShortString(src, j); continue; }
+        if (d === '{') { depth += 1; j += 1; continue; }
+        if (d === '}') { depth -= 1; j += 1; continue; }
+        j += 1;
+      }
+      if (depth !== 0) return null;
+      const expr = src.slice(i + 1, j - 1).trim();
+      if (!expr || expr.includes('`')) return null; // empty/nested — bail, keep original
+      if (lit || !parts.length) { parts.push({ lit }); lit = ''; }
+      parts.push({ expr });
+      i = j;
+      continue;
+    }
+    if (c === '"') { lit += '\\"'; i += 1; continue; }
+    if (c === '\n' || c === '\r') { lit += '\\n'; i += (c === '\r' && src[i + 1] === '\n') ? 2 : 1; continue; }
+    lit += c;
+    i += 1;
+  }
+  return null; // unterminated
+}
+
+function buildBacktickReplacement(parts) {
+  const chunks = [];
+  for (const p of parts) {
+    if (p.lit !== undefined) {
+      if (p.lit.length) chunks.push('"' + p.lit + '"');
+    } else {
+      chunks.push('tostring(' + p.expr + ')');
+    }
+  }
+  if (!chunks.length) return '""';
+  return chunks.join('..');
+}
+
+/** Rewrite every code-position backtick literal to Lua 5.3 source.
+ *  @returns {{ changed: boolean, code: string, count: number }} */
+export function rewriteBacktickStrings(src) {
+  if (!src || !src.includes('`')) return { changed: false, code: src, count: 0 };
+  const edits = [];
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i];
+    if (c === '-' && src[i + 1] === '-') {
+      const m = /^--\[(=*)\[/.exec(src.slice(i, i + 64));
+      if (m) {
+        const close = ']' + m[1] + ']';
+        const e = src.indexOf(close, i + m[0].length);
+        i = e < 0 ? n : e + close.length;
+      } else {
+        const e = src.indexOf('\n', i);
+        i = e < 0 ? n : e + 1;
+      }
+      continue;
+    }
+    if (c === '[') {
+      const m = /^\[(=*)\[/.exec(src.slice(i, i + 64));
+      if (m) {
+        const close = ']' + m[1] + ']';
+        const e = src.indexOf(close, i + m[0].length);
+        i = e < 0 ? n : e + close.length;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+    if (c === '"' || c === "'") { i = skipShortString(src, i); continue; }
+    if (c === '`') {
+      const lit = parseBacktickLiteral(src, i);
+      if (lit) {
+        edits.push({ start: i, end: lit.end, replacement: buildBacktickReplacement(lit.parts) });
+        i = lit.end;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+    i += 1;
+  }
+  if (!edits.length) return { changed: false, code: src, count: 0 };
+  edits.sort((a, b) => b.start - a.start);
+  let out = src;
+  let lastStart = Infinity;
+  let applied = 0;
+  for (const e of edits) {
+    if (e.end > lastStart) continue;
+    lastStart = e.start;
+    out = out.slice(0, e.start) + e.replacement + out.slice(e.end);
+    applied += 1;
+  }
+  return { changed: applied > 0, code: out, count: applied };
+}
+
+// ---- v2.18.0: Luau type annotations ------------------------------------------
+// 25ms annotates two locals: `local j:str=function(J)...` — Luau type
+// annotations are erased by the Luau compiler, so stripping them for the Lua
+// 5.3 parser is semantics-preserving BY CONSTRUCTION. Conservative shapes
+// only:
+//   • `local <name> : <type> =` — the type is scanned to the depth-0 `=` and
+//     must look like a type (identifiers, dots, generics, braces, unions);
+//     anything unusual is left untouched (the parse then fails honestly).
+// Function-signature annotations (`(x: T)`, `): T`) are NOT rewritten — no
+// corpus sample uses them, and a mis-detection there would eat real code.
+
+const TYPE_CHAR_RE = /^[\w\s.<>{}(),|?[\]-]*$/;
+
+export function stripTypeAnnotations(src) {
+  if (!/\blocal\s+[A-Za-z_]\w*\s*:/.test(src)) return { changed: false, code: src, count: 0 };
+  const edits = [];
+  const re = /\blocal\s+([A-Za-z_]\w*)\s*:/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const colonAt = m.index + m[0].length - 1;
+    // scan the type expression to the depth-0 `=`
+    let i = colonAt + 1;
+    const n = src.length;
+    let pa = 0, sq = 0, cu = 0;
+    let eqAt = -1;
+    while (i < n) {
+      const c = src[i];
+      if (c === '(') pa += 1;
+      else if (c === ')') { if (pa === 0) break; pa -= 1; }
+      else if (c === '[') sq += 1;
+      else if (c === ']') { if (sq === 0) break; sq -= 1; }
+      else if (c === '{') cu += 1;
+      else if (c === '}') { if (cu === 0) break; cu -= 1; }
+      else if (c === '=' && pa === 0 && sq === 0 && cu === 0) {
+        if (src[i + 1] === '=') { i += 2; continue; } // `==` — not an assignment
+        eqAt = i;
+        break;
+      }
+      else if (c === '\n') break;
+      i += 1;
+    }
+    if (eqAt < 0) continue;
+    const typeText = src.slice(colonAt + 1, eqAt);
+    if (!typeText.length || typeText.length > 120 || !TYPE_CHAR_RE.test(typeText)) continue;
+    edits.push({ start: colonAt, end: eqAt, replacement: '' });
+  }
+  if (!edits.length) return { changed: false, code: src, count: 0 };
+  edits.sort((a, b) => b.start - a.start);
+  let out = src;
+  let lastStart = Infinity;
+  let applied = 0;
+  for (const e of edits) {
+    if (e.end > lastStart) continue;
+    lastStart = e.start;
+    out = out.slice(0, e.start) + e.replacement + out.slice(e.end);
+    applied += 1;
+  }
+  return { changed: applied > 0, code: out, count: applied };
 }
