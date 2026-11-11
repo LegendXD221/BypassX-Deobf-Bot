@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { setDashboardClient, handleDashboard, announceDashboard } from '../src/dashboard.js';
 import { prettyEngine, esc } from '../src/pretty.js';
+import { CATALOG_SIZE } from '../src/antitamper/catalog.js';
 import * as db from '../src/db.js';
 
 process.env.DASHBOARD_TOKEN = 'test-token-0123456789abcdefghij';
@@ -70,8 +71,25 @@ assert.ok(r.headers.get('x-frame-options') === 'DENY', 'page: clickjacking prote
   // tool cards are built client-side — assert the builder data ships in the script
   assert.ok(script.includes('Run full deobf') && script.includes('Detect obfuscator'), 'page: power tools builders present (deobf + detect)');
   assert.ok(script.includes('Extract strings') && script.includes('Run shell'), 'page: analyzer + shell tools present');
+  // v2.17.0: engine-intel tab ships with the page and its builders parse
+  assert.ok(script.includes('loadEngine') && script.includes('renderEngine'), 'page: engine-intel builders present');
 }
 console.log('dashboard auth + page + CLIENT SCRIPT PARSE: ok');
+
+// ---- engine intel (AntiTamper V2 catalog + service matrix) -----------------------
+r = await req(`/dash/${TOK}/api/engine`);
+assert.equal(r.status, 200, 'engine: route reachable');
+const eng = (await r.json()).data;
+assert.ok(eng && eng.antitamper && Array.isArray(eng.services), 'engine: shape');
+assert.equal(eng.antitamper.catalogSize, CATALOG_SIZE, 'engine: catalog size matches shipped module');
+assert.ok(eng.antitamper.familyCount >= 12, 'engine: family count (V2 = 12+)');
+assert.ok(eng.antitamper.killVectors > 0, 'engine: kill vectors counted');
+assert.equal(eng.antitamper.identities.length, 3, 'engine: three executor identities');
+assert.ok(eng.antitamper.sanityProbes >= 101, 'engine: sanity probe count (V2 = 101)');
+assert.ok(eng.antitamper.counters.neutralize > 0 && eng.antitamper.counters.env > 0, 'engine: defuse counters populated');
+assert.ok(eng.services.length >= 16, 'engine: 16-service matrix present');
+assert.ok(eng.services.some((s) => s.cmd === 'lph' && s.name), 'engine: service rows carry cmd + name');
+console.log('engine intel (antitamper V2 + service matrix): ok');
 
 // ---- guilds with names + member counts ------------------------------------------
 r = await req(`/dash/${TOK}/api/state`);

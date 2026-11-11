@@ -1,6 +1,57 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.17.0 — Dashboard V2: Engine-intel tab + service matrix (the dashboard becomes the V2 engine's mission control)
+
+**User directive: "Start The Next Step"** — the queue's dashboard item (#8),
+upgraded to match the new engine instead of repainting an already-good page.
+
+### Added
+- **New GET `/api/engine` route** (src/dashboard.js): the V2 engine's live
+  self-description, computed ONCE from the shipped modules and cached — zero
+  per-request cost. Serves: antitamper version, catalog size, family count +
+  per-family counts, severity mix (sev1–sev5), defuse-strategy counters
+  (neutralize / env / escalate), goal split (static / dynamic / both),
+  kill-vector count (sev ≥ 4), the three executor identities, and the sanity
+  probe count via `probeCount()` (cheap — `audit()` stays test-side). Plus the
+  full 16-service matrix from SERVICE_COMMANDS (cmd / name / family id / blurb).
+- **New "Engine intel" tab** (src/dashboard-page.js): four live cards —
+  🧬 Vector catalog (111 / 12 / 40 kill vectors / 101 probes pinned green /
+  severity mix), 🎯 Defuse strategy (13 neutralize · 64 env · 34 escalate),
+  🎭 Executor masquerade (synapse / scriptware / krnl + gate + provenance),
+  📚 Family coverage — and the 16-row service-matrix table below. If the
+  catalog grows, the dashboard grows with it: numbers come straight from
+  src/antitamper/catalog.js, never hardcoded.
+- **Overview card**: 🧬 AntiTamper V2 joins the overview grid (engine version,
+  catalog, kill vectors, sanity gate, identities) — fetched once per session
+  alongside state, failure-tolerant (card simply hides if the route errors).
+- Sidebar gets an **ENGINE** nav section between Monitor and Operate.
+
+### Fixed
+- `.kv span` used `word-break:break-all` — long values ("behaviorally
+  implemented") wrapped mid-word ("behaviora lly"). Now
+  `overflow-wrap:anywhere` (word-boundary wrapping, emergency breaks only).
+
+### Tests
+- test/dashboard.js: new engine-intel block — route reachable, shape, catalog
+  size PINNED to the shipped `CATALOG_SIZE` (catches drift), family count
+  ≥ 12, kill vectors > 0, exactly 3 identities, sanity probes ≥ 101, defuse
+  counters populated, 16-service matrix present, rows carry cmd + name; page
+  parse-guard extended to the new `loadEngine`/`renderEngine` builders.
+- **Visual verification** (headless browser, scripts/dash-visual-boot.mjs):
+  overview + engine tab + service matrix screenshotted and eyeballed — cards,
+  wrapping, table all render clean. ALL 21 TEST SUITES PASSED after the
+  change.
+
+### Also re-verified this step (queue items #6/#7 still holding)
+- MoonSec V3 escrow live acceptance: 158 KB → 3,299 B, readability 85 (clean),
+  215 strings decrypted, 122 s.
+- TokraScript live acceptance (real fetch → full pipeline): 807 KB →
+  168.6 KB, readability **100 (clean)**, zero issues — the v2.12 result
+  still holds on the v2.16 engine; the "score 50" blob in the harness output
+  is the cached OLD paste baseline shown for comparison, not the new result.
+
+
 ## v2.16.0 — AntiTamper V2: 2× the engine (111-vector catalog, adaptive executor-identity escalation, 101-probe sanity gate, two jail bugs fixed)
 
 **User directive: "Build The AntiTemper V2 — it jumped one level, it should be 2x

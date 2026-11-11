@@ -65,7 +65,7 @@ h1{font-size:19px;margin:0;background:linear-gradient(90deg,#c4b5fd,#22d3ee);-we
 .kv{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:4px 0;border-bottom:1px dashed rgba(255,255,255,.04)}
 .kv:last-child{border-bottom:none}
 .kv b{color:var(--dim);font-weight:500}
-.kv span{font-family:ui-monospace,SFMono-Regular,monospace;font-size:12.5px;text-align:right;word-break:break-all}
+.kv span{font-family:ui-monospace,SFMono-Regular,monospace;font-size:12.5px;text-align:right;overflow-wrap:anywhere;min-width:0}
 .big{font-size:26px;font-weight:700;font-family:ui-monospace,monospace}
 .trend{color:var(--dim);font-size:11px;margin-top:2px}
 
@@ -145,6 +145,8 @@ export function renderPage() {
   <button class="navbtn on" data-t="ov"><span class="ic">📊</span>Overview</button>
   <button class="navbtn" data-t="lg"><span class="ic">📜</span>Live logs</button>
   <button class="navbtn" data-t="au"><span class="ic">🛡</span>Audit trail</button>
+  <div class="navlabel">Engine</div>
+  <button class="navbtn" data-t="en"><span class="ic">🧬</span>Engine intel</button>
   <div class="navlabel">Operate</div>
   <button class="navbtn" data-t="pt"><span class="ic">⚡</span>Power tools</button>
   <button class="navbtn" data-t="gu"><span class="ic">🏰</span>Guilds</button>
@@ -165,6 +167,15 @@ export function renderPage() {
   <!-- ======================= OVERVIEW ======================= -->
   <div class="tab on" id="t-ov">
     <div class="grid" id="ov-cards"></div>
+  </div>
+
+  <!-- ======================= ENGINE INTEL ======================= -->
+  <div class="tab" id="t-en">
+    <p class="mut" style="margin-top:0">The V2 engine's live self-description: the AntiTamper vector catalog (111 vectors / 12 families), the defuse-strategy split, and the full supported-service matrix. Numbers come straight from the shipped modules — if the catalog grows, this grows.</p>
+    <div class="grid" id="en-cards"></div>
+    <div class="card" style="margin-top:14px;padding:0;overflow:auto">
+      <table id="svc-table"><thead><tr><th>command</th><th>service</th><th>family id</th><th>notes</th></tr></thead><tbody></tbody></table>
+    </div>
   </div>
 
   <!-- ======================= POWER TOOLS ======================= -->
@@ -246,6 +257,7 @@ var NL = String.fromCharCode(10);
 var BASE = location.pathname;
 if (BASE.charAt(BASE.length - 1) === '/') BASE = BASE.slice(0, -1);
 var STATE = null;
+var ENGINE = null;
 var LOG_TIMER = null;
 
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -328,12 +340,14 @@ $$('.navbtn').forEach(function(b){
     if (t === 'lg') loadLogs();
     if (t === 'au') loadAudit();
     if (t === 'cm') loadCommands();
+    if (t === 'en') loadEngine();
   });
 });
 $('#btn-refresh').addEventListener('click', function(){ refresh(); toast('refreshed'); });
 
 /* ---- state poll + render ---- */
 async function refresh(){
+  if (!ENGINE) { try { var re = await api('engine'); if (re.ok) ENGINE = re.data; } catch (e) { /* engine tab retries on open */ } }
   try {
     var r = await api('state');
     if (!r.ok) throw new Error('state failed');
@@ -382,7 +396,59 @@ function renderOverview(){
     card('🏰 Guilds', [['Count', g.length], ['Members', g.reduce(function(a, x){ return a + (x.memberCount || 0); }, 0)], ['Biggest', g[0] ? esc(g[0].name) : '—'], ['Blacklisted', (s.blacklist || []).length]]) +
     card('🖥 Host', [['Node', esc(s.host ? s.host.node : '—')], ['Platform', esc(s.host ? s.host.platform : '—')], ['CPUs', s.host ? s.host.cpus : '—'], ['Load (1m)', s.host ? Number(s.host.load1).toFixed(2) : '—'], ['RSS / heap', s.memoryMb.toFixed(0) + ' / ' + (s.heapMb || 0).toFixed(0) + ' MB']]) +
     card('🛡 Protection', [['Owner PIN', s.pinArmed ? '<span class="ok">armed</span>' : 'off'], ['DB audit', s.db.enabled ? 'on' : 'off'], ['Dashboard', 'token-gated + locked to this URL'], ['Cooldown', '10s per user']]) +
+    (ENGINE && ENGINE.antitamper
+      ? card('🧬 AntiTamper V2', [
+          ['Engine', 'v' + esc(ENGINE.antitamper.version || '?')],
+          ['Catalog', '<span class="vio">' + ENGINE.antitamper.catalogSize + '</span> vectors / ' + ENGINE.antitamper.familyCount + ' families'],
+          ['Kill vectors (sev 4–5)', ENGINE.antitamper.killVectors],
+          ['Sanity gate', ENGINE.antitamper.sanityProbes + ' probes pinned green'],
+          ['Executor identities', (ENGINE.antitamper.identities || []).join(', ') || '—'],
+        ])
+      : '') +
     card('📈 Stats counters', Object.keys(s.stats || {}).length ? Object.keys(s.stats).slice(0, 8).map(function(k){ return [k, String(s.stats[k])]; }) : [['counters', '— (db off)']]);
+}
+
+/* ---- engine intel tab ---- */
+async function loadEngine(){
+  try {
+    var r = await api('engine');
+    if (!r.ok) throw new Error(r.error || 'engine intel failed');
+    ENGINE = r.data;
+    renderEngine();
+  } catch (e) {
+    $('#en-cards').innerHTML = '<div class="card"><h3>Engine intel</h3><div class="kv"><b>error</b><span class="err">' + esc(String(e.message || e)) + '</span></div></div>';
+  }
+}
+function renderEngine(){
+  if (!ENGINE || !ENGINE.antitamper) return;
+  var at = ENGINE.antitamper;
+  var famList = (at.families || []).map(function(f){ return esc(f.name) + ' <span class="vio">' + f.count + '</span>'; }).join(' · ');
+  var sev = at.severity || {};
+  $('#en-cards').innerHTML =
+    card('🧬 AntiTamper V2 — vector catalog', [
+      ['Engine version', 'v' + esc(at.version || '?')],
+      ['Vectors', '<span class="big vio">' + at.catalogSize + '</span>'],
+      ['Families', at.familyCount],
+      ['Kill vectors (sev 4–5)', '<span class="err">' + at.killVectors + '</span>'],
+      ['Sanity gate', at.sanityProbes + ' probes pinned green'],
+      ['Severity mix', 'sev1 ' + (sev[1] || 0) + ' · sev2 ' + (sev[2] || 0) + ' · sev3 ' + (sev[3] || 0) + ' · sev4 ' + (sev[4] || 0) + ' · sev5 ' + (sev[5] || 0)],
+    ]) +
+    card('🎯 Defuse strategy', [
+      ['neutralize — static AST defuse', '<span class="ok">' + (at.counters ? at.counters.neutralize : 0) + '</span>'],
+      ['env — jail answers the probe', '<span class="cyan">' + (at.counters ? at.counters.env : 0) + '</span>'],
+      ['escalate — identity re-run', '<span class="warn">' + (at.counters ? at.counters.escalate : 0) + '</span>'],
+      ['Goals', 'static ' + (at.goals ? at.goals.static : 0) + ' · dynamic ' + (at.goals ? at.goals.dynamic : 0) + ' · both ' + (at.goals ? at.goals.both : 0)],
+    ]) +
+    card('🎭 Executor masquerade', (at.identities || []).map(function(i){ return [esc(i), 'identity profile — behaviorally implemented']; }).concat([
+      ['Gate', 'isExecutorGated(source) → kill statement + gated probe → escalation'],
+      ['Provenance', 'UNC · sUNC · exe-test · pqr-692 · Luraph macros'],
+    ])) +
+    card('📚 Family coverage', [['families', famList || '—']]);
+  var rows = (ENGINE.services || []).map(function(s){
+    return '<tr><td><code>.' + esc(s.cmd) + '</code></td><td>' + esc(s.name) + '</td><td class="mut">' + esc(s.family || '—') + '</td><td class="mut">' + esc(s.note || '') + '</td></tr>';
+  }).join('');
+  var tb = document.querySelector('#svc-table tbody');
+  if (tb) tb.innerHTML = rows;
 }
 
 /* ---- guilds ---- */

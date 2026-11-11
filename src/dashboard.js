@@ -24,6 +24,10 @@ import path from 'node:path';
 import { CONFIG, ensureVarDir } from './config.js';
 import { logger, recentLogs } from './logger.js';
 import * as db from './db.js';
+import { CATALOG, FAMILIES, CATALOG_SIZE, EXECUTOR_IDENTITIES } from './antitamper/catalog.js';
+import { ANTITAMPER_VERSION } from './antitamper/index.js';
+import { probeCount } from './antitamper/sanity.js';
+import { SERVICE_COMMANDS } from './service-catalog.js';
 import { runJailedEval, runShell, broadcastAll } from './runners.js';
 import { resetCooldowns } from './rate-limit.js';
 import { deobfuscate } from './pipeline.js';
@@ -249,6 +253,46 @@ function clip(text, max = 120_000) {
   return { text: s.slice(0, max), clipped: true, total: s.length };
 }
 
+// ---- engine intel (AntiTamper V2 catalog + service matrix) -------------------------
+
+let ENGINE_INTEL = null; // the catalog is static — compute once, serve forever
+
+function engineIntel() {
+  if (ENGINE_INTEL) return ENGINE_INTEL;
+  const byFamily = new Map();
+  const severity = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  const counters = { neutralize: 0, env: 0, escalate: 0 };
+  const goals = { static: 0, dynamic: 0, both: 0 };
+  for (const v of CATALOG) {
+    byFamily.set(v.family, (byFamily.get(v.family) || 0) + 1);
+    severity[v.severity] = (severity[v.severity] || 0) + 1;
+    counters[v.counter] = (counters[v.counter] || 0) + 1;
+    goals[v.goal] = (goals[v.goal] || 0) + 1;
+  }
+  const families = [...byFamily.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
+  ENGINE_INTEL = {
+    antitamper: {
+      version: ANTITAMPER_VERSION,
+      catalogSize: CATALOG_SIZE,
+      familyCount: FAMILIES.length,
+      families,
+      severity,
+      counters,
+      goals,
+      killVectors: CATALOG.filter((v) => v.severity >= 4).length,
+      identities: EXECUTOR_IDENTITIES.map((i) => i.key),
+      sanityProbes: probeCount(),
+    },
+    services: SERVICE_COMMANDS.map((s) => ({
+      cmd: s.cmd,
+      name: s.name || s.cmd,
+      family: s.serviceId || '',
+      note: String(s.blurb || '').slice(0, 140),
+    })),
+  };
+  return ENGINE_INTEL;
+}
+
 // ---- main handler -------------------------------------------------------------------
 
 /**
@@ -311,6 +355,7 @@ async function routeApi(req, res, route, search = new URLSearchParams()) {
 
   if (req.method === 'GET') {
     if (route === 'state') return json(res, 200, { ok: true, data: await stateData() });
+    if (route === 'engine') return json(res, 200, { ok: true, data: engineIntel() });
     if (route === 'logs') {
       const n = Math.max(5, Math.min(400, Number(search.get('n')) || 120));
       return json(res, 200, { ok: true, data: { lines: recentLogs(n) } });
