@@ -46,6 +46,9 @@ const writeOut = (obj) => {
 import fengari from 'fengari';
 import { safeToJsString } from './fengari-safe.js';
 import * as jail from './jail-prelude.js';
+// AntiTamper V2 (v2.15.0): adaptive escalation intelligence + layers
+import { isExecutorGated as atIsExecutorGated, EXECUTOR_IDENTITIES as atExecutorIdentities } from './antitamper/catalog.js';
+import { executorLadder as atExecutorLadder } from './antitamper/env-hardening.js';
 
 const { lua, lauxlib, lualib, to_luastring, to_jsstring } = fengari;
 
@@ -924,14 +927,56 @@ async function main() {
   const chunkHit = d1.chunks.length > 0;
   const timeLeft = Date.now() - t0 < TIME_WALL_MS;
 
+  // ---- AntiTamper V2: adaptive escalation (v2.15.0) ---------------------------
+  // Executor-gated builds REFUSE the production shape (identity whitelists,
+  // closure checks, executor FS/HTTP probes) and yield an empty pool. When the
+  // catalog flags the sample and run 1 came back weak, re-run under each
+  // executor identity (Synapse Z → Script-Ware → Krnl) and adopt the first
+  // profile that decrypts. The winning layer also rides run 2's lift states so
+  // the devirtualizer probes the dispatcher under the SAME shape that worked.
+  let escLayer = null;
+  if (!chunkHit && timeLeft && d1.strings.length < 3 && atIsExecutorGated(code)) {
+    for (const layer of atExecutorLadder(atExecutorIdentities)) {
+      if (Date.now() - t0 >= TIME_WALL_MS) break;
+      let adopted = null;
+      try {
+        for (const src of run1Sources) {
+          const sE = freshState({ left: Math.floor(BUDGET_TOTAL * 0.2) });
+          runLua(sE, jail.PRELUDE, 'prelude');
+          runLua(sE, layer.lua, `executor-layer:${layer.key}`);
+          const lE = loadSample(sE, src);
+          if (!lE.loaded) continue;
+          try { runLua(sE, RUNNER, 'runner'); } catch { /* budget longjmp — sinks survive */ }
+          const dE = dumpState(sE, { withLift: false });
+          if (dE.strings.length > d1.strings.length || dE.chunks.length > 0) { adopted = dE; break; }
+        }
+      } catch { /* try the next identity */ }
+      if (adopted) {
+        escLayer = layer.lua;
+        d1 = adopted;
+        out.escalated = layer.key;
+        out.ran = adopted.ran;
+        out.strings = adopted.strings;
+        out.chunks = adopted.chunks;
+        out.log = adopted.log.slice(0, 120);
+        if (out.strings.length > 0 || out.chunks.length > 0) {
+          writeOut({ ...out, phase: `escalated:${layer.key}`, partial: true });
+        }
+        break;
+      }
+    }
+  }
+  const chunkHit2 = d1.chunks.length > 0;
+
   // ---- run 2+: lifting runs (fresh states + capture/probe instrumentation) -----
   // Multi-pass: the RETURN-style op exits the dispatcher mid-probe-program,
   // truncating later opids. Each pass probes on a fresh state; uncovered opids
   // are retried with the known-exit op placed LAST.
-  if (!chunkHit && timeLeft) {
+  if (!chunkHit2 && timeLeft) {
     const attempt = (source, tag, probeOps) => {
       const s2 = freshState({ left: Math.floor(BUDGET_TOTAL * 0.35) });
       runLua(s2, jail.PRELUDE, 'prelude');
+      if (escLayer) runLua(s2, escLayer, 'executor-layer');
       runLua(s2, LIFT_LUA_FULL, 'lift-instrumentation');
       if (probeOps && probeOps.length) {
         lua.lua_getglobal(s2.L, to_luastring('_G'));

@@ -26,7 +26,8 @@ import { liftFromHarvest } from './vm-lift.js';
 import { jteDecompile, isLuauBytecode, isLuaBytecode, jteBinaryPresent } from './jte-lift.js';
 import { residualObfuscation, detectLayers, peelSummary } from './layers.js';
 import { makeReadableLua, makeReadableJs, readabilityScore } from './readable.js';
-import { prepareAntitamper } from './antitamper/index.js';
+// AntiTamper V2 (v2.15.0): static defuse tier + reply-facing summary
+import { neutralize as atNeutralize, defuseSummary } from './antitamper/index.js';
 
 // v2.4.0 "Total Deobf": the pipeline is a PEEL LOOP. Each pass strips one
 // obfuscation layer (VM, escrow, string-array, loader wrapper — whatever the
@@ -216,6 +217,25 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
 
     const lang = guessLanguage(buffer);
 
+    // ---- AntiTamper V2: static defuse tier (v2.15.0) ------------------------
+    // Kill switches (LPH_CRASH / LPH_PRECHECK validators, fingerprint-gated
+    // error gates, while-true spin bombs, pcall suicide threads) are defused
+    // BEFORE any engine touches the source. Zero-hit sources pass through
+    // byte-identical, and the neutralizer re-parses its own output so a
+    // broken transform can never ship — a failed verify reverts to the
+    // original bytes.
+    let working = buffer;
+    let atNote = '';
+    if (lang === 'lua') {
+      try {
+        const at = atNeutralize(buffer.toString('utf8'));
+        if (at.changed) {
+          working = Buffer.from(at.code, 'utf8');
+          atNote = defuseSummary(at.report);
+        }
+      } catch { /* the defuser never blocks the pipeline */ }
+    }
+
     // Persist input in an isolated 0700 dir with a safe name.
     const safeExt = path.extname(filename) || '.bin';
     const inDir = ensureVarDir(`jobs/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
@@ -225,8 +245,9 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
     // comments that some obfuscator builds emit in different shapes. The bot's
     // detection is broader, so when we positively identify a family whose
     // engine marker is missing, prepend the canonical marker as a comment.
-    const shim = engineMarkerShim(buffer, hintId || detection.best?.service?.id);
+    const shim = engineMarkerShim(working, hintId || detection.best?.service?.id);
     await fsp.writeFile(inputPath, shim.buffer, { mode: 0o600 });
+    if (atNote) stage('antitamper', atNote);
 
     try {
       const chosen = detection.best?.service || null;
@@ -244,34 +265,6 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
       const route = pickRoute(detected, lang, buffer);
       stage('detect', `${detected.name} ${detected.version || ''} (${detected.confidence}%) → route ${route}${forcedSvc ? ` [forced via .${forced.tag}]` : ''}`);
 
-      // v2.15.0 AntiTamper: scan + disarm known anti-tamper constructs BEFORE
-      // any engine sees the input (LPH_CRASH/LPH_PRECHECK traps, LPH_ macro
-      // wrappers, setmetatable(game) tamper residue). Verify-gated: the
-      // rewritten input only replaces the original when it still parses at
-      // least as well as before; the scan report surfaces either way.
-      try {
-        const baseText = shim.buffer.toString('utf8');
-        const at = prepareAntitamper(baseText, detected.id);
-        if (at.changed && lang !== 'js') {
-          const vNew = verifyCode(at.code, { lang: 'lua', filename: 'input.lua' });
-          if ((VERIFY_RANK[vNew.status] ?? 1) >= 1) {
-            await fsp.writeFile(inputPath, Buffer.from(at.code, 'utf8'), { mode: 0o600 });
-          } else {
-            at.changed = false;
-            stage('antitamper:skip', 'rewrite failed syntax verification — original input kept');
-          }
-        }
-        for (const s of at.stages) stage(s.name, s.detail);
-        if (at.hits.length || at.scan.length) {
-          detected.antitamper = {
-            summary: at.summary,
-            disarmed: at.hits.reduce((a, h) => a + h.count, 0),
-            signatures: at.scan.reduce((a, s) => a + s.count, 0),
-            profile: at.profile.label,
-          };
-        }
-      } catch { /* antitamper never fails a job */ }
-
       if (route === 'pyarmor') outcome = await runPyarmorRoute(inputPath, detected, stage, buffer);
       else if (route === 'webcrack') outcome = await runWebcrackRoute(inputPath, buffer, stage);
       else if (route === 'lua-engine') outcome = await runLuaEngineRoute(inputPath, detected, stage, buffer.length);
@@ -288,7 +281,7 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
             const filtered = [];
             for (const f of fb.files) {
               const d = await engine.readCodeFile(f);
-              if (!isPassthrough(d, buffer, shim.shimLine, detected.id)) filtered.push(f);
+              if (!isPassthrough(d, working, shim.shimLine, detected.id)) filtered.push(f);
             }
             if (filtered.length) outcome = { ...fb, files: filtered, how: 'engine auto (fallback)' };
             else if (fb.workDir) await engine.cleanupWorkDir(fb.workDir);
@@ -351,7 +344,7 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
         try {
           raw = f.buffer || (await engine.readCodeFile(f));
         } catch { continue; }
-        if (isPassthrough(raw, buffer, shim.shimLine, detected.id)) continue;
+        if (isPassthrough(raw, working, shim.shimLine, detected.id)) continue;
 
         // Binary-output guard: unpacked native binaries (UPX etc.) cannot ride
         // a text paste and have no parser — accept them directly.

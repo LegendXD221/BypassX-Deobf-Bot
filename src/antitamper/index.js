@@ -1,114 +1,79 @@
 /**
- * BypassX Deobf Bot — AntiTamper orchestrator (v2.15.0).
+ * BypassX Deobf Bot — AntiTamper V2 orchestrator.
  *
- * One entry point the pipeline calls BEFORE any engine sees the input:
+ * Single entry point for the whole engine:
  *
- *   prepareAntitamper(sourceText, familyId)
- *     → scan (catalog hits present in the source)
- *     → neutralize (safe rewrites: LPH traps, macro unwraps, tamper residue)
- *     → profile pick (env-hardening)
- *     → { code, changed, hits, scan, profile, summary, stages }
+ *   import * as antitamper from './antitamper/index.js';
  *
- * The caller verify-gates `code` before shipping it (pipeline.js); a rewrite
- * that does not parse never leaves this module's hands as "changed" — but the
- * hits/scan report always survives, so visibility never depends on rewrites.
+ *   antitamper.matchCatalog(src)        → vector hits (intelligence scan)
+ *   antitamper.isExecutorGated(src)     → should the run escalate?
+ *   antitamper.neutralize(src)          → static defuse + report
+ *   antitamper.harden(profile)          → Lua env layer + feature list
+ *   antitamper.executorLadder(ids)      → pre-rendered escalation layers
+ *   antitamper.audit()                  → behavioral sanity gate (all profiles)
+ *   antitamper.defuseSummary(report)    → human-readable line for bot replies
+ *
+ * The pipeline calls neutralize() once per job (static tier) and the VM-lift
+ * worker consumes executorLadder() on misses (dynamic tier).
  */
 
-import { CATALOG, CATALOG_BY_ID, catalogForFamily, PATTERNS, SUPPORTED_FAMILIES } from './catalog.js';
-import { buildProfileExtension, profileSummary, hasProfile } from './env-hardening.js';
-import { neutralizeSource, scanSource, hitsToStageLine } from './neutralize.js';
-import { runSanity, sanityLine, CHECKS } from './sanity.js';
+export {
+  CATALOG, CATALOG_SIZE, FAMILIES,
+  entryById, matchCatalog, isExecutorGated, EXECUTOR_IDENTITIES,
+} from './catalog.js';
 
-export { CATALOG, CATALOG_BY_ID, catalogForFamily, PATTERNS, SUPPORTED_FAMILIES };
-export { buildProfileExtension, profileSummary, hasProfile };
-export { neutralizeSource, scanSource, hitsToStageLine };
-export { runSanity, sanityLine, CHECKS };
+export {
+  PRODUCTION_LUA, executorLua, harden, executorLadder,
+} from './env-hardening.js';
 
-const SCAN_PATTERNS = [
-  // each: [id, regex source] — matched against raw source for the SCAN report
-  ['lph-crash', /LPH_CR(A|A)SH\s*\(/],
-  ['lph-precheck', /LPH_PRECHECK\s*\(/],
-  ['lph-macros', /LPH_(ENCSTR|ENCNUM|ENCFUNC|JIT_MAX|JIT|NO_VIRTUALIZE|NO_UPVALUES)\s*\(/],
-  ['residue-antitamper-leftovers', /setmetatable\s*\(\s*(game|workspace|script)\s*,/],
-  ['unc-identifyexecutor', /\b(identifyexecutor|getexecutorname)\s*\(/],
-  ['unc-getgenv-tell', /\b(getgenv|getrenv|getgc)\s*\(/],
-  ['unc-namecall-integrity', /__namecall/],
-  ['dump-stringdump', /string\s*\.\s*dump/],
-  ['telemetry-http', /Http(Get|Post)\b/],
-  ['telemetry-request', /\b(request|http_request)\s*\(/],
-  ['ms-skid-setfenv', /\bsetfenv\s*\(/],
-  ['luraph-tostring-fingerprint', /45195195/],
-  ['dump-bytecode-guard', /RSB1/],
-];
+export { neutralize } from './neutralize.js';
+export { audit, executorLayerAlive, probeCount } from './sanity.js';
+
+import { CATALOG, matchCatalog } from './catalog.js';
 
 /**
- * Prepare an input for every engine: scan + neutralize + profile.
- * Pure string work — no I/O, no throw. On any internal error the ORIGINAL
- * text is returned unchanged with the error recorded (never fails a job).
+ * Human-readable "antitamper defeated" summary from a neutralize() report —
+ * the exact line the bot can show in its reply stages.
+ * @param {object} report neutralize().report
+ * @returns {string}
  */
-export function prepareAntitamper(sourceText, familyId = 'unknown') {
-  const out = {
-    code: sourceText,
-    changed: false,
-    hits: [],
-    scan: [],
-    profile: profileSummary(familyId),
-    summary: null,
-    stages: [],
-    error: null,
-  };
-  try {
-    if (typeof sourceText !== 'string' || !sourceText) return out;
+export function defuseSummary(report) {
+  if (!report || !Array.isArray(report.edits) || report.edits.length === 0) return '';
+  const parts = report.edits.map((e) => `${e.count}× ${labelOf(e.id)}`);
+  const bytes = report.bytesSaved > 0 ? ` — ${report.bytesSaved} bytes of kill logic removed` : '';
+  return `${report.edits.reduce((a, e) => a + e.count, 0)} anti-tamper vectors defused (${parts.join(', ')})${bytes}`;
+}
 
-    // 1. Catalog scan (cheap, regex-only) — what the source carries.
-    const seen = new Set();
-    for (const [id, re] of SCAN_PATTERNS) {
-      const m = sourceText.match(new RegExp(re.source, 'g'));
-      if (m && m.length) {
-        out.scan.push({ id, count: m.length });
-        seen.add(id);
-      }
-    }
-
-    // 2. Neutralize (safe rewrites).
-    const n = neutralizeSource(sourceText, familyId);
-    out.code = n.code;
-    out.changed = n.changed;
-    out.hits = n.hits;
-
-    // 3. Stage lines (user-visible in replies via pipeline stages).
-    const line = hitsToStageLine(out.hits);
-    if (line) {
-      out.stages.push({ name: 'antitamper', detail: line });
-      out.summary = line;
-    } else if (out.scan.length) {
-      out.summary = `${out.scan.reduce((a, s) => a + s.count, 0)} anti-tamper signature(s) present — handled by the hardened jail (${out.profile.label})`;
-      out.stages.push({ name: 'antitamper', detail: out.summary });
-    }
-  } catch (e) {
-    out.error = String(e && e.message || e).slice(0, 200);
-    out.code = sourceText; // original text, always
-    out.changed = false;
+function labelOf(id) {
+  switch (id) {
+    case 'lph-precheck': return 'LPH_PRECHECK validator emptied';
+    case 'lph-crash': return 'LPH_CRASH kill switch stripped';
+    case 'ks-error-gate': return 'fingerprint kill gate removed';
+    case 'ks-while-true': return 'spin bomb removed';
+    case 'ks-pcall-suicide': return 'suicide thread defused';
+    case 'ks-os-exit': return 'os.exit gate removed';
+    case 'ks-crash-func': return 'crash helper call defused';
+    default: return id;
   }
-  return out;
 }
 
-/** Catalog entries for a family, formatted for a reply block. */
-export function catalogLinesForFamily(familyId, { max = 8 } = {}) {
-  const entries = catalogForFamily(familyId);
-  const specific = entries.filter((e) => !e.services.includes('*'));
-  const generic = entries.filter((e) => e.services.includes('*'));
-  const ordered = [...specific, ...generic].slice(0, max);
-  return ordered.map((e) => `• **${e.name}** (${e.kind}, ${e.severity}) — ${e.counter}`);
+/**
+ * Full pre-run intelligence brief for a sample — what the catalog sees,
+ * what the static tier will do, whether escalation is expected.
+ * @param {string} source
+ * @returns {{hits: number, top: Array<{id,name,severity}> , gated: boolean, severity: number}}
+ */
+export function brief(source) {
+  const hits = matchCatalog(source);
+  const severity = hits.reduce((m, h) => Math.max(m, h.severity), 0);
+  return {
+    hits: hits.length,
+    top: hits.slice(0, 5).map((h) => ({ id: h.id, name: h.name, severity: h.severity })),
+    gated: hits.some((h) => h.counter === 'escalate'),
+    severity,
+  };
 }
 
-/** Full human report (owner/debug surface). */
-export function fullReport(familyId) {
-  const p = profileSummary(familyId);
-  const lines = [
-    `AntiTamper report — ${p.label}`,
-    ...p.notes.map((n) => `  • ${n}`),
-    `Catalog: ${CATALOG.length} mechanisms (${catalogForFamily(familyId).length} relevant to ${familyId})`,
-  ];
-  return lines.join('\n');
-}
+/** Version of the AntiTamper engine (mirrors the bot release). */
+export const ANTITAMPER_VERSION = '2.0.0';
+export const CATALOG_FAMILIES = [...new Set(CATALOG.map((e) => e.family))];

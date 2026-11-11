@@ -28,6 +28,11 @@ export const MAX_CHUNKS = 64;
 export const MAX_CHUNK_BYTES = 2 * 1024 * 1024;
 export const MAX_CHUNKS_TOTAL = 3 * 1024 * 1024;
 
+// v2.15.0 AntiTamper V2: the prelude string now COMPOSES the production-shape
+// hardening layer (src/antitamper/env-hardening.js — game metatable lock +
+// hidden internals __pairs). Both workers keep installing one byte-identical
+// string; the layer is generated, not hand-maintained here.
+import { PRODUCTION_LUA } from './antitamper/env-hardening.js';
 export const PRELUDE = `
 -- sink
 _BX_SINK = {}
@@ -140,12 +145,42 @@ local function __bx_level_func(lvl)
   return nil
 end
 getfenv = function() return _G end
+-- v2.15.0 (AntiTamper V2): SHARED-_ENV POISON GUARD (swap → canary → rollback).
+-- fengari binds prelude-chunk closures (bit32 members, sink wrappers, INERT
+-- handlers, …) to the SAME _ENV upvalue object as several stdlib closures
+-- (print shares it). Swapping that upvalue rewires the environment of every
+-- prelude-internal function at once: __bx_rec reads nil, string sinks die,
+-- decrypt pools go silent — a jail self-poison no capture could recover from.
+-- So setfenv performs the swap, then checks a canary that reads globals
+-- through the prelude's own _ENV (bit32.bxor → ipairs). If the canary dies
+-- the swap hit the shared upvalue and is ROLLED BACK; runtime load()-ed
+-- closures (MoonSec dispatchers, second-stage chunks) have their own _ENV
+-- upvalue, pass the canary, and keep full real-swap semantics — the
+-- A/B-verified v2.11.0 MoonSec behavior is preserved exactly where it matters.
+-- The canary ERRORS when poisoned: reading bit32 (a prelude-internal global
+-- via the shared _ENV) yields nil under the swap → indexing nil raises.
+-- CRITICAL: every reference setfenv touches AFTER the swap must be a LOCAL
+-- (upvalue), because a poisoned _ENV makes global reads (pcall, debug) nil —
+-- the rollback itself would die before restoring. Captured below as locals.
+local __bx_pcall = pcall
+local __bx_setupvalue = debug.setupvalue
+local __bx_getupvalue = debug.getupvalue
+local __bx_sentinel = function() return bit32.bxor(1.5, 2) end
 setfenv = function(f, env)
   if env == nil then return f end
   if type(f) == 'function' then
     local _, i = __bx_env_of(f)
     if i then
-      pcall(debug.setupvalue, f, i, env)
+      -- v2.15.0: swap, canary, rollback (see the guard comment above). The
+      -- canary reads globals through the prelude's _ENV — if the swap hit the
+      -- shared persistent upvalue the canary dies and the original value is
+      -- restored via the LOCAL-captured debug refs.
+      local _, oldv = __bx_getupvalue(f, i)
+      __bx_pcall(__bx_setupvalue, f, i, env)
+      local canok = __bx_pcall(__bx_sentinel)
+      if not canok then
+        __bx_pcall(__bx_setupvalue, f, i, oldv)
+      end
       return f
     end
     -- no _ENV upvalue = C function in 5.3 terms: 5.1 setfenv ERRORS here.
@@ -392,6 +427,27 @@ local __NILPROBE = {
   -- callable polyglot objects (pcall(require, '@lune/roblox') SUCCEEDED — an
   -- executor tell; leaked UnveilR-V3 detection 8 fingerprints exactly this).
   require = true, package = true, loadfile = true, dofile = true, io = true,
+  -- v2.15.0 (AntiTamper V2): the complete executor-only surface reads NIL in
+  -- production shape. Every name here ships as a REAL implementation in the
+  -- executor masquerade layer (src/antitamper/env-hardening.js) on escalation;
+  -- in the default jail they read nil exactly like live Roblox. Previously
+  -- several of these (checkcaller, getgenv, getrenv, clonefunction,
+  -- compareinstances, writefile/readfile, request, Drawing, …) fell through
+  -- to the polyglot object — a truthy read was an executor tell.
+  checkcaller = true, getgenv = true, getrenv = true, getreg = true,
+  clonefunction = true, replaceclosure = true, compareinstances = true,
+  isexecutorclosure = true, is_executor_closure = true,
+  queue_on_teleport = true, gethui = true, getscriptbytecode = true,
+  getscriptclosure = true, getthreadidentity = true, setthreadidentity = true,
+  isfile = true, readfile = true, writefile = true, appendfile = true,
+  delfile = true, isfolder = true, makefolder = true, delfolder = true,
+  listdir = true, request = true, http_request = true,
+  gethiddenproperty = true, sethiddenproperty = true, toclipboard = true,
+  getnamecallmethod = true, firesignal = true, Drawing = true, syn = true,
+  messagebox = true, rconsoleprint = true, rconsoleinfo = true,
+  rconsolewarn = true, rconsoleerr = true, rconsoleclear = true,
+  rconsolename = true, printconsole = true, setfpscap = true,
+  fireclickdetector = true, firetouchinterest = true, fireproximityprompt = true,
 }
 
 -- inert Roblox universe (v1.8.0 production-shaped):
@@ -434,9 +490,14 @@ __INERTMT = {
   __bxor = function() return 0 end, __bnot = function() return -1 end, __shl = function() return 0 end,
   __shr = function() return 0 end, __concat = function() return '' end, __len = function() return 0 end,
   __unm = function() return 0 end,
-  __tostring = function() return 'BypassXInert' end,
+  -- v2.15.0 (AntiTamper V2): production-shaped tostring — live Roblox renders
+  -- instances as their class/key name; a jail-branded string ("BypassXInert")
+  -- was a self-scan tell (catalog fp-regex-self).
+  __tostring = function(self) local k = rawget(self, '__bx_key') if type(k) == 'string' then return k end return 'Instance' end,
   __eq = function() return false end, __lt = function() return false end, __le = function() return false end,
-  __metatable = 'BypassX',
+  -- v2.15.0: live Roblox sets game's __metatable to the string 'The game'
+  -- (documented shape); a branded string fingerprinted the jail.
+  __metatable = 'The game',
 }
 local __INERT = setmetatable({}, __INERTMT)
 game = setmetatable({}, {
@@ -499,10 +560,10 @@ local __N2; __N2 = setmetatable({}, {
   __bnot = function() return 0 end, __shl = function() return 0 end, __shr = function() return 0 end,
   __concat = function() return '' end, __len = function() return 0 end, __unm = function() return 0 end,
   __tostring = function() return '0' end, __eq = function() return false end,
-  __lt = function() return false end, __le = function() return false end, __metatable = 'BX',
+  __lt = function() return false end, __le = function() return false end, __metatable = 'The game',
 })
 setmetatable(_G, { __index = function(t, k)
   if __NILPROBE[k] then return nil end
   return __N2
 end })
-`;
+` + PRODUCTION_LUA;
