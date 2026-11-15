@@ -1,6 +1,63 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.19.0 — Luraph v14.7 full wire recovery (live user sample bloxfruits.lua): base85+LZMA wire decoded statically, VM interpreter source + program bytecode + 117-string constant pool extracted — the static-peel wall (8 strings) is gone
+
+**User request: "Deobf this and test it — bloxfruits.lua (Luraph Obfuscator v14.7, 254KB)"**
+
+### The wire, reverse-engineered end to end
+- Loader structure: two [=[LPH:…]=] / [=[LPH?…]=] long-bracket blobs (21.6KB + 228.8KB base85)
+  → N() = S:sub(5) + gsub 'z'→'!!!!!' + ascii85 groups of 5 packed **little-endian <I4**
+  → LZMA1 decompression implemented in pure Lua INSIDE the loader (5-byte rc init,
+  hardcoded lc=3/lp=0/pb=0, matched-literal decoder, rep0-3, EOS marker 0xFFFFFFFF)
+  → loadstring(vmChunk) called with buffer.fromstring(bytecode).
+- **src/luraph14-wire.js** — faithful JS port of the loader's exact decoder: base85 (LE <I4)
+  + LZMA1 range coder. Byte-verified two ways: (1) identical to the loader's own N() run in
+  fengari (17,292 bytes, zero diffs); (2) LZMA output byte-equal to python3 lzma FORMAT_ALONE
+  ground truth (59,485B VM chunk + 364,976B bytecode). Port bug found on the way: the loader's
+  rep quartet (V,h,D,Q) maps to (rep0,rep1,rep2,rep3) — G1→rep1 not rep3; fixed.
+- The in-fengari LZMA balloons >950MB heap (measured) — the loader builds output as a Lua table
+  of boxed numbers. The JS port unwraps in ~110ms. No jail execution needed for the wire.
+
+### Jail upgrades that made the driver run possible
+- **fengari generalized iteration (Luau)**: `for k,v in t do` over plain tables raised
+  "attempt to call a table value" — the loader's own init uses it. scripts/patch-fengari-luau.mjs
+  patches lvm.js OP_TFORCALL (idempotent, marker-checked, wired as npm postinstall so Render
+  re-applies on deploy): tables without __call iterate via luaH_next with Luau semantics.
+  Verified: pairs/ipairs untouched, hash+array parts, nested loops, exhaustion all correct.
+- **wall-clock guard in the VM hook** (both workers): SIGTERM is queued but NEVER processed
+  inside a blocking fengari call — slow VMs died via SIGKILL with zero capture. The instruction
+  hook now enforces the spawn deadline from inside the JS thread (wall-ms passed as argv,
+  env-scrubbed path) and dumps the partial pool deterministically.
+- **budget via argv**: BX_BUDGET env never reached the workers (buildSandboxEnv allowlist) —
+  forwarded as argv[4].
+
+### v14.7 recovery path (both workers + pipeline)
+- vm-lift-worker + harvester-worker pre-transform: detect the wire → static unwrap → seed the
+  constant pool (tag 0xDB + 1-byte len + bytes — printable-validated, alpha-ratio filtered,
+  117/119 hits with the 2 noise rejects <4 chars) → register the VM chunk → rewrite the input
+  as a jail-runnable driver (luau-shim transform + escape repair; zero-padded \ddd escapes —
+  the unpadded variant merged \0+digit into wrong chars).
+- vm-lift worker: module-level applyV14Recovery() re-applied inside dumpAndExit — the pool rides
+  EVERY dump path incl. spin-break fires from inside the fengari hook (the run1 merge was being
+  clobbered by later phases / unreachable after process.exit).
+- pipeline: classifyChunk now repairs Luau chunks (transform + repairInvalidEscapes) so the VM
+  chunk classifies as verified Luau source; the v14wire terminal path delivers the pool table
+  INSTEAD of re-peeling the VM runtime (which just detects another VM inside).
+
+### Result on bloxfruits.lua
+- Before: static-peel wall, 1,432 bytes / 8 strings, "engine-0.13 work".
+- After: luraph14:wrecovery — wire unwrapped statically, VM source 59,485B (readable Lua,
+  verified) + bytecode 364,976B + 117-string pool delivered as a 100-clean verified Lua table.
+- Honest note in the reply: bytecode→source lifting remains engine-0.13 work.
+
+### Tests
+- test/luraph14-wire.js — 7 checks: blob detection+magic, b85 byte-length pin, LZMA ground-truth
+  pins (59,485/364,976), pool ≥100 + API-surface membership (GetService/Instance/HttpService/
+  RunService/setmetatable/Connect), VM chunk verifies after transform+repair, unwrap determinism,
+  b85 unit against first-principles <I4 math. Fixture: bloxfruits-luraph14-obf.lua (254KB).
+- Full suite: **ALL 22 SUITES PASSED** (corpus baseline auto-includes the new fixture: 21 passed).
+
 ## v2.18.1 — prefix change: `.` → `b!` (everywhere)
 
 **User directive: "Change the bot prefix to b!"**

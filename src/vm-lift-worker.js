@@ -739,11 +739,20 @@ const LIFT_LUA_FULL = 'local __BUD = ' + LIFT_BUDGET + '\n' + LIFT_LUA;
 // timeout with zero capture — after the first exhaustion, a second fire means
 // the sample is spinning: dump partial capture and exit hard.
 let budgetSpin = false;
+// v2.18.2 wall-clock guard (same as harvester-worker): SIGTERM is queued but
+// never processed inside a blocking fengari call — the hook enforces the
+// spawn deadline from inside the JS thread and dumps partial capture.
+const WALL_MS = Number(process.env.BX_WALL_MS || process.argv[3]) || 100_000;
+const DEADLINE = Date.now() + WALL_MS;
 function freshState(budget) {
   const L = lauxlib.luaL_newstate();
   lualib.luaL_openlibs(L);
   try {
     lua.lua_sethook(L, () => {
+      if (Date.now() > DEADLINE) {
+        try { dumpAndExit('wall-clock deadline — partial capture'); } catch { /* hard exit below */ }
+        process.exit(0);
+      }
       budget.left -= HOOK_INTERVAL;
       if (budget.left <= 0) {
         if (budgetSpin) {
@@ -859,9 +868,22 @@ function fail(msg) {
 // ---- main ---------------------------------------------------------------------
 let dumped = false;
 const out = { ok: true, ran: false, runError: null, strings: [], chunks: [], log: [], lift: null };
+// v2.18.2 — v14.7 static recovery (module-level: dumpAndExit can fire from
+// INSIDE the fengari hook (spin-break / wall clock) while main() is still
+// running — the pool + VM source must ride EVERY dump path).
+let v14Pool = [];
+let v14Chunk = null;
+function applyV14Recovery() {
+  if (v14Pool.length) {
+    const seen = new Set(out.strings);
+    for (const s of v14Pool) if (!seen.has(s)) { out.strings.push(s); seen.add(s); }
+  }
+  if (v14Chunk && !out.chunks.includes(v14Chunk)) out.chunks.unshift(v14Chunk);
+}
 function dumpAndExit(note) {
   if (dumped) return;
   dumped = true;
+  applyV14Recovery();
   if (note) { out.partial = true; out.note = note; }
   writeOut(out);
   process.exit(0);
@@ -874,6 +896,48 @@ async function main() {
   let repaired = null; // v2.14.0 — lenient invalid-\X-escape repair tier
   try {
     const mod = await import('./luau-shim.js');
+    // v2.18.2 — Luraph v14.7 WIRE (same as harvester-worker): two [=[LPH…]]=]
+    // blobs = base85+LZMA wire (byte-exact JS port of the loader's pure-Lua
+    // decoder — the in-fengari decode balloons >950MB). Static unwrap seeds
+    // the constant pool + VM source chunk, then the input becomes a
+    // jail-runnable driver that executes the VM over the bytecode.
+    try {
+      const { unwrapV14Wire, extractV14Pool } = await import('./luraph14-wire.js');
+      const wire = unwrapV14Wire(code);
+      if (wire && wire.vmChunk && wire.vmChunk.length > 1000 && wire.data && wire.data.length > 1000) {
+        const pool = extractV14Pool(wire.data);
+        v14Pool = pool.strings;
+        const vmSource = Buffer.from(wire.vmChunk).toString('latin1');
+        v14Chunk = vmSource;
+        applyV14Recovery(); // ride even a mid-run spin-break dump
+        const vmT = mod.transformLuauToLua(vmSource);
+        const vmRep = mod.repairInvalidEscapes(vmT);
+        let dataLit = '';
+        for (const b of wire.data) {
+          if (b === 0x5c) dataLit += '\\\\';
+          else if (b === 0x27) dataLit += "\\'";
+          else if (b === 0x22) dataLit += '\\"';
+          else if (b === 0x0a) dataLit += '\\n';
+          else if (b === 0x0d) dataLit += '\\r';
+          else if (b >= 32 && b < 127) dataLit += String.fromCharCode(b);
+          else dataLit += '\\' + String(b).padStart(3, '0');
+        }
+        const driverSrc = [
+          'local BXVM = [======[' + vmRep.code + ']======];',
+          'local BXDATA = "' + dataLit + '";',
+          'local fn = loadstring(BXVM);',
+          'if type(fn) ~= "function" then return end',
+          'local ok = pcall(fn, buffer.fromstring(BXDATA));',
+          'return ok',
+        ].join('\n');
+        out.log.push(`v14.7 wire unwrapped: VM source ${wire.vmChunk.length}B + data ${wire.data.length}B, pool ${pool.strings.length}/${pool.total} strings`);
+        out.v14wire = { vmBytes: wire.vmChunk.length, dataBytes: wire.data.length, pool: pool.strings.length };
+        code = driverSrc;
+        transformed = driverSrc;
+      }
+    } catch (e) {
+      out.log.push(`v14.7 wire probe skipped: ${String(e && e.message || e).slice(0, 120)}`);
+    }
     // v2.14.0: compound assignments are not the ONLY Luau-only syntax —
     // binary literals (0B100111), digit separators (0x80__), `continue` and
     // \u{…} kills the load just as dead (verified live: luraph-v14/v15
@@ -911,6 +975,13 @@ async function main() {
   out.strings = d1.strings;
   out.chunks = d1.chunks;
   out.log = d1.log.slice(0, 120);
+  // v2.18.2 — v14.7 wire static recovery: the extracted pool + VM source ride
+  // EVERY path (they were recovered without executing anything).
+  if (v14Pool.length) {
+    const seen = new Set(out.strings);
+    for (const s of v14Pool) if (!seen.has(s)) { out.strings.push(s); seen.add(s); }
+  }
+  if (v14Chunk && !out.chunks.includes(v14Chunk)) out.chunks.unshift(v14Chunk);
 
   // v2.11.0 incremental flush (Biggest Scan exploit): run 2's instrumented
   // lift phase can wedge INSIDE a single blocking fengari call (opcode probing
@@ -1060,6 +1131,11 @@ async function main() {
       for (const l of out.log.slice()) { /* keep */ }
     }
   }
+
+  // v2.18.2 — final v14.7 static recovery merge: later phases rewrite
+  // out.strings/out.chunks from their own dumps; re-apply the wire pool +
+  // VM source here so they ride the FINAL dump no matter which path ran.
+  applyV14Recovery();
 
   dumpAndExit(null);
 }

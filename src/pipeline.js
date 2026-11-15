@@ -19,7 +19,7 @@ import { spawnHardened } from './security.js';
 import { harvestConstants, harvestToLua, liftVM } from './harvest.js';
 import { verifyCode } from './validate.js';
 import { prometheusDeepPass } from './prometheus-deep.js';
-import { transformLuauToLua } from './luau-shim.js';
+import { transformLuauToLua, repairInvalidEscapes } from './luau-shim.js';
 import { parsePayload, captureKeyCarriers, looksLikeLuraphInventory, formatReport } from './luraph15.js';
 import { staticPeel } from './static-peel.js';
 import { liftFromHarvest } from './vm-lift.js';
@@ -436,6 +436,31 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
       if ((detected.id === 'luraph' || detected.id === 'tokrascript') && !binaryOutput) {
         try {
           const h = await runLift(inputPath, detected, stage);
+          // v2.18.2 — Luraph v14.7 wire: the worker statically unwrapped the
+          // base85+LZMA wire (VM interpreter source + program bytecode + full
+          // constant pool). The captured "chunk" is the VM RUNTIME, not user
+          // code — re-peeling it is wrong (it just detects another VM inside).
+          // Terminal result: the decrypted pool as a readable Lua table, with
+          // the VM source + bytecode sizes reported honestly.
+          if (h && h.v14wire) {
+            const artV14 = pickChunkArtifact(h);
+            if (artV14 && artV14.kind === 'source') {
+              stage('luraph14:wrecovery', `wire unwrapped statically: VM source ${h.v14wire.vmBytes}B + bytecode ${h.v14wire.dataBytes}B + ${h.v14wire.pool}-string pool`);
+              const poolLua = harvestToLua(h, { detectedName: detected.name, version: detected.version || '' });
+              return {
+                ok: true,
+                code: poolLua,
+                codeName: 'bloxfruits-recovery.lua',
+                detected, stages, durationMs: Date.now() - t0, lang,
+                verification: verifyCode(poolLua, { lang: 'lua', filename: 'recovery.lua' }),
+                originalSize: buffer.length,
+                recoveredSize: poolLua.length,
+                how: `Luraph ${detected.version || 'v14.7'} — wire fully decrypted (base85+LZMA): VM interpreter + program bytecode + ${h.v14wire.pool}-string constant pool recovered statically`,
+                partialNote: `The loader's wire is fully unwrapped: the VM interpreter source (${h.v14wire.vmBytes}B) and the program bytecode (${h.v14wire.dataBytes}B) are recovered; the paste is the complete decrypted constant pool. Bytecode→source lifting is engine-0.13 work.`,
+                engine: await engine.probe(),
+              };
+            }
+          }
           const art = h ? pickChunkArtifact(h) : null;
           if (art) {
             stage('luraph15:chunk-capture', `${art.kind} captured at load() — complete recovery`);
@@ -767,9 +792,16 @@ function classifyChunk(text) {
   const v = verifyCode(text, { lang: 'lua', filename: 'chunk.lua' });
   if (v.status === 'verified') return { kind: 'source', lang: 'lua', code: text };
   try {
+    // v2.18.2: Luraph v14.7 VM chunks carry Luau syntax (+=/continue) AND
+    // lenient escapes (\s) — transform + repair, then verify the fixed text.
     const shimmed = transformLuauToLua(text);
-    if (shimmed && shimmed !== text && verifyCode(shimmed, { lang: 'lua', filename: 'chunk.lua' }).status === 'verified') {
-      return { kind: 'source', lang: 'luau', code: shimmed };
+    let candidate = shimmed;
+    if (candidate && candidate !== text) {
+      const rep = repairInvalidEscapes(candidate);
+      if (rep.changed && rep.code) candidate = rep.code;
+      if (verifyCode(candidate, { lang: 'lua', filename: 'chunk.lua' }).status === 'verified') {
+        return { kind: 'source', lang: 'luau', code: candidate };
+      }
     }
   } catch { /* shim refused */ }
   const vj = verifyCode(text, { lang: 'js', filename: 'chunk.js' });

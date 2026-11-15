@@ -17,7 +17,7 @@ const workerPath = new URL('./harvester-worker.js', import.meta.url)
  * @returns {Promise<{ok:boolean, ran?:boolean, strings?:string[], chunks?:string[],
  *   log?:string[], runError?:string, error?:string}>}
  */
-export async function harvestConstants(inputPath, { timeoutMs = 120_000 } = {}) {
+export async function harvestConstants(inputPath, { timeoutMs = 120_000, budget = null } = {}) {
   // Heap cap (v2.10.0): 400KB-class Luraph v14 builds balloon fengari past
   // 2GB — the default V8 limit aborts the process and the partial pool is
   // lost (worse: a cgroup OOM on a small container can take the bot down).
@@ -25,7 +25,8 @@ export async function harvestConstants(inputPath, { timeoutMs = 120_000 } = {}) 
   // instead; its SIGTERM/abort paths still dump whatever was captured.
   // The vm-lift worker keeps the default heap — its lift workloads are
   // legitimately larger and 14 suites pin that behavior.
-  const r = await spawnHardened(process.execPath, ['--max-old-space-size=256', workerPath, inputPath], {
+  const wallMs = Math.max(5_000, timeoutMs - 10_000);
+  const r = await spawnHardened(process.execPath, ['--max-old-space-size=256', workerPath, inputPath, String(wallMs), budget ? String(budget) : String(300e6)], {
     timeoutMs,
     label: 'harvest',
     maxBuffer: 32 * 1024 * 1024,
@@ -63,7 +64,8 @@ const liftWorkerPath = new URL('./vm-lift-worker.js', import.meta.url)
  *   lift?:object, log?:string[], runError?:string, error?:string}>}
  */
 export async function liftVM(inputPath, { timeoutMs = 120_000 } = {}) {
-  const r = await spawnHardened(process.execPath, [liftWorkerPath, inputPath], {
+  const wallMs = Math.max(5_000, timeoutMs - 10_000);
+  const r = await spawnHardened(process.execPath, [liftWorkerPath, inputPath, String(wallMs)], {
     timeoutMs,
     label: 'vm-lift',
     maxBuffer: 64 * 1024 * 1024,
@@ -84,6 +86,7 @@ export async function liftVM(inputPath, { timeoutMs = 120_000 } = {}) {
       lift: data.lift || null,
       log: data.log || [],
       runError: data.runError,
+      v14wire: data.v14wire || null,
     };
   } catch (e) {
     logger.warn({ err: String(e.message || e).slice(0, 150) }, 'vm-lift: bad worker output');

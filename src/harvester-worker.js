@@ -46,7 +46,7 @@ import { executorLua } from './antitamper/env-hardening.js';
 const { lua, lauxlib, lualib, to_luastring, to_jsstring } = fengari;
 
 const INPUT = process.argv[2];
-const BUDGET_TOTAL = Number(process.env.BX_BUDGET) || 300e6;
+const BUDGET_TOTAL = Number(process.env.BX_BUDGET || process.argv[4]) || 300e6;
 const HOOK_INTERVAL = 2.5e6;
 const MAX_SINK = 60_000;
 const MAX_STR = 8192;
@@ -155,12 +155,20 @@ function heapOver() {
 // nothing. Same escalation applies to the heap guard.
 let budgetSpin = false;
 let heapSpin = false;
+// v2.18.2 wall-clock guard: SIGTERM is queued but NEVER processed while the
+// main thread is inside a blocking fengari call — a slow VM burned the whole
+// spawn timeout and died via SIGKILL with ZERO capture. The hook runs INSIDE
+// the JS thread, so it can check the wall clock and dump the partial pool
+// deterministically. harvest.js sets BX_WALL_MS from its own timeoutMs.
+const WALL_MS = Number(process.env.BX_WALL_MS || process.argv[3]) || 100_000;
+const DEADLINE = Date.now() + WALL_MS;
 function spinBreak(note) {
   try { dumpAndExit(note); } catch { /* fall through to hard exit */ }
   process.exit(0);
 }
 try {
   lua.lua_sethook(L, () => {
+    if (Date.now() > DEADLINE) spinBreak('wall-clock deadline — partial pool');
     budget -= HOOK_INTERVAL;
     if (budget <= 0) {
       if (budgetSpin) spinBreak('instruction budget — partial pool (spin-break)');
@@ -312,6 +320,50 @@ let transformed = code;
 let repaired = null; // v2.14.0 — lenient invalid-\X-escape repair tier
 try {
   const mod = await import('./luau-shim.js');
+  // v2.18.2 — Luraph v14.7 WIRE: two [=[LPH…]=] blobs are base85+LZMA
+  // (headerless LZMA1, lc=3/lp=0/pb=0 — ported byte-exact from the loader's
+  // own pure-Lua decoder, which balloons >950MB in fengari; the JS port runs
+  // in ~100ms). Static unwrap → VM interpreter source + bytecode. The pool
+  // (tag 0xDB + len + bytes) is seeded into the sink BEFORE any tier runs so
+  // it survives every path; the VM source is registered as a recovered chunk;
+  // the input is rewritten as a jail-runnable driver that executes the VM
+  // over the bytecode (any runtime decrypts are bonus captures).
+  try {
+    const { unwrapV14Wire, extractV14Pool } = await import('./luraph14-wire.js');
+    const wire = unwrapV14Wire(code);
+    if (wire && wire.vmChunk && wire.vmChunk.length > 1000 && wire.data && wire.data.length > 1000) {
+      const pool = extractV14Pool(wire.data);
+      if (pool.strings.length) pushSinkStrings(pool.strings);
+      const vmSource = Buffer.from(wire.vmChunk).toString('latin1');
+      extraChunks.push(vmSource);
+      const vmT = mod.transformLuauToLua(vmSource);
+      const vmRep = mod.repairInvalidEscapes(vmT);
+      // binary-escape the bytecode for a quoted Lua literal (zero-padded \ddd)
+      let dataLit = '';
+      for (const b of wire.data) {
+        if (b === 0x5c) dataLit += '\\\\';
+        else if (b === 0x27) dataLit += "\\'";
+        else if (b === 0x22) dataLit += '\\"';
+        else if (b === 0x0a) dataLit += '\\n';
+        else if (b === 0x0d) dataLit += '\\r';
+        else if (b >= 32 && b < 127) dataLit += String.fromCharCode(b);
+        else dataLit += '\\' + String(b).padStart(3, '0');
+      }
+      const driverSrc = [
+        'local BXVM = [======[' + vmRep.code + ']======];',
+        'local BXDATA = "' + dataLit + '";',
+        'local fn = loadstring(BXVM);',
+        'if type(fn) ~= "function" then return end',
+        'local ok = pcall(fn, buffer.fromstring(BXDATA));',
+        'return ok',
+      ].join('\n');
+      extraLog.push(`v14.7 wire unwrapped: VM source ${wire.vmChunk.length}B + data ${wire.data.length}B, pool ${pool.strings.length}/${pool.total} strings`);
+      code = driverSrc;
+      transformed = driverSrc;
+    }
+  } catch (e) {
+    extraLog.push(`v14.7 wire probe skipped: ${String(e && e.message || e).slice(0, 120)}`);
+  }
   // v2.14.0: same fix as vm-lift-worker — normalize ANY Luau-only syntax
   // (binary literals / separators / continue), not just compound assigns.
   if (mod.hasLuauCompoundAssign(code) || mod.hasLuauOnlyLiterals(code)) transformed = mod.transformLuauToLua(code);
