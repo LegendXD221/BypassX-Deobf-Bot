@@ -121,12 +121,12 @@ export const SERVICE_COMMANDS = [
 ];
 
 /** Exact per-command lines rendered by the supported-commands card. */
-export function serviceCommandLines(prefix = '.') {
+export function serviceCommandLines(prefix = 'b!') {
   return SERVICE_COMMANDS.map((s) => `\`${prefix}${s.cmd}\` — **${s.name}** (${s.blurb})`);
 }
 
 /** The exact usage line rendered by the supported-commands card. */
-export function serviceUsageLine(prefix = '.') {
+export function serviceUsageLine(prefix = 'b!') {
   return `Usage: ${prefix}<cmd> [raw URL] or attach a .lua / .txt file.`;
 }
 

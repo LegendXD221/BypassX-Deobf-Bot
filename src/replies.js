@@ -167,23 +167,23 @@ export function familiesReply(prefix) {
 const LOGGER_VERDICTS = {
   source: {
     title: 'decrypted source captured at load()',
-    detail: 'The script decrypted its REAL code and handed it to load()/loadstring() inside the dumper sandbox — the recording contains the complete original source. Run `.deobf` on the original file for the polished pipeline delivery.',
+    detail: 'The script decrypted its REAL code and handed it to load()/loadstring() inside the dumper sandbox — the recording contains the complete original source. Run `b!deobf` on the original file for the polished pipeline delivery.',
   },
   bytecode: {
     title: 'decrypted bytecode captured at load()',
-    detail: 'The obfuscator compiled its payload and handed raw bytecode to load() — that chunk is in the recording. Run `.deobf` on the original to engage the full VM devirtualization chain.',
+    detail: 'The obfuscator compiled its payload and handed raw bytecode to load() — that chunk is in the recording. Run `b!deobf` on the original to engage the full VM devirtualization chain.',
   },
   pool: {
     title: 'decrypted string pool recorded',
-    detail: 'The VM decrypted its constant pool inside the sandbox — every recovered string is in the recording. The code itself stays behind the VM; `.deobf` engages behavioral lifting for that.',
+    detail: 'The VM decrypted its constant pool inside the sandbox — every recovered string is in the recording. The code itself stays behind the VM; `b!deobf` engages behavioral lifting for that.',
   },
   clean: {
     title: 'script ran clean — nothing sensitive recorded',
-    detail: 'The script executed in the dumper sandbox but recorded no chunks, pool or URLs — it may be plain code, or its payload needs an environment the offline jail does not fake. Run `.deobf` for the full pipeline, or run it in a live dumper environment and send the recorded output back here.',
+    detail: 'The script executed in the dumper sandbox but recorded no chunks, pool or URLs — it may be plain code, or its payload needs an environment the offline jail does not fake. Run `b!deobf` for the full pipeline, or run it in a live dumper environment and send the recorded output back here.',
   },
   norecord: {
     title: 'VM did not reach its payload',
-    detail: 'The jailed run halted before the payload decrypted (anti-tamper or time-gate). This is exactly what the Environment Logger workflow is for: run the script in a live dumper tool, then send the recorded output back with `.deobf`.',
+    detail: 'The jailed run halted before the payload decrypted (anti-tamper or time-gate). This is exactly what the Environment Logger workflow is for: run the script in a live dumper tool, then send the recorded output back with `b!deobf`.',
   },
 };
 
@@ -559,7 +559,7 @@ export async function historyReply(userId) {
         const link = r.paste_url ? ` — [result](${r.paste_url})` : '';
         return `${r.success ? '✅' : '⚠️'} **${fam}**${pct} • ${at} UTC${link}`;
       }).join('\n')
-      : `No jobs yet — run \`.deobf\` with an obfuscated file and it will show up here.`));
+      : `No jobs yet — run \`b!deobf\` with an obfuscated file and it will show up here.`));
   });
   return v2([card], { ephemeral: true });
 }

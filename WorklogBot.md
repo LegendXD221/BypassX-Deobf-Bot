@@ -1,6 +1,44 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.18.1 — prefix change: `.` → `b!` (everywhere)
+
+**User directive: "Change the bot prefix to b!"**
+
+### Single source of truth
+- `src/config.js` — global default is now `(process.env.PREFIX || 'b!').trim() || 'b!'`.
+  The `.env` has no `PREFIX` key, so the code default is the live value on Render too.
+- Dispatch (`src/index.js`) and replies were already parameter-driven (`ctx.prefix`
+  flows from `db.guildPrefix(guildId) || CONFIG.prefix` into every card builder) —
+  only defaults needed swapping, zero call-site churn. Per-guild dashboard override
+  still wins over the global (`b!`).
+
+### Defaults + fallbacks swapped
+- `src/ctx.js` — `message._prefix || 'b!'` (fake-message fallback in makeCtx).
+- `src/service-catalog.js` — `serviceCommandLines` / `serviceUsageLine` default
+  param `b!` (families card renders `b!l` … `b!luast` when called without args).
+- `src/dashboard-page.js` — Overview "Bot" card Prefix fallback `b!`.
+
+### User-visible strings (`.deobf` → `b!deobf` etc.)
+- `src/replies.js` — 5 logger-workflow detail lines + history empty-state line.
+- `src/commands/strings.js` — binary-file + no-strings error hints.
+- `src/commands/db.js` — missing-SQL hint (`b!db status`).
+- `src/commands/activity.js` — presence example (`b!activity … b!deobf | /deobf`).
+- Comments swept for consistency: `index.js`, `ctx.js`, `postprocess.js`, `logger.js`.
+
+### Tests + docs
+- `test/deobf-ack.js` — mock message `_prefix: 'b!'` / `content: 'b!deobf'`.
+- `test/service-commands.js` — card checks now call builders with `'b!'` and pin the
+  first/last rendered lines as `` `b!l` `` / `` `b!luast` `` (these assertions would
+  have caught a regression — they failed against the old literal until updated).
+- `README.md` — full command tables (11 user + 13 owner rows), `b!eval` wall note,
+  DB bullet list, link-input section, `PREFIX` env default row → `b!`.
+
+### Verified
+- Sweep: zero leftover backtick-dot command literals in `src/`, `test/`, `README.md`
+  (`.pyc` / `.gz` / `.env`-file mentions are file extensions, untouched).
+- Full `test/all.js` suite green (21 suites) — see CI log below.
+
 ## v2.18.0 — THE BIGGEST SCAN: five silent samples unsealed (25ms 0→1,236+2, SomeCool 0→2,496, MoonVeil 0→287, Junkie2 0→78, LuArmor 0→10) — five real engine bugs found and fixed on the way
 
 **User directive: "Go"** — the Biggest-Scan sweep on the zero-capture corpus

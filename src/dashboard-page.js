@@ -389,7 +389,7 @@ function renderOverview(){
   var jobs = s.jobs || {};
   var dbb = s.db.breaker || {};
   $('#ov-cards').innerHTML =
-    card('🤖 Bot', [['Version', 'v' + s.version], ['Uptime', fmtUp(s.uptimeS)], ['Gateway ping', (s.pingMs || 0) + 'ms'], ['Bot id', esc(s.botId || '—')], ['Prefix', esc((s.config && s.config.prefix) || '.')]]) +
+    card('🤖 Bot', [['Version', 'v' + s.version], ['Uptime', fmtUp(s.uptimeS)], ['Gateway ping', (s.pingMs || 0) + 'ms'], ['Bot id', esc(s.botId || '—')], ['Prefix', esc((s.config && s.config.prefix) || 'b!')]]) +
     card('⚡ Jobs (this boot)', [['<span class="big vio">' + (jobs.ok || 0) + '</span>', 'ok'], ['<span class="big err">' + (jobs.fail || 0) + '</span>', 'failed'], ['Total', jobs.total || 0]]) +
     card('⚙ Engine', [['Available', s.engine && s.engine.available ? '<span class="ok">yes</span>' : '<span class="warn">preparing</span>'], ['Version', esc((s.engine && s.engine.version) || '—')], ['Timeout', ((s.config && s.config.engineTimeoutS) || '—') + 's'], ['Upload cap', ((s.config && s.config.maxUploadMb) || '—') + ' MB']]) +
     card('🗄 Database', [['Status', s.db.enabled ? (s.db.connected ? '<span class="ok">connected</span>' : '<span class="warn">retrying</span>') : 'off'], ['Host', esc(s.db.host || '—')], ['Latency', (s.db.latencyMs != null ? s.db.latencyMs : '—') + 'ms'], ['Breaker', dbb.open ? '<span class="err">OPEN</span>' : 'closed · trips ' + (dbb.trips || 0) + ' · queue ' + (dbb.queued || 0)], ['All-time', all ? (all.ok + ' ok / ' + all.total) : '—']]) +

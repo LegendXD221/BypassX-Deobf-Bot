@@ -163,7 +163,7 @@ export function postprocessFile(name, data) {
 }
 
 /**
- * Forced beautify for the `.beautify` command — always re-indents (no size
+ * Forced beautify for the `b!beautify` command — always re-indents (no size
  * heuristics), plus the tidy passes. Never throws.
  */
 export function beautifyCode(name, data) {

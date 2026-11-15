@@ -34,11 +34,11 @@ export function makeCtx({ interaction = null, message = null, client }) {
     message,
     client,
     attachments,
-    /** Link input (.deobf <url> / /deobf link:) — resolved by index.js for prefix. */
+    /** Link input (b!deobf <url> / /deobf link:) — resolved by index.js for prefix. */
     url,
     userId,
     userTag: interaction?.user?.tag || message?.author?.tag || 'unknown',
-    prefix: message?._prefix || '.',
+    prefix: message?._prefix || 'b!',
 
     async defer() {
       if (interaction) {

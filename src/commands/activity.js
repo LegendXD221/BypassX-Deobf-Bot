@@ -38,7 +38,7 @@ export default {
     if (!(type in TYPES)) {
       return ctx.reply(errorReply('Unknown activity type', 'Use `playing`, `listening`, `watching`, `competing` or `clear`.'));
     }
-    if (!text.trim()) return ctx.reply(errorReply('Missing text', `e.g. \`.activity ${type} .deobf | /deobf\``));
+    if (!text.trim()) return ctx.reply(errorReply('Missing text', `e.g. \`b!activity ${type} b!deobf | /deobf\``));
 
     // type 1 (streaming) needs a twitch/youtube url — downgrade to watching otherwise
     let activityType = TYPES[type];

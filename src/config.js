@@ -15,7 +15,7 @@ export const CONFIG = {
   discordToken: process.env.DISCORD_TOKEN || '',
   clientId: process.env.CLIENT_ID || '',
   guildId: process.env.GUILD_ID || '',
-  prefix: (process.env.PREFIX || '.').trim() || '.',
+  prefix: (process.env.PREFIX || 'b!').trim() || 'b!',
 
   pastefyToken: process.env.PASTEFY_TOKEN || '',
   pastefyExpireDays: num('PASTEFY_EXPIRE_DAYS', 30),
