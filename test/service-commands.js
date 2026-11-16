@@ -115,18 +115,18 @@ await check('tokra: new TokraScript command pins the numeric-preset family corre
 
 // ---- 2. supported card ----------------------------------------------------------
 await check('supported card: exact per-command lines + exact usage line', () => {
-  const payload = familiesReply('b!');
+  const payload = familiesReply('.');
   const s = JSON.stringify(payload);
-  for (const line of serviceCommandLines('b!')) {
+  for (const line of serviceCommandLines('.')) {
     assert.ok(s.includes(line), `card missing line: ${line}`);
   }
-  assert.ok(s.includes(serviceUsageLine('b!')), `card missing usage line: ${serviceUsageLine('b!')}`);
+  assert.ok(s.includes(serviceUsageLine('.')), `card missing usage line: ${serviceUsageLine('.')}`);
   // order must follow the user's list (l first, luast last)
-  const first = serviceCommandLines('b!')[0];
-  const last = serviceCommandLines('b!').at(-1);
+  const first = serviceCommandLines('.')[0];
+  const last = serviceCommandLines('.').at(-1);
   assert.ok(s.indexOf(first) < s.indexOf(last), 'card order must match the catalog order');
-  assert.ok(first.includes('`b!l` — **Environment Logger**'), `first line wrong: ${first}`);
-  assert.ok(last.includes('`b!luast` — **LuaST**'), `last line wrong: ${last}`);
+  assert.ok(first.includes('`.l` — **Environment Logger**'), `first line wrong: ${first}`);
+  assert.ok(last.includes('`.luast` — **LuaST**'), `last line wrong: ${last}`);
 });
 
 // ---- 3. resolveForced ------------------------------------------------------------
@@ -198,7 +198,7 @@ await check('logger: single source chunk ships as PURE code; mixed ships annotat
 await check('logger card + families-style serialization stays within V2 budget', () => {
   const report = buildLoggerReport({ ok: true, ran: true, strings: ['abc', 'def'], chunks: [] });
   report.signature = 'Luraph v14.4 — 99%';
-  const payload = loggerReply(report, { url: 'https://pastefy.app/xyz', rawUrl: 'https://pastefy.app/xyz/raw' }, 's.lua', 'b!', Buffer.from('x'));
+  const payload = loggerReply(report, { url: 'https://pastefy.app/xyz', rawUrl: 'https://pastefy.app/xyz/raw' }, 's.lua', '.', Buffer.from('x'));
   const s = JSON.stringify(payload);
   assert.ok(s.includes('Environment Logger'), 'card title present');
   assert.ok(s.includes('Luraph v14.4'), 'signature fact present');
@@ -243,6 +243,69 @@ await check('cooldown: service commands share the deobf-family rate limit', asyn
   await commandByName('lph').run(makeCtx({ interaction, client: {} }));
   assert.ok(!calls.some((c) => c.startsWith('deferReply')), 'cooldown short-circuits before ack');
   assert.ok(calls.some((c) => c.startsWith('interaction.reply:')), 'cooldown card via reply');
+});
+
+// ---- 6. v2.20.0 — setprefix (owner-only) + help menu -------------------------
+import setprefix from '../src/commands/setprefix.js';
+import { CONFIG } from '../src/config.js';
+import { helpReply, ownerPanelReply } from '../src/replies.js';
+
+await check('v2.20.0: default prefix is "." everywhere (config + catalog + ctx)', () => {
+  assert.equal(CONFIG.prefix, '.', 'CONFIG.prefix must be "."');
+  assert.ok(serviceCommandLines()[0].startsWith('`.l`'), 'catalog defaults must render with "."');
+  const ctx = makeCtx({ message: { author: { id: 'x', tag: 't' }, _prefix: undefined, attachments: new Map() }, client: {} });
+  assert.equal(ctx.prefix, '.', 'ctx fallback prefix must be "."');
+});
+
+await check('v2.20.0: setprefix is registered owner-only with exact slash shape', () => {
+  const cmd = commandByName('setprefix');
+  assert.ok(cmd, '.setprefix missing from registry');
+  assert.equal(cmd.owner, true, 'setprefix must be owner-only');
+  assert.equal(cmd.danger, undefined, 'setprefix must not be danger-gated');
+  const json = toSlashJson(cmd);
+  assert.equal(json.name, 'setprefix');
+  assert.ok(json.options.some((o) => o.name === 'prefix' && o.required), 'slash needs a required prefix option');
+  assert.ok(json.description.length <= 100, 'slash description within 100 chars');
+});
+
+await check('v2.20.0: setprefix guards — missing arg, DM, offline DB', async () => {
+  const rep = [];
+
+  rep.length = 0;
+  const c1 = makeCtx({ interaction: mockInteraction(uid(11)), client: {} });
+  c1.reply = async (p) => { rep.push(JSON.stringify(p)); return p; };
+  c1.isSlash = true;
+  c1.interaction.options.getString = () => '';
+  await setprefix.run(c1);
+  assert.ok(rep.some((r) => r.includes('Missing prefix')), 'empty prefix must be rejected');
+
+  rep.length = 0;
+  const c2 = makeCtx({ interaction: mockInteraction(uid(12)), client: {} });
+  c2.reply = async (p) => { rep.push(JSON.stringify(p)); return p; };
+  c2.isSlash = true;
+  c2.interaction.options.getString = () => '!';
+  c2.interaction.guildId = null;
+  await setprefix.run(c2);
+  assert.ok(rep.some((r) => r.includes('Server only')), 'DM use must be rejected');
+
+  rep.length = 0;
+  const c3 = makeCtx({ interaction: mockInteraction(uid(13)), client: {} });
+  c3.reply = async (p) => { rep.push(JSON.stringify(p)); return p; };
+  c3.isSlash = true;
+  c3.interaction.options.getString = () => 'reset';
+  await setprefix.run(c3); // tests run without DATABASE_URL → db offline branch
+  assert.ok(rep.some((r) => r.includes('Database offline')), 'offline DB must be reported');
+});
+
+await check('v2.20.0: help menu shows .obf, dynamic counts, "." examples; setprefix stays owner-hidden', () => {
+  const help = JSON.stringify(helpReply('.', {}));
+  assert.ok(help.includes('`.obf`'), 'help must list the obf command');
+  assert.ok(help.includes('Xfuscator'), 'help must name Xfuscator');
+  assert.ok(help.includes('+12 more'), `dynamic per-service count expected (+12 more), got: ${help.slice(0, 800)}`);
+  assert.ok(!help.includes('`.setprefix`'), 'owner commands stay hidden from public help');
+  const panel = JSON.stringify(ownerPanelReply('.', { pinSet: false, db: { enabled: false }, danger: null }));
+  assert.ok(panel.includes('`.setprefix`'), 'owner panel must list setprefix');
+  assert.ok(panel.includes('<prefix | reset>'), 'panel shows the usage shape');
 });
 
 console.log(`\n${ok.total - ok.failed}/${ok.total} checks passed`);

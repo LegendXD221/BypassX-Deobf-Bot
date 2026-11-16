@@ -1,6 +1,72 @@
 # WorklogBot — BypassX Deobf Bot
 
 
+## v2.20.0 — Xfuscator (our own obfuscator) + "." prefix with per-server setprefix + readable-only delivery with the one-line BypassX header + updated help menu
+
+**User request: "I Want The Deobf To Give Readable Lua Code Only… add the header line… Make Our Own Custom Obf Named Xfuscator… Keep the '.' prefix and add setprefix… Update the help menu and complete every next step"**
+
+### 1. Delivery policy — readable-only + exactly one brand line
+- `finalizeOutput()` (src/pipeline.js) is the LAST pass over delivered code:
+  forced re-indent via `beautifyCode` (verify-gated, reverted on any regression),
+  final `readabilityScore` re-score, then the single header line
+  `--This File Was Deobfuscated By BypassX Deobf. discord - https://dc.gg/bypassx`
+  (JS outputs get `//`, binaries skip all three). Idempotent — never twice.
+- Paste text = header line + deobfuscated code, NOTHING else (pinned by a new
+  deobf-ack check that captures the Pastefy POST body).
+
+### 2. Prefix "." restored + per-server setprefix (owner-only)
+- Global default `b!` → `.` swept across config/ctx/service-catalog/dashboard/
+  user-visible strings/tests/README (71 replacements) — per-guild dashboard
+  overrides still win; the dispatch loop reads them live.
+- New `.setprefix <prefix | reset>` / `/setprefix prefix:` (src/commands/setprefix.js):
+  bot-owner-only (NOT danger-gated), 1-8 chars, no spaces, writes
+  `guild_settings.prefix` via `db.setGuildSettings` (cache invalidated → live on
+  the next message), `reset` clears back to the global default. Guards: missing
+  arg, DM use, offline DB, no-op change — all with proper error cards.
+- `setPrefixReply` card (was/now/example) + owner-panel listing.
+
+### 3. Xfuscator — BypassX's own obfuscator (src/xfuscator.js)
+- Three builds, header `--This File Was Obfuscated By Xfuscator (vX). discord- https://dc.gg/bypassx`:
+  **v1** per-byte XOR stream packer (`loadstring or load`); **v2** + position-mixed
+  second key + count check + 31-multi integrity MAC (tamper → SILENT refusal);
+  **v2.1** + junk-byte interleave (ciphertext stride 2, junk rides an independent
+  PRNG stream the loader never advances).
+- Hardened against the exact surfaces that cracked junkie/luarmor/moonveil/
+  somecool/luraph in v2.18.0: NO static pool to dump, NO unkeyed constants, NO
+  tamper oracle. Loader is pure arithmetic (works on Lua 5.1/5.3/5.4 doubles,
+  Luau executors, fengari) with machine-name mangling + randomized whitespace
+  (unique per build), 64KB blob chunking with `..` concat.
+- **Live finding: fengari wraps integer-valued arithmetic at int32** — the first
+  xorshift32 stream went negative at 2^31 and diverged from the JS mirror mid-
+  stream. The whole cipher now runs mod 2^31 (xorshift31): bit weights ≤ 2^30,
+  every intermediate < 2^31 on doubles AND fengari int32. Caught by the round-
+  trip execution test, never by inspection alone.
+- Emit gate: a JS mirror decodes every build BEFORE shipping; mismatch → output
+  withheld (`internal: mirror decode mismatch`). Decimal escapes are 3-digit
+  padded so a following digit can never merge into the escape.
+- `.obf [v1|v2|v2.1] <file|link>` + `/obf` (slash `version:` choice — registry
+  now passes choices through). Guards: binary refusal, non-Lua refusal,
+  double-obfuscation refusal (header sniff), 1 MB cap, shared deobf cooldown.
+  Result card: build layers, sizes, run-anywhere note, paste + attached file
+  (`<name>.xfuscator.<v>.lua`).
+- test/xfuscator.js — 34 checks: for EACH build, the emitted loader COMPILES and
+  RUNS in fengari and reproduces the original program's printed output
+  byte-for-byte (plain source, escapes/quotes/backslashes, UTF-8, 40KB
+  multi-chunk blob), mirror round-trip, header exactness, tampered-seed refusal
+  (v2+ silent, v1 loud), double-obf refusal, + .obf command smoke (status-first
+  ordering, card delivery, paste header, slash choices, prefix version arg).
+
+### 4. Help menu + docs
+- helpReply: new **Obfuscate** section (`.obf`), per-service count now dynamic
+  (`+${SERVICE_COMMANDS.length - 4} more`), all examples render with the live
+  prefix. Owner commands stay hidden (setprefix only in `.owner` panel).
+- README: header policy, `.obf` + `.setprefix` command rows, PREFIX env doc.
+
+### Tests
+- 23 suites green (22 existing + xfuscator.js). deobf-ack 5/5 (new delivery-
+  policy check), service-commands 15/15 (new v2.20.0 block: prefix assertions,
+  setprefix registry/guards, help menu content).
+
 ## v2.19.0 — Luraph v14.7 full wire recovery (live user sample bloxfruits.lua): base85+LZMA wire decoded statically, VM interpreter source + program bytecode + 117-string constant pool extracted — the static-peel wall (8 strings) is gone
 
 **User request: "Deobf this and test it — bloxfruits.lua (Luraph Obfuscator v14.7, 254KB)"**

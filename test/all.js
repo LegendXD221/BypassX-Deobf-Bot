@@ -33,6 +33,7 @@ const SUITES = [
   { name: 'service-commands.js', timeoutMs: 300_000 }, // per-service commands + environment logger (v2.8.0)
   { name: 'thirdparty-samples.js', timeoutMs: 420_000 }, // leaked-corpus regression floor + 25ms techniques (v2.10.0)
   { name: 'luraph14-wire.js', timeoutMs: 180_000 }, // v14.7 base85+LZMA wire unwrap + static pool (v2.19.0)
+  { name: 'xfuscator.js', timeoutMs: 180_000 },   // Xfuscator builds + .obf command delivery (v2.20.0)
 ];
 
 let failed = 0;

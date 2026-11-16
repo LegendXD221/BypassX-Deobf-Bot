@@ -122,9 +122,12 @@ export function helpReply(prefix, client) {
     c.addTextDisplayComponents(T([
       '**Deobfuscate**',
       `• **\`${prefix}deobf\`** \`<file | link>\` — full pipeline → pure code via Pastefy`,
-      `• **\`${prefix}lph\` \`${prefix}ms3\` \`${prefix}ms2\` \`${prefix}l\` +11 more** — per-service commands, full list in \`${prefix}families\``,
+      `• **\`${prefix}lph\` \`${prefix}ms3\` \`${prefix}ms2\` \`${prefix}l\` +${Math.max(0, SERVICE_COMMANDS.length - 4)} more** — per-service commands, full list in \`${prefix}families\``,
       `• **\`${prefix}detect\`** \`<file | link>\` — obfuscator ID + confidence %, no deobfuscation`,
       `• **\`${prefix}families\`** — every supported service with its own command`,
+      '',
+      '**Obfuscate**',
+      `• **\`${prefix}obf\`** \`<file | link>\` — Xfuscator: our own obfuscator, shipped with the bot (v1 / v2 / v2.1)`,
       '',
       '**Utilities**',
       `• **\`${prefix}beautify\`** \`<file | link>\` — reformat messy/minified code, no deobfuscation`,
@@ -167,23 +170,23 @@ export function familiesReply(prefix) {
 const LOGGER_VERDICTS = {
   source: {
     title: 'decrypted source captured at load()',
-    detail: 'The script decrypted its REAL code and handed it to load()/loadstring() inside the dumper sandbox — the recording contains the complete original source. Run `b!deobf` on the original file for the polished pipeline delivery.',
+    detail: 'The script decrypted its REAL code and handed it to load()/loadstring() inside the dumper sandbox — the recording contains the complete original source. Run `.deobf` on the original file for the polished pipeline delivery.',
   },
   bytecode: {
     title: 'decrypted bytecode captured at load()',
-    detail: 'The obfuscator compiled its payload and handed raw bytecode to load() — that chunk is in the recording. Run `b!deobf` on the original to engage the full VM devirtualization chain.',
+    detail: 'The obfuscator compiled its payload and handed raw bytecode to load() — that chunk is in the recording. Run `.deobf` on the original to engage the full VM devirtualization chain.',
   },
   pool: {
     title: 'decrypted string pool recorded',
-    detail: 'The VM decrypted its constant pool inside the sandbox — every recovered string is in the recording. The code itself stays behind the VM; `b!deobf` engages behavioral lifting for that.',
+    detail: 'The VM decrypted its constant pool inside the sandbox — every recovered string is in the recording. The code itself stays behind the VM; `.deobf` engages behavioral lifting for that.',
   },
   clean: {
     title: 'script ran clean — nothing sensitive recorded',
-    detail: 'The script executed in the dumper sandbox but recorded no chunks, pool or URLs — it may be plain code, or its payload needs an environment the offline jail does not fake. Run `b!deobf` for the full pipeline, or run it in a live dumper environment and send the recorded output back here.',
+    detail: 'The script executed in the dumper sandbox but recorded no chunks, pool or URLs — it may be plain code, or its payload needs an environment the offline jail does not fake. Run `.deobf` for the full pipeline, or run it in a live dumper environment and send the recorded output back here.',
   },
   norecord: {
     title: 'VM did not reach its payload',
-    detail: 'The jailed run halted before the payload decrypted (anti-tamper or time-gate). This is exactly what the Environment Logger workflow is for: run the script in a live dumper tool, then send the recorded output back with `b!deobf`.',
+    detail: 'The jailed run halted before the payload decrypted (anti-tamper or time-gate). This is exactly what the Environment Logger workflow is for: run the script in a live dumper tool, then send the recorded output back with `.deobf`.',
   },
 };
 
@@ -559,7 +562,7 @@ export async function historyReply(userId) {
         const link = r.paste_url ? ` — [result](${r.paste_url})` : '';
         return `${r.success ? '✅' : '⚠️'} **${fam}**${pct} • ${at} UTC${link}`;
       }).join('\n')
-      : `No jobs yet — run \`b!deobf\` with an obfuscated file and it will show up here.`));
+      : `No jobs yet — run \`.deobf\` with an obfuscated file and it will show up here.`));
   });
   return v2([card], { ephemeral: true });
 }
@@ -574,6 +577,7 @@ export function ownerPanelReply(prefix, { pinSet, db: dbInfo, danger }) {
     '',
     '**Server + data**',
     `• **\`${prefix}db\`** \`<sql | status>\` — raw SQL on the Neon database`,
+    `• **\`${prefix}setprefix\`** \`<prefix | reset>\` — per-server command prefix (default \`.\`)`,
     `• **\`${prefix}blacklist\`** \`add|remove|list <id>\` — block abusive users/servers`,
     `• **\`${prefix}broadcast\`** \`<text>\` — message every server`,
     `• **\`${prefix}dm\`** \`<userId> <text>\` — direct-message a user`,
@@ -644,6 +648,65 @@ export function statusSetReply(text) {
     c.addTextDisplayComponents(T(`**Watching** ${clamp(text, 120)}`));
   });
   return v2([card], { ephemeral: true });
+}
+
+/** .setprefix success card — old → new, live on the next message. */
+export function setPrefixReply(oldPrefix, newPrefix, isReset) {
+  const card = container(BRAND.ok, (c) => {
+    brandHeader(c, isReset ? '✅ Prefix reset' : '✅ Prefix updated', 'this server — live immediately', null);
+    c.addSeparatorComponents(SEP());
+    c.addTextDisplayComponents(T([
+      `**Was** \`${oldPrefix}\``,
+      `**Now** \`${newPrefix}\`${isReset ? ' (global default)' : ''}`,
+      '',
+      `-# Example: \`${newPrefix}deobf\` — slash commands (/deobf) are unaffected.`,
+    ].join('\n')));
+  });
+  return v2([card], { ephemeral: true });
+}
+
+// ---- obf (Xfuscator) ------------------------------------------------------------
+
+const XF_LAYERS = {
+  v1: 'per-byte XOR stream packer',
+  v2: '+ position-mixed keys • integrity MAC (silent tamper refusal)',
+  'v2.1': '+ junk-byte interleave (ciphertext stride 2)',
+};
+
+/** .obf success card — Xfuscator build delivered as paste + file. */
+export function obfReply({ version, code, filename, sizeIn, sizeOut, paste, sourceUrl }) {
+  const files = [];
+  const card = container(BRAND.color, (c) => {
+    brandHeader(c, '🔒 Xfuscator complete', `build ${version} — our own obfuscator, shipped with the bot`, null);
+    c.addSeparatorComponents(SEP());
+    facts(c, [
+      { label: 'Build', value: `**${version}** — ${XF_LAYERS[version] || 'packer'}` },
+      { label: 'Input', value: `${clamp(filename || 'file', 60)} — ${fmtBytes(sizeIn)}${sourceUrl ? ' (link)' : ''}` },
+      { label: 'Output', value: `${fmtBytes(sizeOut)} Lua, self-decoding at runtime` },
+      { label: 'Runs on', value: 'anything with `loadstring`/`load` — Lua 5.1-5.4, Luau executors' },
+      { label: 'Tamper', value: version === 'v1' ? 'wrong key → load fails loud' : 'integrity MAC → silently refuses to run' },
+    ]);
+    c.addSeparatorComponents(SEP());
+    if (paste) {
+      const parts = paste.parts || [];
+      if (parts.length > 1) {
+        const shown = parts.slice(0, 4).map((p) => ({ label: `Part ${p.index}/${p.of}`, url: p.url }));
+        c.addActionRowComponents(linkRow([...shown, { label: 'Raw', url: paste.rawUrl }]));
+      } else {
+        c.addActionRowComponents(linkRow([
+          { label: '🧾 Open paste', url: paste.url },
+          { label: 'Raw', url: paste.rawUrl },
+        ]));
+      }
+    }
+    const preview = code.length <= 800 ? code : `${code.slice(0, 600)}\n… (${code.length - 600} more chars in the paste)`;
+    c.addTextDisplayComponents(T(`**Preview**${code.length > 800 ? ' (truncated)' : ''}\n\`\`\`lua\n${clamp(preview, 1400)}\n\`\`\``));
+    const outName = `${String(filename || 'output.lua').replace(/\.[^.]*$/, '')}.xfuscator.${version}.lua`;
+    files.push(new AttachmentBuilder(Buffer.from(code, 'utf8'), { name: outName }));
+    c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
+    if (!paste) c.addTextDisplayComponents(T('-# Pastefy upload failed — the full obfuscated file is attached instead.'));
+  });
+  return v2([card], { files });
 }
 
 // ---- code tools (paste / beautify / strings) ---------------------------------

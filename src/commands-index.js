@@ -32,13 +32,17 @@ import leave from './commands/leave.js';
 import setstatus from './commands/setstatus.js';
 import logs from './commands/logs.js';
 import shutdown from './commands/shutdown.js';
+import setprefix from './commands/setprefix.js';
+import obf from './commands/obf.js';
 
 export const COMMANDS = [
   // public — deobf family first (.deobf auto + every per-service command)
   deobf, ...serviceCommands, loggerCmd, detect, families, stats, paste, beautify, strings, history, help, ping, invite,
   // owner-only (eval/exec/restart/db/broadcast/dm/leave/shutdown are danger-gated)
   evalCmd, exec, restart, dbCmd, broadcast, dm, blacklist, activity, env, owner,
-  servers, leave, setstatus, logs, shutdown,
+  servers, leave, setstatus, logs, shutdown, setprefix,
+  // public — Xfuscator (our own obfuscator)
+  obf,
 ];
 
 export function commandByName(name) {
@@ -56,6 +60,9 @@ export function toSlashJson(cmd) {
     description: o.description,
     type: typeof o.type === 'string' ? (TYPE_IDS[o.type] ?? 3) : o.type,
     required: Boolean(o.required),
+    ...(Array.isArray(o.choices) && o.choices.length
+      ? { choices: o.choices.map((ch) => ({ name: ch.name, value: ch.value })) }
+      : {}),
   }));
   // Danger commands always get an optional PIN field (protection layer 2).
   if (cmd.danger && cmd.owner && !options.some((o) => o.name === 'pin')) {

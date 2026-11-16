@@ -34,7 +34,7 @@ export default {
 
     const buf = att.buffer;
     if (buf.subarray(0, 4096).includes(0) && !/\blocal\b|\bfunction\b/.test(buf.subarray(0, 4096).toString('latin1'))) {
-      return ctx.reply(errorReply('Binary file', 'String extraction works on text/code files. Run `b!deobf` on packed binaries instead.'));
+      return ctx.reply(errorReply('Binary file', 'String extraction works on text/code files. Run `.deobf` on packed binaries instead.'));
     }
 
     const text = buf.toString('utf8');
@@ -56,7 +56,7 @@ export default {
     }
 
     if (!found.length) {
-      return ctx.reply(errorReply('No strings found', 'No quoted strings of 4+ characters — the file may be packed, or its strings are encrypted (run `b!deobf` for the full pipeline).'));
+      return ctx.reply(errorReply('No strings found', 'No quoted strings of 4+ characters — the file may be packed, or its strings are encrypted (run `.deobf` for the full pipeline).'));
     }
 
     const table = found.map((s, i) => `${String(i + 1).padStart(4)} | ${s.replace(/\n/g, '\\n').slice(0, 200)}`).join('\n');

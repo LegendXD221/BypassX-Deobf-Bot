@@ -14,7 +14,7 @@ import { logger } from './logger.js';
 import { detectService, guessLanguage } from './detect.js';
 import { resolveForced } from './service-catalog.js';
 import * as engine from './engine.js';
-import { postprocessFile } from './postprocess.js';
+import { postprocessFile, beautifyCode } from './postprocess.js';
 import { spawnHardened } from './security.js';
 import { harvestConstants, harvestToLua, liftVM } from './harvest.js';
 import { verifyCode } from './validate.js';
@@ -128,8 +128,51 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
     best.layerSummary = layerStack.length > 1
       ? peelSummary(layerStack)
       : (staticLayers.multi ? staticLayers.summary : null);
-    return best;
+    return finalizeOutput(best);
   });
+}
+
+// ---- final output gate (v2.20.0) -------------------------------------------------
+
+/** The single brand line that opens every delivered deobfuscation. */
+export const BYPASSX_HEADER = 'This File Was Deobfuscated By BypassX Deobf. discord - https://dc.gg/bypassx';
+
+/** Prefix the exactly-one BypassX brand line; idempotent, never twice. */
+function withBypassXHeader(code, lang) {
+  const body = String(code ?? '');
+  const line = lang === 'js' ? `//${BYPASSX_HEADER}` : `--${BYPASSX_HEADER}`;
+  if (body.startsWith(line)) return body;
+  return `${line}\n${body}`;
+}
+
+/**
+ * Readable-only gate — the LAST thing that touches the delivered code:
+ *   1. forced re-indent (beautify) — verify-gated, reverted on any regression;
+ *   2. final readability re-score;
+ *   3. the exactly-one BypassX header line, then pure code — nothing else.
+ * Binary outputs skip all three (comments cannot be injected into binaries).
+ */
+function finalizeOutput(best) {
+  if (best.binaryOutput || !best.code || !best.code.trim()) return best;
+  const lang = best.lang === 'js' ? 'js' : 'lua';
+  try {
+    const name = best.codeName || (lang === 'js' ? 'deobfuscated.js' : 'deobfuscated.lua');
+    const b = beautifyCode(name, Buffer.from(best.code, 'utf8'));
+    if (b.passes.length && b.data.length) {
+      const text = b.data.toString('utf8');
+      const v = verifyCode(text, { lang, filename: name });
+      if ((VERIFY_RANK[v.status] ?? 1) >= (VERIFY_RANK[best.verification?.status] ?? 1)) {
+        best.code = text;
+        best.recoveredSize = Buffer.byteLength(text, 'utf8');
+        best.verification = v;
+        best.stages.push({ name: 'readable-only final', detail: b.passes.join(', ') });
+      }
+    }
+  } catch { /* readability never fails a job */ }
+  try { best.readability = readabilityScore(best.code, lang); } catch { /* advisory */ }
+  best.code = withBypassXHeader(best.code, lang);
+  best.recoveredSize = Buffer.byteLength(best.code, 'utf8');
+  return best;
 }
 
 /** Readability pass + residual scoring + layer-stack record for one peel iteration. */

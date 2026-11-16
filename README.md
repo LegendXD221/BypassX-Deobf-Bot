@@ -10,9 +10,9 @@ Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) sta
 
 - **Components V2 UI** — every reply is a modern Discord Components V2 card (accent-colored container, sections, separators, link buttons, inline file cards).
 - **Auto-detect with confidence %** — weighted byte-signature detection across 27 services; the bot tells you *what* obfuscated the file and *how sure* it is (e.g. `Luraph v15.1 — 99%`).
-- **Pure code output** — the Pastefy paste contains **only the deobfuscated code**. No banners, no annotations, no junk.
+- **Pure code output with one brand line** — every delivery opens with exactly one header line — `--This File Was Deobfuscated By BypassX Deobf. discord - https://dc.gg/bypassx` — followed by the deobfuscated code and nothing else. The code itself is forced through a final readable-only gate (re-indent, verify-gated) before it ships.
 - **Multi-stage recovery** — targeted family peel → generic auto pipeline (packer chains included) → full 14-family Lua sweep. Fallbacks are automatic and reported in the reply embed.
-- **Prefix + slash commands** — `b!deobf` and `/deobf` both work everywhere.
+- **Prefix + slash commands** — `.deobf` and `/deobf` both work everywhere.
 - **Dynamic constant harvest (last tier)** — for escrow/anti-tamper VM builds the bot runs ONLY the VM's decryption init inside a jailed fengari Lua VM (no host access, no network, instruction budget + hard SIGKILL) and captures the decrypted string pool — so even "impossible" builds deliver their constants instead of nothing.
 - **Honest walls** — when a build is genuinely static-proof the bot says so instead of pasting garbage back. Passthrough echo is detected and rejected.
 - **24/7 keep-alive on Render free** — web service + /health checks + 9-minute self-ping through the public URL + an independent GitHub Actions ping every 10 minutes.
@@ -52,35 +52,37 @@ Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) sta
 
 | Prefix | Slash | What it does |
 | --- | --- | --- |
-| `b!deobf` | `/deobf file:` `/deobf link:` | Detect + deobfuscate an attached file or linked file → Pastefy link (+ inline preview for small outputs) |
-| `b!detect` | `/detect file:` `/detect link:` | Detection report only: confidence bar, evidence, runner-up candidates |
-| `b!beautify` | `/beautify file:` `/beautify link:` | Reformat messy/minified code — no deobfuscation |
-| `b!strings` | `/strings file:` `/strings link:` | Extract the string table — quick recon of what the file hides |
-| `b!paste` | `/paste file:` `/paste text:` | Upload any text/file to Pastefy (large content auto-split into parts) |
-| `b!stats` | `/stats` | Jobs served, success rate, uptime, engine build, database status |
-| `b!history` | `/history` | Your last deobfuscation jobs (requires the database) |
-| `b!families` | `/families` | Full support table with version ranges and recovery tiers |
-| `b!help` | `/help` | Overview |
-| `b!ping` | `/ping` | Latency |
-| `b!invite` | `/invite` | Add the bot to your server |
+| `.deobf` | `/deobf file:` `/deobf link:` | Detect + deobfuscate an attached file or linked file → Pastefy link (+ inline preview for small outputs) |
+| `.obf [v1\|v2\|v2.1]` | `/obf file:` `/obf link:` `/obf version:` | **Xfuscator** — our own obfuscator: XOR-stream packer with per-byte keys, junk-byte interleave (v2.1) and integrity MAC |
+| `.detect` | `/detect file:` `/detect link:` | Detection report only: confidence bar, evidence, runner-up candidates |
+| `.beautify` | `/beautify file:` `/beautify link:` | Reformat messy/minified code — no deobfuscation |
+| `.strings` | `/strings file:` `/strings link:` | Extract the string table — quick recon of what the file hides |
+| `.paste` | `/paste file:` `/paste text:` | Upload any text/file to Pastefy (large content auto-split into parts) |
+| `.stats` | `/stats` | Jobs served, success rate, uptime, engine build, database status |
+| `.history` | `/history` | Your last deobfuscation jobs (requires the database) |
+| `.families` | `/families` | Full support table with version ranges and recovery tiers |
+| `.help` | `/help` | Overview |
+| `.ping` | `/ping` | Latency |
+| `.invite` | `/invite` | Add the bot to your server |
 
-**Owner-only** (locked to `OWNER_ID`, default `1134757298733064203` — hidden from `b!help` on purpose; run `b!owner` for the live control panel):
+**Owner-only** (locked to `OWNER_ID`, default `1134757298733064203` — hidden from `.help` on purpose; run `.owner` for the live control panel):
 
 | Prefix | Slash | What it does |
 | --- | --- | --- |
-| `b!eval` | `/eval code:` | Evaluate JavaScript in a jailed sandbox running in a **secret-free child process** (no require/process/network, 5 s vm cap, 12 s hard kill) |
-| `b!exec` | `/exec command:` | Host shell (bash, 90 s default, long output auto-pasted) |
-| `b!restart` / `b!shutdown` | same | Restart / stop the service (Render reboots it) |
-| `b!db` | `/db sql:` | Raw SQL on the Neon database, or `b!db status` |
-| `b!blacklist` | `/blacklist action:` | Block abusive users/servers everywhere (stored in the DB) |
-| `b!broadcast` | `/broadcast message:` | Message every server (skips blacklisted ones) |
-| `b!dm` | `/dm user_id: text:` | Direct-message any user |
-| `b!activity` | `/activity type: text:` | Change presence (playing/listening/watching/competing/clear) |
-| `b!env` | `/env` | Which environment variables are set — values always masked |
-| `b!owner` | `/owner` | Control panel: all owner commands + protection-layer status; `/owner audit` for the audit trail |
-| `b!servers` / `b!leave` | same | List servers / leave one |
-| `b!setstatus` | `/setstatus text:` | Change the bot presence |
-| `b!logs` | `/logs count:` | Tail the in-process log ring buffer |
+| `.eval` | `/eval code:` | Evaluate JavaScript in a jailed sandbox running in a **secret-free child process** (no require/process/network, 5 s vm cap, 12 s hard kill) |
+| `.exec` | `/exec command:` | Host shell (bash, 90 s default, long output auto-pasted) |
+| `.restart` / `.shutdown` | same | Restart / stop the service (Render reboots it) |
+| `.db` | `/db sql:` | Raw SQL on the Neon database, or `.db status` |
+| `.blacklist` | `/blacklist action:` | Block abusive users/servers everywhere (stored in the DB) |
+| `.setprefix` | `/setprefix prefix:` | Set the per-server command prefix (1-8 chars, default `.`; `reset` restores it) — owner-only |
+| `.broadcast` | `/broadcast message:` | Message every server (skips blacklisted ones) |
+| `.dm` | `/dm user_id: text:` | Direct-message any user |
+| `.activity` | `/activity type: text:` | Change presence (playing/listening/watching/competing/clear) |
+| `.env` | `/env` | Which environment variables are set — values always masked |
+| `.owner` | `/owner` | Control panel: all owner commands + protection-layer status; `/owner audit` for the audit trail |
+| `.servers` / `.leave` | same | List servers / leave one |
+| `.setstatus` | `/setstatus text:` | Change the bot presence |
+| `.logs` | `/logs count:` | Tail the in-process log ring buffer |
 
 ### Owner protection — 5 layers on every dangerous command
 
@@ -111,7 +113,7 @@ Layer 0: owner commands are never listed in public help.
   tokens/secrets stripped — `DISCORD_TOKEN`, `PASTEFY_TOKEN`, `GITHUB_TOKEN`,
   `DATABASE_URL` never reach a child), isolated 0700 tmpdir, no-network env,
   hard SIGKILL timeout, output caps, parent-death kill.
-- `b!eval` adds two more walls: an **empty-host-object vm sandbox** (no
+- `.eval` adds two more walls: an **empty-host-object vm sandbox** (no
   constructor chains to climb) inside a **disposable child process** — even a
   hypothetical vm escape finds an empty environment with zero secrets.
 - Link fetching is SSRF-hardened (per-hop DNS checks, metadata IPs blocked,
@@ -176,8 +178,8 @@ The bot works fully without a database; set **`DATABASE_URL`** (Neon
 connection string, e.g. `postgresql://…@ep-…-pooler…neon.tech/neondb?sslmode=require`)
 to unlock persistence. The schema bootstraps itself on first boot:
 
-- `deobf_history` — every deobf/detect job → `b!history`, `b!stats` all-time counters
-- `owner_audit` — the 5-layer audit trail → `b!owner audit`
+- `deobf_history` — every deobf/detect job → `.history`, `.stats` all-time counters
+- `owner_audit` — the 5-layer audit trail → `.owner audit`
 - `blacklist` — global user/server blocks, enforced at dispatch (30 s cache)
 - `guild_settings` — **per-guild controls from the dashboard** (60 s cache)
 - `bot_stats` — all-time success counters
@@ -191,7 +193,7 @@ every read path (blacklist 30 s, guild settings 60 s, dashboard state 15 s).
 If Neon is unreachable the bot logs a warning and keeps working — every DB
 failure is isolated. `npm i` pulls `pg` automatically.
 
-`b!deobf` accepts the file attached to your message **or** as a reply to a message containing one. It also accepts **links** — paste any of these after the command:
+`.deobf` accepts the file attached to your message **or** as a reply to a message containing one. It also accepts **links** — paste any of these after the command:
 
 - `pastefy.app/<id>` — Pastefy pastes (fetched via the API)
 - `github.com/u/r/blob/…` / `/raw/…` — GitHub files (private repos work when the server has `GITHUB_TOKEN`)
@@ -262,7 +264,7 @@ Render free services sleep after 15 idle minutes — three layers prevent that:
 | `DISCORD_TOKEN` | — | **required** bot token |
 | `CLIENT_ID` | — | **required for slash/invite** application id |
 | `GUILD_ID` | — | instant slash registration to one guild (dev) |
-| `PREFIX` | `b!` | prefix-command prefix |
+| `PREFIX` | `.` | prefix-command prefix |
 | `PASTEFY_TOKEN` | anonymous | Pastefy API key (free at pastefy.app/apikeys) |
 | `PASTEFY_EXPIRE_DAYS` | `30` | paste expiry (0 = never) |
 | `ENGINE_URL` | release asset | engine `.gz` download URL |

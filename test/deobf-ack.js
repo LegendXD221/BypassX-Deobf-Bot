@@ -1,5 +1,5 @@
 /**
- * v2.7.1 smoke test — the `b!deobf` acknowledgement flow:
+ * v2.7.1 smoke test — the `.deobf` acknowledgement flow:
  *   "@user deobfuscating Your Code …" appears IMMEDIATELY (before the
  *   pipeline runs), and the finished code is delivered as a SEPARATE
  *   follow-up message afterwards — for both slash and prefix invocations,
@@ -20,10 +20,13 @@ import { checkCooldown } from '../src/rate-limit.js';
 const USER_ID = '987654321'; // used only by the cooldown test
 const uid = (n) => `11100000000${n}`; // unique per check — cooldowns are per-user
 const calls = [];
+// Captured Pastefy POST bodies — used to pin the v2.20.0 delivery policy:
+// the paste is the ONE BypassX header line + the deobfuscated code, nothing else.
+const pasteBodies = [];
 
 // ---- fetch router: attachment download + pastefy upload, everything else 404
 const TINY_LUA = 'local x = 42\nprint("blah blah")\n';
-globalThis.fetch = async (url) => {
+globalThis.fetch = async (url, init) => {
   const u = String(url);
   calls.push(`fetch:${u.slice(0, 60)}`);
   if (u.startsWith('https://attach.mock/ok')) {
@@ -31,6 +34,7 @@ globalThis.fetch = async (url) => {
   }
   if (u.startsWith('https://attach.mock/fail')) return { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0), headers: new Map() };
   if (u.startsWith('https://pastefy.app/api/v2/paste')) {
+    try { pasteBodies.push(JSON.parse(init?.body || '{}')); } catch { /* ignore */ }
     return { ok: true, status: 200, json: async () => ({ paste: { id: 'fakePaste1' } }), headers: new Map() };
   }
   return { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0), headers: new Map() };
@@ -59,8 +63,8 @@ function mockMessage(userId = USER_ID) {
   return {
     author: { id: userId, tag: 'tester' },
     guildId: 'guild1',
-    _prefix: 'b!',
-    content: 'b!deobf',
+    _prefix: '.',
+    content: '.deobf',
     attachments: new Map([['1', { name: 'script.lua', size: TINY_LUA.length, url: 'https://attach.mock/ok/script.lua' }]]),
     reference: null,
     replies: [],
@@ -117,6 +121,23 @@ await check('cooldown path: no status placeholder, ephemeral card via reply', as
   await deobf.run(makeCtx({ interaction, client: {} }));
   assert.ok(!calls.some((c) => c.startsWith('deferReply')), 'cooldown must short-circuit before any status');
   assert.ok(!calls.some((c) => c.includes('deobfuscating Your Code')), 'no status on cooldown');
+});
+
+await check('v2.20.0 delivery policy: paste = exactly one BypassX header line + readable code', async () => {
+  calls.length = 0;
+  pasteBodies.length = 0;
+  const interaction = mockInteraction(uid(7));
+  await deobf.run(makeCtx({ interaction, client: {} }));
+  assert.ok(pasteBodies.length >= 1, 'pastefy upload must happen for this input');
+  const text = pasteBodies[0].content || pasteBodies[0].text || '';
+  const HEADER = 'This File Was Deobfuscated By BypassX Deobf. discord - https://dc.gg/bypassx';
+  assert.ok(text.startsWith(`--${HEADER}\n`), `paste must open with the exact header comment, got: ${JSON.stringify(text.slice(0, 120))}`);
+  const headerCount = text.split(HEADER).length - 1;
+  assert.equal(headerCount, 1, 'header must appear exactly once');
+  // Readable-only gate: real code follows the header (nothing else before it),
+  // and no legacy wall banners may ride along with the delivery.
+  assert.ok(text.length > HEADER.length + 10, 'the deobfuscated code must follow the header');
+  assert.ok(!/\bannotated VM dump\b|\bhonest wall\b/i.test(text), 'no engine chatter may ride along');
 });
 
 console.log(`\n${ok.total - ok.failed}/${ok.total} checks passed`);

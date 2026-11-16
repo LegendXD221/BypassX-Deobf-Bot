@@ -40,7 +40,7 @@ export default {
     const sql = ctx.isSlash
       ? ctx.interaction.options.getString('sql', true)
       : (ctx.args || []).join(' ');
-    if (!sql.trim()) return ctx.reply(errorReply('Missing SQL', 'Give me a statement, or `b!db status`.'));
+    if (!sql.trim()) return ctx.reply(errorReply('Missing SQL', 'Give me a statement, or `.db status`.'));
 
     if (!db.describe().enabled) {
       return ctx.reply(errorReply('Database offline', 'DATABASE_URL is not set. Add your Neon connection string in the Render dashboard (or .env) and restart — the schema bootstraps itself.'));
