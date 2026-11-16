@@ -1,6 +1,6 @@
 /**
  * BypassX Deobf Bot — minimal dependency-free structured logger
- * with an in-memory ring buffer for the owner-only `b!logs` command.
+ * with an in-memory ring buffer for the owner-only `.logs` command.
  */
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
 const minLevel = LEVELS[process.env.LOG_LEVEL || 'info'] ?? 20;

@@ -1,7 +1,7 @@
 /**
  * BypassX Deobf Bot — Discord client entry point.
  *
- * Supports both prefix commands (b!deobf …) and slash commands (/deobf …).
+ * Supports both prefix commands (.deobf …) and slash commands (/deobf …).
  * Slash commands self-register on ready (global; + instant per-guild when
  * GUILD_ID is set).
  *
@@ -241,9 +241,9 @@ client.on(Events.MessageCreate, async (message) => {
     const ctx = makeCtx({ message, client });
     // Remaining arguments after the command name (owner tools use these).
     ctx.args = parts;
-    // First URL in the arguments → link input (`b!deobf <url>`).
+    // First URL in the arguments → link input (`.deobf <url>`).
     ctx.url = parts.find(looksLikeUrl) || null;
-    // Resolve a reply-target attachment or link so `b!deobf` works as a reply.
+    // Resolve a reply-target attachment or link so `.deobf` works as a reply.
     if (!ctx.attachments.length && !ctx.url && message.reference?.messageId) {
       try {
         const ref = await message.channel.messages.fetch(message.reference.messageId);

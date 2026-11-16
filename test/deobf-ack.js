@@ -1,5 +1,5 @@
 /**
- * v2.7.1 smoke test — the `b!deobf` acknowledgement flow:
+ * v2.7.1 smoke test — the `.deobf` acknowledgement flow:
  *   "@user deobfuscating Your Code …" appears IMMEDIATELY (before the
  *   pipeline runs), and the finished code is delivered as a SEPARATE
  *   follow-up message afterwards — for both slash and prefix invocations,
@@ -59,8 +59,8 @@ function mockMessage(userId = USER_ID) {
   return {
     author: { id: userId, tag: 'tester' },
     guildId: 'guild1',
-    _prefix: 'b!',
-    content: 'b!deobf',
+    _prefix: '.',
+    content: '.deobf',
     attachments: new Map([['1', { name: 'script.lua', size: TINY_LUA.length, url: 'https://attach.mock/ok/script.lua' }]]),
     reference: null,
     replies: [],

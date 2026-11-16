@@ -115,18 +115,18 @@ await check('tokra: new TokraScript command pins the numeric-preset family corre
 
 // ---- 2. supported card ----------------------------------------------------------
 await check('supported card: exact per-command lines + exact usage line', () => {
-  const payload = familiesReply('b!');
+  const payload = familiesReply('.');
   const s = JSON.stringify(payload);
-  for (const line of serviceCommandLines('b!')) {
+  for (const line of serviceCommandLines('.')) {
     assert.ok(s.includes(line), `card missing line: ${line}`);
   }
-  assert.ok(s.includes(serviceUsageLine('b!')), `card missing usage line: ${serviceUsageLine('b!')}`);
+  assert.ok(s.includes(serviceUsageLine('.')), `card missing usage line: ${serviceUsageLine('.')}`);
   // order must follow the user's list (l first, luast last)
-  const first = serviceCommandLines('b!')[0];
-  const last = serviceCommandLines('b!').at(-1);
+  const first = serviceCommandLines('.')[0];
+  const last = serviceCommandLines('.').at(-1);
   assert.ok(s.indexOf(first) < s.indexOf(last), 'card order must match the catalog order');
-  assert.ok(first.includes('`b!l` — **Environment Logger**'), `first line wrong: ${first}`);
-  assert.ok(last.includes('`b!luast` — **LuaST**'), `last line wrong: ${last}`);
+  assert.ok(first.includes('`.l` — **Environment Logger**'), `first line wrong: ${first}`);
+  assert.ok(last.includes('`.luast` — **LuaST**'), `last line wrong: ${last}`);
 });
 
 // ---- 3. resolveForced ------------------------------------------------------------
@@ -198,7 +198,7 @@ await check('logger: single source chunk ships as PURE code; mixed ships annotat
 await check('logger card + families-style serialization stays within V2 budget', () => {
   const report = buildLoggerReport({ ok: true, ran: true, strings: ['abc', 'def'], chunks: [] });
   report.signature = 'Luraph v14.4 — 99%';
-  const payload = loggerReply(report, { url: 'https://pastefy.app/xyz', rawUrl: 'https://pastefy.app/xyz/raw' }, 's.lua', 'b!', Buffer.from('x'));
+  const payload = loggerReply(report, { url: 'https://pastefy.app/xyz', rawUrl: 'https://pastefy.app/xyz/raw' }, 's.lua', '.', Buffer.from('x'));
   const s = JSON.stringify(payload);
   assert.ok(s.includes('Environment Logger'), 'card title present');
   assert.ok(s.includes('Luraph v14.4'), 'signature fact present');

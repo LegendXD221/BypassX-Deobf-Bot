@@ -12,6 +12,7 @@ import families from './commands/families.js';
 import stats from './commands/stats.js';
 import paste from './commands/paste.js';
 import beautify from './commands/beautify.js';
+import obf from './commands/obf.js';
 import strings from './commands/strings.js';
 import history from './commands/history.js';
 import help from './commands/help.js';
@@ -30,15 +31,16 @@ import owner from './commands/owner.js';
 import servers from './commands/servers.js';
 import leave from './commands/leave.js';
 import setstatus from './commands/setstatus.js';
+import setprefix from './commands/setprefix.js';
 import logs from './commands/logs.js';
 import shutdown from './commands/shutdown.js';
 
 export const COMMANDS = [
   // public — deobf family first (.deobf auto + every per-service command)
-  deobf, ...serviceCommands, loggerCmd, detect, families, stats, paste, beautify, strings, history, help, ping, invite,
+  deobf, ...serviceCommands, loggerCmd, detect, families, stats, paste, beautify, obf, strings, history, help, ping, invite,
   // owner-only (eval/exec/restart/db/broadcast/dm/leave/shutdown are danger-gated)
   evalCmd, exec, restart, dbCmd, broadcast, dm, blacklist, activity, env, owner,
-  servers, leave, setstatus, logs, shutdown,
+  servers, leave, setstatus, setprefix, logs, shutdown,
 ];
 
 export function commandByName(name) {

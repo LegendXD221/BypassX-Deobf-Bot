@@ -28,6 +28,7 @@ import { residualObfuscation, detectLayers, peelSummary } from './layers.js';
 import { makeReadableLua, makeReadableJs, readabilityScore } from './readable.js';
 // AntiTamper V2 (v2.15.0): static defuse tier + reply-facing summary
 import { neutralize as atNeutralize, defuseSummary } from './antitamper/index.js';
+import { finalizeReadable } from './finalize.js';
 
 // v2.4.0 "Total Deobf": the pipeline is a PEEL LOOP. Each pass strips one
 // obfuscation layer (VM, escrow, string-array, loader wrapper — whatever the
@@ -128,6 +129,11 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
     best.layerSummary = layerStack.length > 1
       ? peelSummary(layerStack)
       : (staticLayers.multi ? staticLayers.summary : null);
+    // v2.20.0 — readable-only finalize: every Lua/JS deliverable leaves the
+    // pipeline as the single BypassX heading line + the deobfuscated code.
+    if (!best.binaryOutput && best.code && best.code.trim()) {
+      best.code = finalizeReadable(best.code, best.lang === 'js' ? 'js' : 'lua');
+    }
     return best;
   });
 }

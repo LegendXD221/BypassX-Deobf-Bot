@@ -184,7 +184,7 @@ function unescapeRecorded(content) {
   return out;
 }
 
-function extractRecordedPrints(body) {
+export function extractRecordedPrints(body) {
   const lines = [];
   const re = /print\("((?:[^"\\]|\\.)*)"\)/g;
   let m;
@@ -195,7 +195,7 @@ function extractRecordedPrints(body) {
   return lines;
 }
 
-function parseStateDump(lines) {
+export function parseStateDump(lines) {
   const nodes = {};
   const order = [];
   let current = null;
