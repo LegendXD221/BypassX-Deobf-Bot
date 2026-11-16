@@ -1,18 +1,25 @@
 # WorklogBot — BypassX Deobf Bot
 
 
-## v2.20.0 — Xfuscator (our own obfuscator) + "." prefix with per-server setprefix + readable-only delivery with the one-line BypassX header + updated help menu
+## v2.21.0 — integration superset: Xfuscator v1/v2/v2.1 (versioned builds, mod-2^31 cipher, .obf version choice) + help menu update + setprefix hardening on top of the v2.20.0 base
 
 **User request: "I Want The Deobf To Give Readable Lua Code Only… add the header line… Make Our Own Custom Obf Named Xfuscator… Keep the '.' prefix and add setprefix… Update the help menu and complete every next step"**
 
-### 1. Delivery policy — readable-only + exactly one brand line
-- `finalizeOutput()` (src/pipeline.js) is the LAST pass over delivered code:
-  forced re-indent via `beautifyCode` (verify-gated, reverted on any regression),
-  final `readabilityScore` re-score, then the single header line
-  `--This File Was Deobfuscated By BypassX Deobf. discord - https://dc.gg/bypassx`
-  (JS outputs get `//`, binaries skip all three). Idempotent — never twice.
-- Paste text = header line + deobfuscated code, NOTHING else (pinned by a new
-  deobf-ack check that captures the Pastefy POST body).
+### 0. What this integration does (merge of the parallel v2.20.0 with this line of work)
+- The canonical deobf heading moved to src/finalize.js (spaced `-- This …` form);
+  `finalizeReadable` was upgraded to NORMALIZE any heading variant (the no-space
+  `--This…` form collapses onto the canonical line) and DROP duplicates — so
+  exactly one canonical heading survives no matter how many stages inject one.
+- pipeline.finalizeOutput() composes: forced re-indent (beautifyCode,
+  verify-gated, reverted on regression) + final readabilityScore re-score +
+  finalizeReadable injection. harvestToLua's old 8-line banner is gone
+  (finalize adds the heading). Binary outputs skip the whole gate.
+- Merge fixes: the parallel commit's setprefix read `ctx.guildId` — makeCtx()
+  never defines that field (the DM guard would have tripped in production); the
+  kept implementation resolves the guild from
+  ctx.interaction?.guildId || ctx.message?.guildId. Dead src/xf-header.js and
+  the duplicate xfuscator suite entry were removed; test/setprefix.js was
+  ported to the kept command (6 checks incl. the finalize normalization).
 
 ### 2. Prefix "." restored + per-server setprefix (owner-only)
 - Global default `b!` → `.` swept across config/ctx/service-catalog/dashboard/
@@ -63,9 +70,102 @@
 - README: header policy, `.obf` + `.setprefix` command rows, PREFIX env doc.
 
 ### Tests
-- 23 suites green (22 existing + xfuscator.js). deobf-ack 5/5 (new delivery-
-  policy check), service-commands 15/15 (new v2.20.0 block: prefix assertions,
-  setprefix registry/guards, help menu content).
+- 24 suites green: xfuscator 34 checks (v1/v2/v2.1 each compiles + RUNS in
+  fengari with byte-identical output; tamper; double-obf; command smoke),
+  setprefix 6 checks (ported), deobf-ack 7/7 (delivery policy: paste body =
+  exactly one canonical heading + code), service-commands 15/15 (v2.21.0 block:
+  prefix assertions, setprefix registry/guards, help menu content), all 20
+  pre-existing suites unchanged and green. Live pipeline sanity: real MoonVeil
+  fixture delivers heading-exactly-once + `readable-only final` stage +
+  verified syntax.
+
+## v2.20.0 — readable-only deobf output (single BypassX heading) + XfUSCATOR v1 (.obf / /obf) + prefix `.` + owner-only setprefix — 24 suites
+
+**User directive: "I Want The Deobf To Give The Deobf Readable Lua Code … just add a heading 'This File Was Deobfuscated By BypassX Deobf. discord - https://dc.gg/bypassx' and nothing else … Make Our Own Custom Obf Named Xfuscator … Keep the '.' prefix and add a command setprefix … Finish every pending task"**
+
+### Readable-only finalize (every deobf deliverable)
+- **src/finalize.js** — `finalizeReadable(code, lang)`: the output is EXACTLY
+  line 1 `-- This File Was Deobfuscated By BypassX Deobf. discord - https://dc.gg/bypassx`
+  + the deobfuscated code. Nothing else. Idempotent (never doubles), JS variant
+  uses `//`.
+- Wired at the peel-loop choke point in pipeline.js (every non-binary Lua/JS
+  result passes through it) — one gate, all terminal paths covered.
+- **harvestToLua banner stripped** (src/harvest.js): the 8-line meta banner is
+  gone; it now emits only `local STRINGS = {…}` code. test/final-scan-fixes
+  re-pinned to the new contract (no 'Recovered' banner, table-first output).
+- Live bloxfruits.lua delivery verified end-to-end: heading + recovered pool
+  code, 100%-clean shape, uploaded to Pastefy.
+
+### Xfuscator v1 — the in-house obfuscator (.obf + /obf)
+- **src/xfuscator.js** — layer stack, all semantics-preserving and verified:
+  string-table extraction (per-build XOR key chain + runtime decoder, spliced
+  right-to-left, collision-safe per-build table names), number encoding
+  (literals → opaque arithmetic, string-span-protected, runs BEFORE the table
+  block so \ddd escapes stay intact), full-body encryption (whole program →
+  rolling-key XOR blob → self-contained loader with a position-weighted
+  integrity gate → decrypt → loadstring → varargs forwarded), anti-tamper
+  junk state machines. Portability: bit32-only (Lua 5.1 executors + Luau),
+  no 2^53-overflow math, blob round-trips byte-exact in JS before emit.
+- Header on every output: `-- This File Was Obfuscated By Xfuscator (v1). discord- https://dc.gg/bypassx`
+  (versioned template in src/xf-header.js — v2/v2.1 ready).
+- **src/commands/obf.js** — `.obf` + `/obf` (public, file/link input, layered
+  result card + Pastefy). Registered in commands-index.js.
+- **test/xfuscator.js** — 7 checks: signature, luau-ast parse, **behavior
+  round-trip in the vendored native luau (original vs obfuscated prints
+  identical)**, layer-activity pins (strings extracted / numbers encoded /
+  blob emitted, no plaintext leak), seed determinism, checksum parity, binary
+  refusal. Bugs found and fixed on the way: Lua namelist grammar
+  (`local a={},b=f` → split statements), missing quotes around table-row
+  blob literals, `band(x,250)` ≠ mod 251 in the Lua checksum, XOR key 0
+  leaving strings plaintext, number pass corrupting \ddd escapes.
+
+### Prefix `.` + setprefix (owner-only)
+- Global default back to `.` everywhere: config.js, ctx.js fallback,
+  service-catalog card defaults, dashboard fallback, all user-visible strings
+  (replies, strings/db/activity error cards), comments, README command tables.
+  Per-guild override (dashboard or setprefix) still wins.
+- **src/commands/setprefix.js** — `.setprefix <prefix>` / `/setprefix prefix:`:
+  bot owner only (dispatch-enforced), 8-char cap, `reset`/no-arg → global
+  default, DM guard, db-unavailable fallback card. Registered in
+  commands-index.js.
+- **test/setprefix.js** — 6 checks (owner flag, length cap, DM guard,
+  db-unavailable path, `.` default, finalize idempotency).
+
+### Pending tasks closed
+- **Vendor evaluations → research/vendor-eval-v2.20.0.md**: 4 of 5 repos are
+  DEAD (Prometheus-DeobfuscatorV2, jte-lua/lua-decompiler, WhoIsIsGenn/
+  deobfuscator, caomro2077/Deobfuscator-Luraph-V15 — git ls-remote auth prompt
+  = nonexistent). Sk8rz/lua-deobf-actions is alive but is a CI *aggregator* of
+  public tools we already out-perform — reference only, not vendored.
+- **CHECK*-lite branch comments**: already live in vm-lift.js since v2.13.0
+  (branch edges annotated `-- CHECK*-lite branch if id: N …` in the devirt
+  output) — verified, nothing to do.
+- **Multi-layer peel**: absorbed since the v2.4.0 peel loop (MAX_PEEL_LAYERS=4
+  in pipeline.js deobfuscate()) — verified, nothing to do.
+
+### v14.7 static devirt groundwork (bloxfruits.lua — banked for engine-0.14)
+- Full static chain built and run: wire unwrap (110 ms) → mini-prelude +
+  O()-exit hook injected INTO the 59 KB VM chunk (separate loadstring'd chunk
+  — outer-chunk locals are invisible) → **native vendored luau run dumps the
+  deserialized program graph in 0.7 s** (fengari never finished init: no
+  io.library, metatable-proxy probes spin, buffered report dies on SIGKILL —
+  solved with a live `[LIVE] print(…)` emit patch in the vendored envlog
+  runtime + pre-marker probes + early SIGKILL).
+- Graph decoded: 35 protos / 9,124 instructions (column length = pc space),
+  proto schema mapped (11-key tables: c7/c8/c9/c11 numeric columns + m1/m2/m6
+  sparse maps + m10 child refs). **c7 = opcode column confirmed behaviorally**
+  (65 live rows: ARITH 23, CALL 13, COMPARE 12, CONCAT 2, RET 3, closure
+  family 3; 182 raw values are decoy rows). 621 (row,operand) pairs probed —
+  per-row class consistency 65/65.
+- Remaining for a full source lift: per-proto dispatch-table decryption + the
+  lifter's v14.7 schema adapter. Tooling + data committed (scripts/
+  devirt-bf-v147.js, probe-bf-isa2.js, trace/analyze/pair scripts, var/
+  external/bf-v147-*.{json,txt}).
+
+### Tests
+- test/all.js — **ALL 24 SUITES PASSED** (22 prior + xfuscator + setprefix).
+- Live bloxfruits pipeline re-run post-changes: heading + pool delivery, paste
+  uploaded, verify=verified.
 
 ## v2.19.0 — Luraph v14.7 full wire recovery (live user sample bloxfruits.lua): base85+LZMA wire decoded statically, VM interpreter source + program bytecode + 117-string constant pool extracted — the static-peel wall (8 strings) is gone
 

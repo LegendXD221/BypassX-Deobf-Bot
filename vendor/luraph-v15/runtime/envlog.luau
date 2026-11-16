@@ -186,6 +186,16 @@ end
 
 local function emit(stmt)
 	checkBudget()
+	-- BX live-statements probe channel: stream recorded print() text straight
+	-- to stdout (flushed) so per-probe kills keep partial results. CFG-gated.
+	if CFG.live_prints and type(stmt) == "table" and type(stmt.text) == "string" then
+		local t = stmt.text
+		if t:sub(1, 6) == "print(" then
+			-- 4.5KB padding forces the libc pipe buffer to flush immediately so
+			-- hard-killed probes keep everything printed before the pcall.
+			print(string.rep("#", 4500), "[LIVE]", t)
+		end
+	end
 	if CHAIN.syncGenv and not CHAIN.syncing then CHAIN.syncGenv() end
 	local b = curBlock()
 	if b.stopped then

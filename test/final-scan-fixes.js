@@ -62,12 +62,14 @@ await check('reconstructPool: drops blob/fragments/self-noise, keeps printable p
   assert.equal(dropped, 8, `9 input − 5 kept = 4 (blob+3 frags) + 3 noise + 1 dup, got dropped=${dropped}`);
 });
 
-await check('harvestToLua: header reports filtered counts, body has only real strings', async () => {
+await check('harvestToLua: v2.20.0 readable-only — no banner, body has only real strings (finalize adds the BypassX heading)', async () => {
   const text = harvestToLua({ strings: ['tonumber', 'ab\x00cd', '\u3470', 'tonumber'] }, { detectedName: 'MoonSec V2' });
-  assert.match(text, /Recovered 1 pool strings \(3 binary\/encrypted\/duplicate fragments filtered\)/);
+  assert.ok(!text.includes('Recovered'), 'banner lines are gone (finalize owns the single heading)');
+  assert.ok(!text.includes('BypassX'), 'no multi-line meta banner');
+  assert.match(text, /^local STRINGS = \{/, 'output starts with the pool table code');
   assert.ok(text.includes('tonumber'));
   assert.ok(!text.includes('\u3470'), 'CJK fragment must not be emitted');
-  // must still be valid Lua
+  // must still be valid Lua, and with the finalize heading it is the full deliverable shape
   assert.equal(verifyCode(text, { lang: 'lua' }).status, 'verified');
 });
 

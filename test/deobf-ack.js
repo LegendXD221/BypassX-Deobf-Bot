@@ -131,7 +131,7 @@ await check('v2.20.0 delivery policy: paste = exactly one BypassX header line + 
   assert.ok(pasteBodies.length >= 1, 'pastefy upload must happen for this input');
   const text = pasteBodies[0].content || pasteBodies[0].text || '';
   const HEADER = 'This File Was Deobfuscated By BypassX Deobf. discord - https://dc.gg/bypassx';
-  assert.ok(text.startsWith(`--${HEADER}\n`), `paste must open with the exact header comment, got: ${JSON.stringify(text.slice(0, 120))}`);
+  assert.ok(text.startsWith(`-- ${HEADER}\n`), `paste must open with the exact header comment, got: ${JSON.stringify(text.slice(0, 120))}`);
   const headerCount = text.split(HEADER).length - 1;
   assert.equal(headerCount, 1, 'header must appear exactly once');
   // Readable-only gate: real code follows the header (nothing else before it),

@@ -28,6 +28,7 @@ import { residualObfuscation, detectLayers, peelSummary } from './layers.js';
 import { makeReadableLua, makeReadableJs, readabilityScore } from './readable.js';
 // AntiTamper V2 (v2.15.0): static defuse tier + reply-facing summary
 import { neutralize as atNeutralize, defuseSummary } from './antitamper/index.js';
+import { finalizeReadable } from './finalize.js';
 
 // v2.4.0 "Total Deobf": the pipeline is a PEEL LOOP. Each pass strips one
 // obfuscation layer (VM, escrow, string-array, loader wrapper — whatever the
@@ -128,28 +129,25 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
     best.layerSummary = layerStack.length > 1
       ? peelSummary(layerStack)
       : (staticLayers.multi ? staticLayers.summary : null);
+    // v2.20.0/v2.21.0 — readable-only finalize: forced re-indent (verify-gated)
+    // + final readability re-score + the single canonical BypassX heading via
+    // src/finalize.js (idempotent — never doubles).
     return finalizeOutput(best);
   });
 }
 
 // ---- final output gate (v2.20.0) -------------------------------------------------
 
-/** The single brand line that opens every delivered deobfuscation. */
-export const BYPASSX_HEADER = 'This File Was Deobfuscated By BypassX Deobf. discord - https://dc.gg/bypassx';
-
-/** Prefix the exactly-one BypassX brand line; idempotent, never twice. */
-function withBypassXHeader(code, lang) {
-  const body = String(code ?? '');
-  const line = lang === 'js' ? `//${BYPASSX_HEADER}` : `--${BYPASSX_HEADER}`;
-  if (body.startsWith(line)) return body;
-  return `${line}\n${body}`;
-}
+// Canonical heading lives in src/finalize.js (spaced variant, HEADING_RE-backed
+// idempotency). Re-exported here for callers that predate the module split.
+import { BYPASSX_HEADING_LUA as BYPASSX_HEADER } from './finalize.js';
+export { BYPASSX_HEADER };
 
 /**
  * Readable-only gate — the LAST thing that touches the delivered code:
  *   1. forced re-indent (beautify) — verify-gated, reverted on any regression;
  *   2. final readability re-score;
- *   3. the exactly-one BypassX header line, then pure code — nothing else.
+ *   3. the exactly-one BypassX heading line (src/finalize.js), then pure code.
  * Binary outputs skip all three (comments cannot be injected into binaries).
  */
 function finalizeOutput(best) {
@@ -170,7 +168,9 @@ function finalizeOutput(best) {
     }
   } catch { /* readability never fails a job */ }
   try { best.readability = readabilityScore(best.code, lang); } catch { /* advisory */ }
-  best.code = withBypassXHeader(best.code, lang);
+  // Canonical heading injection — finalize.js collapses pre-existing heading
+  // variants and never duplicates (covers harvestToLua + this gate both running).
+  best.code = finalizeReadable(best.code, lang);
   best.recoveredSize = Buffer.byteLength(best.code, 'utf8');
   return best;
 }

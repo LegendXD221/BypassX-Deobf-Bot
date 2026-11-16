@@ -132,17 +132,10 @@ export function reconstructPool(strings) {
 
 export function harvestToLua(h, { detectedName, version } = {}) {
   const { kept, dropped } = reconstructPool(h.strings);
+  // v2.20.0 — readable-only finalize: the multi-line banner is gone; the
+  // single BypassX heading is prepended by src/finalize.js and the code body
+  // (the recovered pool) follows it directly.
   const header = [
-    '-- BypassX Deobf Bot — dynamic constant recovery',
-    `-- Detected: ${detectedName || 'unknown'}${version ? ` ${version} ` : ''}(escrow/anti-tamper build)`,
-    '-- Method: jailed in-memory VM run (no host, no network); decrypted string',
-    '-- constants captured from the VM constant pool during init.',
-    '-- Presentation: long/multi-line strings use Lua long-bracket literals',
-    '-- ([==[ ... ]==], collision-checked per string) so URLs, embedded code',
-    '-- and scripts stay readable instead of escaped one-line walls.',
-    `-- Recovered ${kept.length} pool strings`
-      + (dropped ? ` (${dropped} binary/encrypted/duplicate fragments filtered).` : '.'),
-    '',
     'local STRINGS = {',
   ];
   const esc = (s) => s

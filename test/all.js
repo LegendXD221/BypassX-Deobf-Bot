@@ -20,6 +20,7 @@ const SUITES = [
   { name: 'chunk-paste.js' },    // pastefy chunking round-trips
   { name: 'links.js' },          // url detection / normalization / SSRF guards
   { name: 'env-sanity.js' },     // jail exploit floor + detection catalog + unparser alignment (v2.12.0)
+  { name: 'setprefix.js' }, // owner setprefix + '.' default + readable finalize (v2.20.0)
   { name: 'antitamper.js', timeoutMs: 180_000 }, // AntiTamper V2: catalog + neutralizer + env layers + sanity gate + escalation E2E (v2.15.0)
   { name: 'luau-shim.js' },      // Luau shim: compound assigns + if-expressions (v1.6.0)
   { name: 'vm-lift.js', timeoutMs: 300_000 },        // VM devirtualization engine (v1.9.0) + CHECK*-lite branch comments (v2.13.0)
@@ -33,7 +34,7 @@ const SUITES = [
   { name: 'service-commands.js', timeoutMs: 300_000 }, // per-service commands + environment logger (v2.8.0)
   { name: 'thirdparty-samples.js', timeoutMs: 420_000 }, // leaked-corpus regression floor + 25ms techniques (v2.10.0)
   { name: 'luraph14-wire.js', timeoutMs: 180_000 }, // v14.7 base85+LZMA wire unwrap + static pool (v2.19.0)
-  { name: 'xfuscator.js', timeoutMs: 180_000 },   // Xfuscator builds + .obf command delivery (v2.20.0)
+  { name: 'xfuscator.js', timeoutMs: 180_000 },   // Xfuscator v1/v2/v2.1 builds + .obf command delivery (v2.20.0)
 ];
 
 let failed = 0;
