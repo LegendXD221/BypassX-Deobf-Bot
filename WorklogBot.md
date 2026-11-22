@@ -1,6 +1,31 @@
 # WorklogBot — Lucid Deobf Bot
 
 
+## v2.22.1 (deploy note) — Lucid Deobf moved to a VPS (pm2, 24/7)
+
+**User request: "We Got A Vps So Now We Can Move Our Bot To The Vps … Bot src … If the bot src name is something else change it to Lucid Deobf"**
+
+### VPS deployment (sg-sgp12.tryaltare.ai, NAT-mapped SSH)
+- The provider SSH map (port 29908) refused for ~8 min while the box finished
+  provisioning, then opened. Host = Ubuntu 26.04.1 (tini PID 1 — no systemd),
+  1 vCPU, huge RAM. Node 22.22.1 / npm / git / cron installed from apt.
+- Deployment: `git archive` bundle of v2.22.1 → SFTP → `/opt/lucid-deobf`
+  (named Lucid Deobf per the user's directive; the src itself is already fully
+  rebranded). `npm ci --omit=dev` (90 pkgs, fengari Luau patch applied),
+  engine binary fetched (bypassx_deobf 0.12.0, 144 MB) — `engine.probe()`
+  verified available ON the VPS.
+- `.env` (600 perms): PREFIX=., OWNER_ID, PORT=3000, engine/limits defaults —
+  DISCORD_TOKEN + CLIENT_ID left as placeholders (no token exists in the
+  sandbox; the bot boots and exits with its clear token message until they are
+  filled — pm2 keeps restarting it by design).
+- Process: pm2 7.1.2 → `pm2 start src/index.js --name lucid-deobf
+  --max-memory-restart 900M` + `pm2 save` + root crontab `@reboot pm2
+  resurrect` (no systemd on this box, so cron resurrect replaces pm2 startup).
+- Drive "bot src" links re-checked at request time: still hard ToS-blocked by
+  Google (view/preview/download all refuse) — the deployed src is therefore the
+  canonical Lucid Deobf repo, name already correct.
+- README gained a "Deploy on a VPS (pm2, 24/7)" reference section.
+
 ## v2.22.1 — discord link swap: dc.gg/bypassx → dsc.gg/luciddeobf
 
 **User request: "Change the discord link to https://dsc.gg/luciddeobf"**

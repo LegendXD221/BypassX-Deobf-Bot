@@ -247,6 +247,22 @@ node test/links.js                             # link support: unit + live fetch
 node test/e2e-links.js                         # link → deobf end-to-end (needs engine)
 ```
 
+## Deploy on a VPS (pm2, 24/7)
+
+Reference deployment (Ubuntu 22.04+/Debian 12+, node ≥ 22 from apt):
+
+```bash
+apt-get install -y nodejs npm git ca-certificates cron
+git clone https://github.com/LegendXD221/BypassX-Deobf-Bot.git /opt/lucid-deobf
+cd /opt/lucid-deobf && npm ci --omit=dev && node bin/prepare-engine.js
+cp .env.example .env && nano .env      # DISCORD_TOKEN + CLIENT_ID (+ DATABASE_URL optional)
+npm i -g pm2
+pm2 start src/index.js --name lucid-deobf --time --max-memory-restart 900M
+pm2 save && (crontab -l; echo '@reboot pm2 resurrect') | crontab -
+```
+
+The keep-alive HTTP server listens on `PORT` (default 3000) and answers `/health`; the self-ping layer is Render-specific and disables itself when `PUBLIC_URL` is unset.
+
 ## Deploy on Render (free tier, 24/7)
 
 This repo ships a [Blueprint](render.yaml): **Render → New → Blueprint** → pick the repo → fill `DISCORD_TOKEN` / `CLIENT_ID` / `PUBLIC_URL` → deploy. It runs as a **free web service** (`node bin/prepare-engine.js && node src/index.js`) whose keep-alive HTTP server answers Render health checks.
