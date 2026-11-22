@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — AntiTamper V2 behavioral sanity gate.
+ * Lucid Deobf Bot — AntiTamper V2 behavioral sanity gate.
  *
  * sUNC-style compliance suite that runs INSIDE our own jail: every probe
  * asserts a BEHAVIOR (not just the presence of a global) against the exact

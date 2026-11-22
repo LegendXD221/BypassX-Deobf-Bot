@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — keep-alive HTTP server (Render free tier 24/7).
+ * Lucid Deobf Bot — keep-alive HTTP server (Render free tier 24/7).
  *
  * Render free web services sleep after 15 minutes without INBOUND traffic.
  * Three layers keep the bot awake:
@@ -44,7 +44,7 @@ export function jobStats() {
 function healthJson() {
   return {
     ok: true,
-    service: 'bypassx-deobf-bot',
+    service: 'lucid-deobf-bot',
     version: CONFIG.version,
     uptimeS: Math.round((Date.now() - startedAt) / 1000),
     discordReady: state.discordReady,
@@ -65,7 +65,7 @@ function healthJson() {
 
 function statusPage() {
   const h = healthJson();
-  return `<!doctype html><html><head><title>BypassX Deobf Bot</title>
+  return `<!doctype html><html><head><title>Lucid Deobf Bot</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 body{background:#0b0b12;color:#e5e7eb;font-family:ui-sans-serif,system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
@@ -78,7 +78,7 @@ h1{margin:0 0 4px;font-size:22px;color:#a78bfa}
 .up{background:#14321f;color:#4ade80}.down{background:#321414;color:#f87171}
 a{color:#a78bfa}
 </style></head><body><div class="card">
-<h1>🧩 BypassX Deobf Bot</h1>
+<h1>🧩 Lucid Deobf Bot</h1>
 <div class="sub">The best Discord deobfuscation bot — static analysis, RCE-protected, pastefy delivery</div>
 <div class="row"><span class="k">Status</span><span class="badge up">healthy</span></div>
 <div class="row"><span class="k">Discord</span>${h.discordReady ? '<span class="badge up">connected</span>' : '<span class="badge down">connecting…</span>'}</div>

@@ -55,7 +55,7 @@ export default {
     }
 
     try {
-      const paste = await createPaste({ title: `BypassX Deobf paste — ${filename}`, text });
+      const paste = await createPaste({ title: `Lucid Deobf paste — ${filename}`, text });
       logger.info({ file: filename, bytes: Buffer.byteLength(text) }, 'paste: created');
       return ctx.reply(codeToolReply({
         title: '🧾 Paste created',

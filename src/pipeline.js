@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — deobfuscation pipeline orchestrator.
+ * Lucid Deobf Bot — deobfuscation pipeline orchestrator.
  *
  * detect → route → multi-stage engine run → post-process → result.
  * Stages, timings, and the detection verdict ride along in the result so the
@@ -130,7 +130,7 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
       ? peelSummary(layerStack)
       : (staticLayers.multi ? staticLayers.summary : null);
     // v2.20.0/v2.21.0 — readable-only finalize: forced re-indent (verify-gated)
-    // + final readability re-score + the single canonical BypassX heading via
+    // + final readability re-score + the single canonical Lucid heading via
     // src/finalize.js (idempotent — never doubles).
     return finalizeOutput(best);
   });
@@ -140,14 +140,16 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
 
 // Canonical heading lives in src/finalize.js (spaced variant, HEADING_RE-backed
 // idempotency). Re-exported here for callers that predate the module split.
-import { BYPASSX_HEADING_LUA as BYPASSX_HEADER } from './finalize.js';
-export { BYPASSX_HEADER };
+import { LUCID_HEADING_LUA as LUCID_HEADER } from './finalize.js';
+export { LUCID_HEADER };
+// Pre-rebrand alias.
+export const BYPASSX_HEADER = LUCID_HEADER;
 
 /**
  * Readable-only gate — the LAST thing that touches the delivered code:
  *   1. forced re-indent (beautify) — verify-gated, reverted on any regression;
  *   2. final readability re-score;
- *   3. the exactly-one BypassX heading line (src/finalize.js), then pure code.
+ *   3. the exactly-one Lucid heading line (src/finalize.js), then pure code.
  * Binary outputs skip all three (comments cannot be injected into binaries).
  */
 function finalizeOutput(best) {

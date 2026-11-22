@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — dashboard single-page UI (v2.3 redesign).
+ * Lucid Deobf Bot — dashboard single-page UI (v2.3 redesign).
  *
  * Rendered from src/dashboard.js. Everything is inline (CSP: no external
  * assets). The client script lives inside a template literal, so it must not
@@ -140,7 +140,7 @@ export function renderPage() {
 <style>${CSS}</style></head><body>
 <div class="app">
 <aside class="side">
-  <div class="logo"><div class="mark">🧩</div><div><b>BypassX Deobf</b><small>mission control</small></div></div>
+  <div class="logo"><div class="mark">🧩</div><div><b>Lucid Deobf</b><small>mission control</small></div></div>
   <div class="navlabel">Monitor</div>
   <button class="navbtn on" data-t="ov"><span class="ic">📊</span>Overview</button>
   <button class="navbtn" data-t="lg"><span class="ic">📜</span>Live logs</button>
@@ -306,7 +306,7 @@ function makeOut(rootSel){
   });
   return {
     show: function(text, metaText, dlName){
-      last = { text: String(text == null ? '' : text), name: dlName || 'bypassx-output.txt' };
+      last = { text: String(text == null ? '' : text), name: dlName || 'lucid-output.txt' };
       pre.textContent = last.text; pre.style.display = 'block'; bar.style.display = 'flex';
       meta.textContent = metaText || '';
     },
@@ -376,7 +376,7 @@ function renderHeader(){
   var pin = $('#p-pin');
   pin.textContent = s.pinArmed ? '🔐 PIN armed' : '🔓 no PIN';
   pin.className = 'pill ' + (s.pinArmed ? 'up' : '');
-  $('#sf-ver').textContent = 'BypassX Deobf v' + s.version;
+  $('#sf-ver').textContent = 'Lucid Deobf v' + s.version;
   $('#sf-up').textContent = 'up ' + fmtUp(s.uptimeS) + ' · ' + (s.host ? s.host.node : '');
 }
 function card(title, rows){
@@ -710,7 +710,7 @@ $('#sq-st').addEventListener('click', async function(){
 });
 $('#bk-go').addEventListener('click', function(){
   var a = document.createElement('a');
-  a.href = BASE + '/api/backup'; a.download = 'bypassx-backup.json';
+  a.href = BASE + '/api/backup'; a.download = 'lucid-backup.json';
   document.body.appendChild(a); a.click(); a.remove();
   toast('backup downloading…', 'warn');
 });

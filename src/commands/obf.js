@@ -1,5 +1,5 @@
 /**
- * .obf / /obf — Xfuscator: BypassX's own obfuscator.
+ * .obf / /obf — Xfuscator: Lucid's own obfuscator.
  *
  * Packs a Lua file into a self-decoding Xfuscator build (v1 / v2 / v2.1).
  * Same input UX as .deobf: attachment, link, or reply-to. The output runs on

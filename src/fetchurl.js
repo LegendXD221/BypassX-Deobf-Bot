@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — fetch obfuscated input from a link (v1.2.0 "link support").
+ * Lucid Deobf Bot — fetch obfuscated input from a link (v1.2.0 "link support").
  *
  * Supported hosts:
  *   • Pastefy            pastefy.app/<id>            (API raw content)
@@ -19,7 +19,7 @@ import dns from 'node:dns';
 import net from 'node:net';
 import { CONFIG } from './config.js';
 
-const UA = 'BypassXDeobfBot/1.2 (+https://github.com/LegendXD221/BypassX-Deobf-Bot)';
+const UA = 'LucidDeobfBot/1.2 (+https://github.com/LegendXD221/BypassX-Deobf-Bot)';
 const MAX_REDIRECTS = 5;
 
 // ---- URL helpers ------------------------------------------------------------

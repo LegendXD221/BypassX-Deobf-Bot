@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — unconditional static peel (the "no walls" tier).
+ * Lucid Deobf Bot — unconditional static peel (the "no walls" tier).
  *
  * When the Rust engine cannot lift a VM and the jailed harvester cannot replay
  * the key schedule (MoonVeil 2.x, 77fuscator 0.6.x, GoofyScator, Ironveil,
@@ -509,7 +509,7 @@ function luaLiteral(s) {
 
 function buildLuaOutput({ detected, strings, payloads, structure, sourceBytes, note, blobs }) {
   const lines = [];
-  lines.push('-- BypassX Deobf Bot — best-effort static peel');
+  lines.push('-- Lucid Deobf Bot — best-effort static peel');
   lines.push(`-- Detected: ${detected?.name || 'unknown'}${detected?.version ? ` ${detected.version}` : ''}`);
   lines.push('-- Method: pure-JS static extraction (no VM run, no execution).');
   lines.push('-- Every signal string literal, decoded payload, function name, local');
@@ -574,7 +574,7 @@ function buildJsOutput({ detected, strings, payloads, structure, sourceBytes, no
     .replace(/"/g, '\\"')
     .replace(/[\x00-\x1f]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
   const lines = [];
-  lines.push('// BypassX Deobf Bot — best-effort static peel');
+  lines.push('// Lucid Deobf Bot — best-effort static peel');
   lines.push(`// Detected: ${detected?.name || 'unknown'}${detected?.version ? ` ${detected.version}` : ''}`);
   lines.push('// Method: pure-JS static extraction (no eval, no execution).');
   lines.push('// Every signal string literal, decoded payload, function name, binding,');
@@ -617,7 +617,7 @@ function buildJsOutput({ detected, strings, payloads, structure, sourceBytes, no
 
 function buildBinaryOutput({ detected, strings, sourceBytes, note }) {
   const lines = [];
-  lines.push('-- BypassX Deobf Bot — best-effort static peel (binary)');
+  lines.push('-- Lucid Deobf Bot — best-effort static peel (binary)');
   lines.push(`-- Detected: ${detected?.name || 'unknown'}${detected?.version ? ` ${detected.version}` : ''}`);
   lines.push('-- Method: ASCII / UTF-16LE string sweep (strings(1)-style).');
   if (note) lines.push(`-- Note: ${note}`);
@@ -656,7 +656,7 @@ export function staticPeel(buffer, { detected = null, lang = 'unknown', note = n
     // valid Lua table so the user still gets a paste.
     const errMsg = String(e?.message || e).slice(0, 200).replace(/"/g, "'");
     const fallback = [
-      '-- BypassX Deobf Bot — static peel (safe fallback)',
+      '-- Lucid Deobf Bot — static peel (safe fallback)',
       `-- Detected: ${detected?.name || 'unknown'}${detected?.version ? ` ${detected.version}` : ''}`,
       '-- The extractor hit an internal edge case on this sample; delivering',
       '-- a minimal valid table so the deobf still produces a paste.',

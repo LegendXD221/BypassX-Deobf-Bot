@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — tiny display helpers (no imports, no cycles).
+ * Lucid Deobf Bot — tiny display helpers (no imports, no cycles).
  */
 
 /** Strip the engine's "(commit …)" suffix from version strings shown to users. */

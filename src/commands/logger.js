@@ -91,7 +91,7 @@ export function buildRecordingText(report, { filename = 'input.lua' } = {}) {
   const sources = report.chunks.filter((c) => c.kind === 'source');
   if (sources.length === 1 && report.counts.total === 1 && report.strings.kept.length === 0) {
     return [
-      '--[[ BypassX Deobf — Environment Logger',
+      '--[[ Lucid Deobf — Environment Logger',
       `File: ${filename}`,
       'Verdict: full source captured at load() — the obfuscator decrypted its',
       'own payload and handed it over inside the dumper sandbox.',
@@ -101,7 +101,7 @@ export function buildRecordingText(report, { filename = 'input.lua' } = {}) {
   }
 
   const parts = [[
-    '--[[ BypassX Deobf — Environment Logger recording',
+    '--[[ Lucid Deobf — Environment Logger recording',
     `File: ${filename}`,
     `Verdict: ${report.verdict}`,
     `Chunks captured at load(): ${report.counts.total} (${report.counts.sources} source, ${report.counts.bytecode} bytecode, ${report.counts.data} data)`,
@@ -185,7 +185,7 @@ export async function runLogger(ctx, { lift = liftVM } = {}) {
     let paste = null;
     try {
       paste = await createPaste({
-        title: `BypassX Deobf — Environment Logger — ${att.filename}`,
+        title: `Lucid Deobf — Environment Logger — ${att.filename}`,
         text: recordingText,
       });
     } catch (e) {

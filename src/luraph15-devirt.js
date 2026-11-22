@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — Luraph v15.1 devirtualizer (replay + disassembly).
+ * Lucid Deobf Bot — Luraph v15.1 devirtualizer (replay + disassembly).
  *
  * Consumes the real-Luau capture (decrypt-event log + VM checkpoints) and
  * produces the readable devirtualization view:
@@ -342,7 +342,7 @@ export function devirtFromCapture(capture, { detectedName = 'Luraph', version = 
   }
 
   const code = [
-    '-- ══ BypassX Deobf Bot — Luraph ' + version + ' devirtualization (real-Luau VM capture) ══',
+    '-- ══ Lucid Deobf Bot — Luraph ' + version + ' devirtualization (real-Luau VM capture) ══',
     `-- family: ${detectedName} ${version} · streams: ${streams.length} · instructions: ${totalInstr} · decrypted at runtime: ${totalDecrypted}/${totalInstr}`,
     `-- decrypt events replayed: ${totalApplied} · const strings recovered: ${consts.length}`,
     '-- method: the obfuscated file ran inside the bundled real Luau runtime with its',

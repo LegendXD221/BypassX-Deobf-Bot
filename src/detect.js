@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — obfuscator / packer auto-detection with confidence %.
+ * Lucid Deobf Bot — obfuscator / packer auto-detection with confidence %.
  *
  * Detection model: every service has weighted byte-level indicators. We scan
  * the first 256 KB (plus the last 64 KB — some obfuscators put their banner

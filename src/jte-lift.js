@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — jte bytecode-lift adapter (v2.14.0).
+ * Lucid Deobf Bot — jte bytecode-lift adapter (v2.14.0).
  *
  * research/jte-lua-decompiler/ vendors a reference-grade Rust decompiler
  * (Lua 5.1–5.5 / LuaJIT / Luau v3–14 bytecode → CFG → structured AST →

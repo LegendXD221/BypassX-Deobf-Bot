@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — webcrack worker (isolated child process).
+ * Lucid Deobf Bot — webcrack worker (isolated child process).
  *
  * Runs in a separate node process so a pathological input that trips a
  * babel/webcrack crash cannot take the bot down. Spawned via spawnHardened

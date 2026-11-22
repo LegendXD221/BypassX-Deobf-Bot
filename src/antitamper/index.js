@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — AntiTamper V2 orchestrator.
+ * Lucid Deobf Bot — AntiTamper V2 orchestrator.
  *
  * Single entry point for the whole engine:
  *

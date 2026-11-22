@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — Luraph v14.x payload-VM lifter v2 (instruction → Lua source).
+ * Lucid Deobf Bot — Luraph v14.x payload-VM lifter v2 (instruction → Lua source).
  *
  * Turns the deserialized VM program (captured by luraph14.js's state dump) into
  * genuinely readable, structured Lua source. Pipeline:
@@ -1047,7 +1047,7 @@ export function liftVmProgram(graph) {
   // pass 2: document
   const L = [];
   L.push('-- =============================================================================');
-  L.push('-- BypassX Deobf Bot — Luraph payload VM: FULL DEVIRTUALIZATION');
+  L.push('-- Lucid Deobf Bot — Luraph payload VM: FULL DEVIRTUALIZATION');
   const reachTotal = [...emitted.values()].reduce((s, e) => s + e.stats.reachableIns, 0);
   const decoyTotal = [...emitted.values()].reduce((s, e) => s + e.stats.decoys, 0);
   const degradedTotal = [...emitted.values()].reduce((s, e) => s + e.stats.degraded, 0);

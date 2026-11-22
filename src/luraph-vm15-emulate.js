@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — Luraph v15.1 inner-VM emulator (loop-1 v-dispatch).
+ * Lucid Deobf Bot — Luraph v15.1 inner-VM emulator (loop-1 v-dispatch).
  *
  * Exactly emulates the captured interpreter semantics over the real-Luau
  * capture (k/s/L/O/Y/c/r + y[4] buffer + y[5] consts), including all three

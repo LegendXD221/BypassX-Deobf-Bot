@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — multi-layer obfuscation analysis (v2.4.0).
+ * Lucid Deobf Bot — multi-layer obfuscation analysis (v2.4.0).
  *
  * Two questions, asked at different times in the pipeline:
  *

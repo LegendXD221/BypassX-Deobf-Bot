@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — VM lifter worker (jailed fengari, "lifting run").
+ * Lucid Deobf Bot — VM lifter worker (jailed fengari, "lifting run").
  *
  * For VM-obfuscated builds (Luraph v15.x if-chain VMs, MoonSec V2/V3 escrow
  * table-dispatch VMs, IronBrew/PSU/77f-style row VMs) the obfuscator's own

@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — external Luraph v15 devirtualizer (vendored engine).
+ * Lucid Deobf Bot — external Luraph v15 devirtualizer (vendored engine).
  *
  * Vendors caomod2077/Deobfuscator-Luraph-V15 (MIT) under vendor/luraph-v15/
  * and exposes it as a full-source recovery stage for Luraph v15/v14 builds.
@@ -193,7 +193,7 @@ function parseTraceBody(body) {
 /** Render the recovered trace as one readable Lua file. */
 export function traceToLua({ parts, urls, chunks, runStatus, version }) {
   const head = [
-    '-- BypassX Deobf Bot — Luraph behaviour-trace recovery',
+    '-- Lucid Deobf Bot — Luraph behaviour-trace recovery',
     `-- Family: Luraph ${version || 'v14.x'} (payload VM)`,
     '-- Method: the protected build ran inside the vendored offline emulator;',
     '-- every statement it executed was recorded and re-emitted below verbatim.',

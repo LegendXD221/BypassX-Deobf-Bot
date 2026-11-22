@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — Luau → plain Lua 5.x text-level shim.
+ * Lucid Deobf Bot — Luau → plain Lua 5.x text-level shim.
  *
  * Roblox-targeted obfuscated files (MoonSec V2/V3 Luau builds, Luraph luau,
  * 25ms…) use Luau-only syntax that standard Lua VMs reject:

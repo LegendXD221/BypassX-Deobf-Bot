@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — AntiTamper V2 static neutralizer.
+ * Lucid Deobf Bot — AntiTamper V2 static neutralizer.
  *
  * Defuses anti-tamper kill switches in the source BEFORE any dynamic run:
  *

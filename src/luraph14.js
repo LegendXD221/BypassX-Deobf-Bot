@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — Luraph v14.x VM devirtualizer (runtime-state capture).
+ * Lucid Deobf Bot — Luraph v14.x VM devirtualizer (runtime-state capture).
  *
  * Luraph v14.4.2 ships a payload VM: the file is `return({...}):Cp()(...)` — a
  * table of scrambled op-handlers + an LPH#-framed base85 payload. Static
@@ -459,7 +459,7 @@ export async function runLuraph14Devirt(sampleText, { timeoutMs = 120_000, versi
     } : null;
 
     const L = [];
-    L.push('-- ============================== Luraph v14 devirtualization (BypassX) ==============================');
+    L.push('-- ============================== Luraph v14 devirtualization (Lucid) ==============================');
     L.push(`-- Family: Luraph ${version} payload VM — multi-layer peel, runtime-state capture method.`);
     L.push('-- The build\'s own VM ran inside the offline emulator with its interpreter instrumented:');
     L.push('--   * the deserialized program (protos, opcode maps, operand columns, pools) was dumped;');

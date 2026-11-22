@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — dynamic constant harvest bridge.
+ * Lucid Deobf Bot — dynamic constant harvest bridge.
  *
  * Runs harvester-worker.js (jailed fengari Lua VM) through spawnHardened and
  * parses its single JSON result line. Used as the fallback tier when the
@@ -133,7 +133,7 @@ export function reconstructPool(strings) {
 export function harvestToLua(h, { detectedName, version } = {}) {
   const { kept, dropped } = reconstructPool(h.strings);
   // v2.20.0 — readable-only finalize: the multi-line banner is gone; the
-  // single BypassX heading is prepended by src/finalize.js and the code body
+  // single Lucid heading is prepended by src/finalize.js and the code body
   // (the recovered pool) follows it directly.
   const header = [
     'local STRINGS = {',

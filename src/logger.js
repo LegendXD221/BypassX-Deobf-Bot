@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — minimal dependency-free structured logger
+ * Lucid Deobf Bot — minimal dependency-free structured logger
  * with an in-memory ring buffer for the owner-only `.logs` command.
  */
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };

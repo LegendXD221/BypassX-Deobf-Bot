@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — Rust engine bridge.
+ * Lucid Deobf Bot — Rust engine bridge.
  *
  * Wraps the precompiled `bypassx-deobf` CLI (static deobfuscation engine,
  * engine 0.12.0 / 64 crates) with:

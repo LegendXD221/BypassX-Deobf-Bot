@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — per-service command catalog (single source of truth).
+ * Lucid Deobf Bot — per-service command catalog (single source of truth).
  *
  * Every supported obfuscator gets its own Discord command (.lph, .ms3, .ms2, …)
  * that FORCES the pipeline onto that family instead of trusting auto-detection.

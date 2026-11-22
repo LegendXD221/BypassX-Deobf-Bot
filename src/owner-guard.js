@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — 5-layer owner protection for dangerous commands.
+ * Lucid Deobf Bot — 5-layer owner protection for dangerous commands.
  *
  *  ┌──────────────────────────────────────────────────────────────────────┐
  *  │ L1  IDENTITY      exact user-id match (CONFIG.ownerId). No roles,    │

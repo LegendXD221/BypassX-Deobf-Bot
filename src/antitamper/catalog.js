@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — AntiTamper V2 vector catalog.
+ * Lucid Deobf Bot — AntiTamper V2 vector catalog.
  *
  * The intelligence database. Every known anti-tamper / integrity-check /
  * environment-validation vector used by the 16 supported obfuscator families

@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — readability engine (v2.4.0).
+ * Lucid Deobf Bot — readability engine (v2.4.0).
  *
  * "Readable" is enforced, not hoped for. After the peel loop recovers source,
  * these verify-gated passes run before delivery:

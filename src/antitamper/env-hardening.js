@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — AntiTamper V2 environment hardening.
+ * Lucid Deobf Bot — AntiTamper V2 environment hardening.
  *
  * Two Lua layers, composed per run:
  *

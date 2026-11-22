@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — Luraph v15.x payload devirtualization stage.
+ * Lucid Deobf Bot — Luraph v15.x payload devirtualization stage.
  *
  * The Rust engine (0.12.0) peels the v15.x wire format (quoted carrier +
  * ascii85) and returns a chunk inventory plus the raw VM payload. This module
@@ -118,7 +118,7 @@ export function looksLikeLuraphInventory(text) {
 export function formatReport(parsed, carriers, { version } = {}) {
   const lines = [
     '',
-    '-- ---- BypassX Deobf Bot: Luraph ' + (version || 'v15.x') + ' devirtualization report ----',
+    '-- ---- Lucid Deobf Bot: Luraph ' + (version || 'v15.x') + ' devirtualization report ----',
     `-- payload: ${parsed.total} bytes in ${parsed.records.length} records${parsed.trailing ? ` (+${parsed.trailing} trailing bytes)` : ''}`,
     ...parsed.records.map((r, i) =>
       `-- record ${i}: off=${r.offset} size=${r.size} entropy=${r.entropy} hdr=${r.keySeedHex} tag=${r.tagHex} sha256=${r.sha256}${r.lzmaLike ? ' (lzma-like)' : ''}`),

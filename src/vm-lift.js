@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — VM lift transpiler.
+ * Lucid Deobf Bot — VM lift transpiler.
  *
  * Consumes the vm-lift-worker's capture (snap: {mode, rows, opids, instrs,
  * consts} + probes: [{op, ev:[...]}]) and produces REAL Lua source:
@@ -264,7 +264,7 @@ export function liftFromHarvest(lift, { detectedName = 'VM', version = '' } = {}
   // emit
   const maxReg = Math.min(24, Math.max(4, ...rows.map((r) => Math.min(r.length - 1, 4))));
   const L = [];
-  L.push('-- ══ BypassX Deobf Bot — VM devirtualization (behavioral opcode lifting) ══');
+  L.push('-- ══ Lucid Deobf Bot — VM devirtualization (behavioral opcode lifting) ══');
   L.push(`-- family: ${detectedName}${version ? ' ' + version : ''} · layout: ${snap.mode} · instructions: ${rows.length}`);
   L.push(`-- opcodes: ${classified}/${realOpIds.length} classified${unknown.length ? ` (unclassified: ${unknown.join(', ')})` : ''}`);
   L.push(`-- structure: ${blocks.length} block(s) · ${brancherCount} branch edge(s) — one dispatch per block, straight-line code emitted linearly`);

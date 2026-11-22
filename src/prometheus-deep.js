@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — Prometheus deep static pass (v2.13.0).
+ * Lucid Deobf Bot — Prometheus deep static pass (v2.13.0).
  *
  * Closes the gap the engine's lua-peel leaves on Prometheus (Weak preset and
  * lineage builds): today that route returns only the decrypted string pool —

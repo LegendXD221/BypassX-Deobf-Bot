@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — Neon Postgres (free tier) persistence layer.
+ * Lucid Deobf Bot — Neon Postgres (free tier) persistence layer.
  *
  * Activated purely by the presence of DATABASE_URL (Neon connection string,
  * e.g. postgresql://user:pass@ep-xxx-pooler.region.aws.neon.tech/neondb?sslmode=require).

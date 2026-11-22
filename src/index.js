@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — Discord client entry point.
+ * Lucid Deobf Bot — Discord client entry point.
  *
  * Supports both prefix commands (.deobf …) and slash commands (/deobf …).
  * Slash commands self-register on ready (global; + instant per-guild when

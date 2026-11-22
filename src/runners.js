@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — shared owner-power runners (Discord commands + dashboard).
+ * Lucid Deobf Bot — shared owner-power runners (Discord commands + dashboard).
  * Every runner is single-purpose, bounded, and audit-friendly.
  */
 import path from 'node:path';
@@ -90,7 +90,7 @@ export async function broadcastAll(client, text, { isBlacklisted = null } = {}) 
         ? g.systemChannel
         : g.channels.cache.find((c) => c.isTextBased() && c.viewable && c.permissionsFor(me)?.has(['SendMessages', 'ViewChannel']));
       if (!ch) { failed += 1; continue; }
-      await ch.send({ content: `📣 **BypassX Deobf** — ${text}` });
+      await ch.send({ content: `📣 **Lucid Deobf** — ${text}` });
       sent += 1;
       await new Promise((r) => setTimeout(r, 250)); // gentle pace (rate limits)
     } catch {

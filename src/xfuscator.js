@@ -1,5 +1,5 @@
 /**
- * Xfuscator — BypassX's own Lua obfuscator (v1 / v2 / v2.1).
+ * Xfuscator — Lucid's own Lua obfuscator (v1 / v2 / v2.1).
  *
  * Design hardened against the exact attack surfaces that cracked the five
  * families in v2.18.0 (junkie / luarmor / moonveil / somecool / luraph):

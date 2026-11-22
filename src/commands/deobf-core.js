@@ -95,7 +95,7 @@ export async function runDeobfJob(ctx, { commandName = 'deobf', forced = null } 
     if (!result.binaryOutput) {
       try {
         paste = await createPaste({
-          title: `BypassX Deobf — ${result.detected.name}${result.detected.version ? ` ${result.detected.version}` : ''} — ${att.filename}`,
+          title: `Lucid Deobf — ${result.detected.name}${result.detected.version ? ` ${result.detected.version}` : ''} — ${att.filename}`,
           text: result.code,
         });
       } catch (e) {

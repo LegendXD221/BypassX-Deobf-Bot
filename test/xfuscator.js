@@ -1,5 +1,5 @@
 /**
- * Xfuscator (v2.20.0) — BypassX's own obfuscator.
+ * Xfuscator (v2.20.0) — Lucid's own obfuscator.
  *
  * Proves the full chain for every build (v1 / v2 / v2.1):
  *   1. JS mirror decode(encrypt(src)) === src (the emit gate);

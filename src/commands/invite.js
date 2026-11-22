@@ -7,7 +7,7 @@ import { PermissionFlagsBits } from 'discord.js';
 
 export default {
   name: 'invite',
-  description: 'Get the invite link for BypassX Deobf',
+  description: 'Get the invite link for Lucid Deobf',
   usage: '.invite',
   slash: { options: [] },
 

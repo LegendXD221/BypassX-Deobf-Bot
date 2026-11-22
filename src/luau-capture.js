@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — Luraph v15.1 real-Luau capture stage.
+ * Lucid Deobf Bot — Luraph v15.1 real-Luau capture stage.
  *
  * Runs the sample inside the bundled real Luau CLI with two instrumentation
  * layers (both injected by source transform, no monkey-patching — the CLI

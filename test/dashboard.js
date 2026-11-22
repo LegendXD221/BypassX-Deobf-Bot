@@ -23,7 +23,7 @@ const fakeGuild = {
   channels: { cache: new Map([['ch1', { id: 'ch1', name: 'general', isTextBased: () => true, viewable: true }]]) },
 };
 const fakeClient = {
-  user: { tag: 'BypassX Deobf#0267', id: '1568531740530581586' },
+  user: { tag: 'Lucid Deobf#0267', id: '1568531740530581586' },
   ws: { ping: 42 },
   guilds: { cache: new Map([[guildId, fakeGuild]]), has: (id) => id === guildId, get: (id) => (id === guildId ? fakeGuild : null) },
   channels: { fetch: async () => { throw new Error('nope'); } },
@@ -99,7 +99,7 @@ assert.equal(st.guilds.length, 1, 'state: guild list');
 assert.equal(st.guilds[0].name, 'Test Guild ‹emo› & <stuff>', 'state: guild name');
 assert.equal(st.guilds[0].memberCount, 421337, 'state: member count');
 assert.ok(st.guilds[0].channels.some((c) => c.id === 'ch1'), 'state: guild channels exposed');
-assert.equal(st.botTag, 'BypassX Deobf#0267', 'state: bot tag');
+assert.equal(st.botTag, 'Lucid Deobf#0267', 'state: bot tag');
 assert.ok(st.db && 'breaker' in st.db, 'state: db breaker info present');
 console.log('guild list + state: ok');
 

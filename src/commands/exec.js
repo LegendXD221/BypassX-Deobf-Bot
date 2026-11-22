@@ -36,7 +36,7 @@ export default {
     if (output.length > 1500) {
       let paste = null;
       try {
-        paste = await createPaste({ title: `BypassX Deobf — exec output (${ms}ms)`, text: output });
+        paste = await createPaste({ title: `Lucid Deobf — exec output (${ms}ms)`, text: output });
       } catch { /* file attachment still carries it */ }
       return ctx.reply(ownerOutputReply({
         title: 'exec', ok, input: cmd,

@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — configuration from environment.
+ * Lucid Deobf Bot — configuration from environment.
  */
 import path from 'node:path';
 import fs from 'node:fs';

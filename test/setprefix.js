@@ -101,11 +101,11 @@ await check('readable finalize produces heading + code only', () => {
   const out = finalizeReadable('print(1)');
   const lines = out.split('\n');
   assert.equal(lines.length, 2, `exactly heading + code: ${JSON.stringify(lines)}`);
-  assert.ok(lines[0].startsWith('-- This File Was Deobfuscated By BypassX Deobf. discord - https://dc.gg/bypassx'), 'heading text');
+  assert.ok(lines[0].startsWith('-- This File Was Deobfuscated By Lucid Deobf. discord - https://dc.gg/bypassx'), 'heading text');
   assert.equal(lines[1], 'print(1)');
   // idempotent — and the no-space variant collapses onto the canonical one
   assert.equal(finalizeReadable(out), out);
-  assert.equal(finalizeReadable('--This File Was Deobfuscated By BypassX Deobf. discord - https://dc.gg/bypassx\nprint(1)'), out);
+  assert.equal(finalizeReadable('--This File Was Deobfuscated By Lucid Deobf. discord - https://dc.gg/bypassx\nprint(1)'), out);
 });
 
 console.log(`\nsetprefix: ${pass} passed, ${fail} failed`);

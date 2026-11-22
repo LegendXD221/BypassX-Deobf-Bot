@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — output accuracy verification (v1.3.0).
+ * Lucid Deobf Bot — output accuracy verification (v1.3.0).
  *
  * The bot claims 100% accurate output; this module is how we enforce and
  * prove it. Every recovered file is parsed (never executed):

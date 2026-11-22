@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — post-processing passes for recovered code.
+ * Lucid Deobf Bot — post-processing passes for recovered code.
  *
  * Output purity policy: the delivered code contains ONLY deobfuscated source.
  * No "honest wall" banners, no string-aggregate headers, no engine chatter.
@@ -24,7 +24,7 @@ const JS_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.jsx', '.tsx']);
 // same line-local semantics and stays linear.
 const NW = '[^\\S\n]';
 const WALL_HEADER_RE = new RegExp(`^${NW}*--${NW}*=+${NW}*\n(?:^${NW}*--${NW}.*\n){0,12}^${NW}*--${NW}*=+${NW}*\n`, 'gm');
-const HONEST_WALL_RE = new RegExp(`^${NW}*--${NW}*BypassX\\s+Deobf\\s*[—:-]\\s+.*?(?:honest wall|annotated VM dump|stop-gap|VM dump|Pending|envelope payload decoded).*?\n(?:^${NW}*--.*\n){0,8}`, 'gim');
+const HONEST_WALL_RE = new RegExp(`^${NW}*--${NW}*(?:Lucid|BypassX)\\s+Deobf\\s*[—:-]\\s+.*?(?:honest wall|annotated VM dump|stop-gap|VM dump|Pending|envelope payload decoded).*?\n(?:^${NW}*--.*\n){0,8}`, 'gim');
 
 function stripWallMarkers(text) {
   let out = text.replace(HONEST_WALL_RE, '');

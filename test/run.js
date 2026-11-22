@@ -65,7 +65,7 @@ for (const file of files) {
 
   try {
     const paste = await createPaste({
-      title: `BypassX Deobf Bot test — ${result.detected.name} — ${file.split('/').pop()}`,
+      title: `Lucid Deobf Bot test — ${result.detected.name} — ${file.split('/').pop()}`,
       text: result.code,
     });
     console.log(`  paste: ${paste.url}`);

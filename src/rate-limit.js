@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — simple per-user cooldown.
+ * Lucid Deobf Bot — simple per-user cooldown.
  */
 import { CONFIG } from './config.js';
 

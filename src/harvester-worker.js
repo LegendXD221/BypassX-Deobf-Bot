@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — dynamic constant harvester worker (jailed fengari VM).
+ * Lucid Deobf Bot — dynamic constant harvester worker (jailed fengari VM).
  *
  * For escrow/anti-tamper VM builds (MoonSec V2/V3 escrow, Luraph v15.x, …) the
  * constant pool is decrypted at VM-INIT time. We run ONLY that deterministic

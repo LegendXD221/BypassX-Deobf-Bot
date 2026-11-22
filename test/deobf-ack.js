@@ -21,7 +21,7 @@ const USER_ID = '987654321'; // used only by the cooldown test
 const uid = (n) => `11100000000${n}`; // unique per check — cooldowns are per-user
 const calls = [];
 // Captured Pastefy POST bodies — used to pin the v2.20.0 delivery policy:
-// the paste is the ONE BypassX header line + the deobfuscated code, nothing else.
+// the paste is the ONE Lucid header line + the deobfuscated code, nothing else.
 const pasteBodies = [];
 
 // ---- fetch router: attachment download + pastefy upload, everything else 404
@@ -123,14 +123,14 @@ await check('cooldown path: no status placeholder, ephemeral card via reply', as
   assert.ok(!calls.some((c) => c.includes('deobfuscating Your Code')), 'no status on cooldown');
 });
 
-await check('v2.20.0 delivery policy: paste = exactly one BypassX header line + readable code', async () => {
+await check('v2.20.0 delivery policy: paste = exactly one Lucid header line + readable code', async () => {
   calls.length = 0;
   pasteBodies.length = 0;
   const interaction = mockInteraction(uid(7));
   await deobf.run(makeCtx({ interaction, client: {} }));
   assert.ok(pasteBodies.length >= 1, 'pastefy upload must happen for this input');
   const text = pasteBodies[0].content || pasteBodies[0].text || '';
-  const HEADER = 'This File Was Deobfuscated By BypassX Deobf. discord - https://dc.gg/bypassx';
+  const HEADER = 'This File Was Deobfuscated By Lucid Deobf. discord - https://dc.gg/bypassx';
   assert.ok(text.startsWith(`-- ${HEADER}\n`), `paste must open with the exact header comment, got: ${JSON.stringify(text.slice(0, 120))}`);
   const headerCount = text.split(HEADER).length - 1;
   assert.equal(headerCount, 1, 'header must appear exactly once');

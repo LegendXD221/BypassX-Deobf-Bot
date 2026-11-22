@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — shared jailed-sandbox Lua prelude.
+ * Lucid Deobf Bot — shared jailed-sandbox Lua prelude.
  *
  * Installed in EVERY fengari worker before the sample runs. One source of
  * truth so the harvester and the VM lifter run in byte-identical jails:

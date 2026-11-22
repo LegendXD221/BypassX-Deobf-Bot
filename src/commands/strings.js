@@ -62,7 +62,7 @@ export default {
     const table = found.map((s, i) => `${String(i + 1).padStart(4)} | ${s.replace(/\n/g, '\\n').slice(0, 200)}`).join('\n');
     let paste = null;
     try {
-      paste = await createPaste({ title: `BypassX Deobf strings — ${att.filename || 'file'}`, text: table });
+      paste = await createPaste({ title: `Lucid Deobf strings — ${att.filename || 'file'}`, text: table });
     } catch { /* deliver attachment only */ }
 
     return ctx.reply(codeToolReply({

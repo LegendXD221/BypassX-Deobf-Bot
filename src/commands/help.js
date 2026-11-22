@@ -5,7 +5,7 @@ import { helpReply } from '../replies.js';
 
 export default {
   name: 'help',
-  description: 'How to use BypassX Deobf',
+  description: 'How to use Lucid Deobf',
   usage: '.help',
   slash: { options: [] },
 

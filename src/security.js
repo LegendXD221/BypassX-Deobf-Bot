@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — RCE / sandboxing hardening for the deobf engine bridge.
+ * Lucid Deobf Bot — RCE / sandboxing hardening for the deobf engine bridge.
  *
  * The engine is a static-analysis Rust binary (it never executes the sample).
  * Defence-in-depth anyway:

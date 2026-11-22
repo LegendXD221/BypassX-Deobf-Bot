@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — Discord reply builders (Components V2).
+ * Lucid Deobf Bot — Discord reply builders (Components V2).
  *
  * Design system (v1.3.0 "clean & professional"):
  *   Every card follows the same disciplined structure:
@@ -27,7 +27,7 @@ export const BRAND = {
   ok: 0x22c55e,
   warn: 0xf59e0b,
   err: 0xef4444,
-  name: 'BypassX Deobf',
+  name: 'Lucid Deobf',
 };
 
 // ---- low-level helpers ------------------------------------------------------
@@ -116,7 +116,7 @@ function facts(c, rows) {
 export function helpReply(prefix, client) {
   const highlights = SERVICES.slice(0, 10).map((s) => s.name).join(' • ');
   const card = container(BRAND.color, (c) => {
-    brandHeader(c, '🧩 BypassX Deobf — help',
+    brandHeader(c, '🧩 Lucid Deobf — help',
       'Send an obfuscated file or a link — get back only the deobfuscated code, verified for syntax.', client);
     c.addSeparatorComponents(SEP());
     c.addTextDisplayComponents(T([
@@ -441,10 +441,10 @@ export function pongReply({ wsPing, uptimeS, engine, version, guilds }) {
 
 export function inviteReply(url) {
   const card = container(BRAND.color, (c) => {
-    brandHeader(c, '➕ Add BypassX Deobf', 'One click — works everywhere', null);
+    brandHeader(c, '➕ Add Lucid Deobf', 'One click — works everywhere', null);
     c.addSeparatorComponents(SEP());
     c.addTextDisplayComponents(T('**Permissions needed** Send Messages • Attach Files • Read Message History.'));
-    c.addActionRowComponents(linkRow([{ label: 'Invite BypassX Deobf', url }]));
+    c.addActionRowComponents(linkRow([{ label: 'Invite Lucid Deobf', url }]));
   });
   return v2([card]);
 }

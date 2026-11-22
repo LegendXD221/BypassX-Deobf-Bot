@@ -1,5 +1,5 @@
 /**
- * BypassX Deobf Bot — SECRET owner dashboard (v2.3 "mission control").
+ * Lucid Deobf Bot — SECRET owner dashboard (v2.3 "mission control").
  *
  * ONE layer matters most: the URL itself is the credential.
  *   https://<service>.onrender.com/dash/<DASHBOARD_TOKEN>
@@ -406,7 +406,7 @@ async function routeApi(req, res, route, search = new URLSearchParams()) {
       await audit('dash-backup', Object.entries(dump).map(([k, v]) => `${k}:${Array.isArray(v) ? v.length : 'err'}`).join(' '));
       res.writeHead(200, {
         'content-type': 'application/json; charset=utf-8',
-        'content-disposition': `attachment; filename="bypassx-backup-${new Date().toISOString().slice(0, 10)}.json"`,
+        'content-disposition': `attachment; filename="lucid-backup-${new Date().toISOString().slice(0, 10)}.json"`,
         ...SECURITY_HEADERS,
       });
       return res.end(JSON.stringify({ exportedAt: new Date().toISOString(), version: CONFIG.version, tables: dump }, null, 1));
