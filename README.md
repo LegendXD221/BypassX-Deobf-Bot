@@ -10,7 +10,7 @@ Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) sta
 
 - **Components V2 UI** — every reply is a modern Discord Components V2 card (accent-colored container, sections, separators, link buttons, inline file cards).
 - **Auto-detect with confidence %** — weighted byte-signature detection across 27 services; the bot tells you *what* obfuscated the file and *how sure* it is (e.g. `Luraph v15.1 — 99%`).
-- **Pure code output with one brand line** — every delivery opens with exactly one header line — `-- This File Was Deobfuscated By Lucid Deobf. discord - https://dc.gg/bypassx` — followed by the deobfuscated code and nothing else. The code itself is forced through a final readable-only gate (re-indent, verify-gated) before it ships.
+- **Pure code output with one brand line** — every delivery opens with exactly one header line — `-- This File Was Deobfuscated By Lucid Deobf. discord - https://dsc.gg/luciddeobf` — followed by the deobfuscated code and nothing else. The code itself is forced through a final readable-only gate (re-indent, verify-gated) before it ships.
 - **Multi-stage recovery** — targeted family peel → generic auto pipeline (packer chains included) → full 14-family Lua sweep. Fallbacks are automatic and reported in the reply embed.
 - **Prefix + slash commands** — `.deobf` and `/deobf` both work everywhere.
 - **Dynamic constant harvest (last tier)** — for escrow/anti-tamper VM builds the bot runs ONLY the VM's decryption init inside a jailed fengari Lua VM (no host access, no network, instruction budget + hard SIGKILL) and captures the decrypted string pool — so even "impossible" builds deliver their constants instead of nothing.

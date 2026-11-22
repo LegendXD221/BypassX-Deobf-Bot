@@ -1,6 +1,25 @@
 # WorklogBot — Lucid Deobf Bot
 
 
+## v2.22.1 — discord link swap: dc.gg/bypassx → dsc.gg/luciddeobf
+
+**User request: "Change the discord link to https://dsc.gg/luciddeobf"**
+
+- All delivery headers now carry the new invite:
+  - deobf heading (src/finalize.js LUCID_HEADING_LUA/JS):
+    `-- This File Was Deobfuscated By Lucid Deobf. discord - https://dsc.gg/luciddeobf`
+  - Xfuscator obf header (src/xfuscator.js XF_DISCORD):
+    `--This File Was Obfuscated By Xfuscator (vX). discord- https://dsc.gg/luciddeobf`
+- HEADING_RE upgraded to accept BOTH links
+  (`dsc.gg/luciddeobf` | legacy `dc.gg/bypassx`) × both brands
+  (`Lucid` | legacy `BypassX`) — so any heading variant from earlier versions
+  still collapses onto exactly one canonical Lucid+dsc.gg line, never
+  duplicates.
+- Test pins updated (xfuscator invite assert, setprefix heading pins,
+  deobf-ack delivery-policy HEADER); README header-line doc updated.
+- ALL 24 TEST SUITES PASSED. Live check: fresh input → new link; legacy
+  BypassX/old-link headings → normalized to the new canonical in 2 lines.
+
 ## v2.22.0 — full rebrand: BypassX Deobf → Lucid Deobf (+ Drive bot-src retrieval attempt)
 
 **User request: "Here is the bot src this is important… Our BypassX Deobf Will Now Be Called Lucid Deobf"**

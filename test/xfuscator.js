@@ -136,7 +136,7 @@ for (const version of XFUSCATOR_VERSIONS) {
     assert.equal(lines[0], xfuscatorHeader(version), 'first line must be the exact header');
     const count = r.code.split(xfuscatorHeader(version)).length - 1;
     assert.equal(count, 1, 'header must appear exactly once');
-    assert.ok(r.code.includes('dc.gg/bypassx'));
+    assert.ok(r.code.includes('dsc.gg/luciddeobf'));
   });
 
   await check(`${tag}: emitted loader compiles in fengari`, () => {

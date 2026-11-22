@@ -2,7 +2,7 @@
  * Lucid Deobf Bot — readable-only finalizer.
  *
  * Every deobf deliverable leaves the pipeline in EXACTLY this shape:
- *   line 1: -- This File Was Deobfuscated By Lucid Deobf. discord - https://dc.gg/bypassx
+ *   line 1: -- This File Was Deobfuscated By Lucid Deobf. discord - https://dsc.gg/luciddeobf
  *   lines 2+: the deobfuscated code. Nothing else.
  *
  * Multiple banner/comment headers from earlier stages are collapsed so the
@@ -12,12 +12,12 @@
  * heading; the regex still recognizes legacy "BypassX Deobf" heading lines so
  * old deliveries normalize onto exactly one canonical Lucid line.
  */
-export const LUCID_HEADING_LUA = '-- This File Was Deobfuscated By Lucid Deobf. discord - https://dc.gg/bypassx';
-export const LUCID_HEADING_JS = '// This File Was Deobfuscated By Lucid Deobf. discord - https://dc.gg/bypassx';
+export const LUCID_HEADING_LUA = '-- This File Was Deobfuscated By Lucid Deobf. discord - https://dsc.gg/luciddeobf';
+export const LUCID_HEADING_JS = '// This File Was Deobfuscated By Lucid Deobf. discord - https://dsc.gg/luciddeobf';
 // Back-compat aliases (pre-rebrand symbol names).
 export const BYPASSX_HEADING_LUA = LUCID_HEADING_LUA;
 export const BYPASSX_HEADING_JS = LUCID_HEADING_JS;
-const HEADING_RE = /^\s*(?:--|\/\/)\s*This File Was Deobfuscated By (?:Lucid|BypassX)\s+Deobf\.?\s*discord\s*-\s*https?:\/\/dc\.gg\/bypassx\s*$/i;
+const HEADING_RE = /^\s*(?:--|\/\/)\s*This File Was Deobfuscated By (?:Lucid|BypassX)\s+Deobf\.?\s*discord\s*-\s*https?:\/\/(?:dsc\.gg\/luciddeobf|dc\.gg\/bypassx)\s*$/i;
 
 /**
  * Prepend/normalize the Lucid heading on deobfuscated code.

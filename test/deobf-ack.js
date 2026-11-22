@@ -130,7 +130,7 @@ await check('v2.20.0 delivery policy: paste = exactly one Lucid header line + re
   await deobf.run(makeCtx({ interaction, client: {} }));
   assert.ok(pasteBodies.length >= 1, 'pastefy upload must happen for this input');
   const text = pasteBodies[0].content || pasteBodies[0].text || '';
-  const HEADER = 'This File Was Deobfuscated By Lucid Deobf. discord - https://dc.gg/bypassx';
+  const HEADER = 'This File Was Deobfuscated By Lucid Deobf. discord - https://dsc.gg/luciddeobf';
   assert.ok(text.startsWith(`-- ${HEADER}\n`), `paste must open with the exact header comment, got: ${JSON.stringify(text.slice(0, 120))}`);
   const headerCount = text.split(HEADER).length - 1;
   assert.equal(headerCount, 1, 'header must appear exactly once');

@@ -42,7 +42,7 @@ export const XFUSCATOR_VERSIONS = ['v1', 'v2', 'v2.1'];
 export const XFUSCATOR_DEFAULT = 'v2.1';
 
 export const XF_HEADER_PREFIX = 'This File Was Obfuscated By Xfuscator';
-export const XF_DISCORD = 'discord- https://dc.gg/bypassx';
+export const XF_DISCORD = 'discord- https://dsc.gg/luciddeobf';
 export const XF_HEADER_RE = /^--\s*This File Was Obfuscated By Xfuscator/m;
 
 /** True when the source is already Xfuscator output (refuse double-obf). */
