@@ -1,0 +1,31 @@
+name: render-protect
+# Stop Render from auto-redeploying on pushes while the cutover is in progress:
+# the current env token fails fresh Discord logins, so a redeploy would kill the
+# one live logged-in session. Reversible: re-run with the input set to true.
+on:
+  workflow_dispatch:
+    inputs:
+      auto_deploy:
+        description: 'set autoDeploy to this value (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  protect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Patch Render service autoDeploy
+        run: |
+          set -e
+          CODE=$(curl -s -o svc.json -w '%{http_code}' -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.RENDER_DEPLOY_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"autoDeploy\":\"${{ github.event.inputs.auto_deploy || 'false' }}\"}" \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}")
+          echo "patch http: $CODE"
+          node -e 'const j=JSON.parse(require("fs").readFileSync("svc.json","utf8"));const s=j.service||j;console.log("service:",s.name,"| suspended:",s.suspended,"| autoDeploy:",s.autoDeploy)'
+      - name: Service snapshot
+        run: |
+          curl -s -H "Authorization: Bearer ${{ secrets.RENDER_DEPLOY_TOKEN }}" \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}" \
+            | node -e 'let b="";process.stdin.on("data",d=>b+=d).on("end",()=>{const j=JSON.parse(b);const s=j.service||j;console.log("name:",s.name,"| suspended:",s.suspended,"| autoDeploy:",s.autoDeploy,"| lastDeploy:",(s.lastDeployAt||s.updatedAt||"?"))})'

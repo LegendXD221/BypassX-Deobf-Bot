@@ -1,16 +1,17 @@
 name: keepalive
-# Layer 3 of the 24/7 keep-alive: ping the public /health endpoint every
-# 10 minutes as an independent layer even if the service's own self-ping dies.
+# RETIRED as a cron: the bot now lives on the VPS under pm2 (24/7, @reboot
+# resurrect). The old job pinged the Render /health URL every 10 minutes to
+# keep the free-tier web service awake — Render is suspended and the VPS has
+# no public HTTP port (NAT-mapped SSH only), so there is nothing to ping.
+# Kept as a manual probe only (workflow_dispatch).
 on:
-  schedule:
-    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping /health
+      - name: Probe /health (manual)
         run: |
           curl -fsS -m 30 "${{ secrets.KEEPALIVE_URL }}" \
             && echo "keepalive ping ok" \

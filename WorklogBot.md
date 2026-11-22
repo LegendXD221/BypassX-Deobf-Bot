@@ -1,6 +1,66 @@
 # WorklogBot — Lucid Deobf Bot
 
 
+## v2.23.0 — cutover complete: VPS is the live home, Render suspended
+
+**User: "We Got A Vps So Now We Can Move Our Bot To The Vps" → gave SSH creds, the
+bot token after the Render-stored one proved dead, and permission to suspend Render.**
+
+### The cutover pipeline (GitHub Actions → Render API → VPS)
+- New workflow `.github/workflows/vps-cutover.yml`: pulls DISCORD_TOKEN / CLIENT_ID /
+  DATABASE_URL straight from the Render API (`secrets.RENDER_DEPLOY_TOKEN` +
+  `secrets.RENDER_SERVICE_ID` — values never printed, only lengths), uploads helper
+  scripts + overlay to `/root/.cutover` over sshpass SSH, merges into
+  `/opt/lucid-deobf/.env` (empty values skipped, PUBLIC_URL/NODE_VERSION excluded),
+  recreates the pm2 process with Node 22 native `--env-file`, waits for
+  `/health` `discordReady=true` (12 × 5 s), and ONLY THEN PATCHes Render
+  `{"suspended":"suspended"}`. Re-runnable via dispatch; `skip_fetch=true` input
+  keeps the .env already on the VPS (used for the manual-token finish).
+- Helpers committed (no secrets in any of them): `scripts/render-env-extract.js`,
+  `scripts/vps-env-merge.js`, `scripts/vps-health-check.js`,
+  `scripts/vps-remote-cutover.sh`. New secret `VPS_SSH_PASS` created via the
+  Actions-secrets API (PyNaCl sealed box).
+- Also added `.github/workflows/render-protect.yml` (manual autoDeploy true/false
+  patch on the Render service) — kept as an ops tool.
+
+### The stale-token discovery
+- First cutover runs staged everything correctly but Discord login failed:
+  `An invalid token was provided`. Verified twice that the value Render's API
+  returns is rejected by Discord itself (`GET /users/@me` → 401) while the value
+  is byte-perfect (72 chars, 2 dots, clean charset, first segment decodes to the
+  application id). Render's running process stayed `discordReady:true` on an
+  older in-memory session — i.e. the token in Render's env was reset at Discord
+  and never valid again for fresh logins; any Render restart would have killed
+  the last working session. Suspended nothing until a valid token existed.
+
+### The finish (user pasted the fresh token)
+- Token merged on the VPS (first segment verified to decode to CLIENT_ID),
+  pm2 restarted → **`/health` 200 `discordReady=true`**, 44 global slash commands
+  re-registered, Neon Postgres connected (schema ready), dashboard ready.
+- Render service PATCHed to `suspended` via the cutover workflow (single logged-in
+  instance, no double-dispatch of commands).
+
+### Ops notes
+- VPS survived a provider **power outage** mid-cutover (node unroutable ~10 min,
+  came back with engine + .env intact; pm2 `@reboot` resurrect re-created the
+  process). pm2 exp-backoff (3 s) replaces the 2.5 s crash loop.
+- Port 3000 is NAT-blocked externally → the GitHub keepalive cron had nothing to
+  ping; cron trigger retired (manual probe only). VPS 24/7 = pm2 + @reboot.
+- **build-image fix**: every image build since the postinstall landed failed —
+  Dockerfile ran `npm ci` (which fires the fengari patcher) BEFORE `COPY . .`,
+  so `scripts/patch-fengari-luau.mjs` was missing in that layer
+  (`Cannot find module '/app/scripts/patch-fengari-luau.mjs'`). Now
+  `npm ci --ignore-scripts` + explicit `RUN node scripts/patch-fengari-luau.mjs`
+  after the copy.
+- Drive bot-src links re-verified dead from BOTH the sandbox and the VPS:
+  view → 403 (exists, access-flagged) vs a random id → 400 (nonexistent); the
+  original TransferXL share is 404. A Google ToS flag sticks to the file itself —
+  re-sharing the same file never lifts it; a fresh upload (new file id) or a
+  different host is required.
+- README VPS section from the deploy note stands; Render reference kept for
+  history (render.yaml remains a valid blueprint for a Redeploy-anywhere copy).
+
+
 ## v2.22.1 (deploy note) — Lucid Deobf moved to a VPS (pm2, 24/7)
 
 **User request: "We Got A Vps So Now We Can Move Our Bot To The Vps … Bot src … If the bot src name is something else change it to Lucid Deobf"**

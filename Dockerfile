@@ -8,9 +8,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --no-audit --no-fund
+# --ignore-scripts: the fengari patch postinstall needs scripts/, which is
+# COPY'd only in the next layer — it runs explicitly right after the copy.
+RUN npm ci --omit=dev --no-audit --no-fund --ignore-scripts
 
 COPY . .
+
+RUN node scripts/patch-fengari-luau.mjs
 
 # Engine: download precompiled binary (glibc 2.31+, ~147 MB unpacked) from the
 # release, verify it runs, and point ENGINE_PATH at it (skips boot-time fetch).

@@ -5,7 +5,11 @@ export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH
 APP=/opt/lucid-deobf
 
 # merge uses the uploaded copy; keep a copy in the app tree for future reference
-node /root/.cutover/vps-env-merge.js /root/.cutover/envv.txt
+if [ -f /root/.cutover/envv.txt ]; then
+  node /root/.cutover/vps-env-merge.js /root/.cutover/envv.txt
+else
+  echo "no overlay file — keeping the existing /opt/lucid-deobf/.env"
+fi
 mkdir -p "$APP/scripts" && cp /root/.cutover/vps-env-merge.js "$APP/scripts/" 2>/dev/null || true
 chmod 600 "$APP/.env"
 
