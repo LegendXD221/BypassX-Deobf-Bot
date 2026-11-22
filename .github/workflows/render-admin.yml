@@ -1,0 +1,33 @@
+name: render-admin
+# Neutralize the old Render instance after the VPS cutover:
+#  1. PATCH autoDeploy=false + suspended=suspended (verify with a fresh GET).
+#  2. If suspension will not stick (scoped token), trigger a deploy — any fresh
+#     boot on Render reads the dead env token and fails login, so the lingering
+#     pre-reset gateway session dies and only the VPS bot answers commands.
+on:
+  workflow_dispatch:
+
+jobs:
+  admin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Patch + verify + fallback deploy-kill
+        run: |
+          set -e
+          BASE="https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}"
+          AUTH="Authorization: Bearer ${{ secrets.RENDER_DEPLOY_TOKEN }}"
+          show() { node -e 'const j=JSON.parse(require("fs").readFileSync("svc.json","utf8"));const s=j.service||j;console.log("state → name:",s.name,"| suspended:",s.suspended,"| autoDeploy:",s.autoDeploy)'; }
+          curl -s -o svc.json -H "$AUTH" "$BASE" && echo "before:" && show
+          CODE=$(curl -s -o patch.json -w '%{http_code}' -X PATCH -H "$AUTH" -H "Content-Type: application/json" \
+            -d '{"autoDeploy":false,"suspended":"suspended"}' "$BASE")
+          echo "patch http: $CODE"
+          curl -s -o svc.json -H "$AUTH" "$BASE" && echo "after patch:" && show
+          if node -e 'const j=JSON.parse(require("fs").readFileSync("svc.json","utf8"));const s=j.service||j;process.exit(s.suspended==="suspended"?0:1)'; then
+            echo "RENDER SUSPENDED — done."
+          else
+            echo "suspension did not stick (scoped token?) — killing the stale gateway session via a deploy"
+            DCODE=$(curl -s -o dep.json -w '%{http_code}' -X POST -H "$AUTH" -H "Content-Type: application/json" \
+              -d '{"clearCache":"none"}' "$BASE/deploys")
+            echo "deploy trigger http: $DCODE"
+            node -e 'const j=JSON.parse(require("fs").readFileSync("dep.json","utf8"));const d=j.deploy||j;console.log("deploy:",d.id||"?","| status:",d.status||"?")'
+          fi
