@@ -1,0 +1,76 @@
+name: VPS cutover
+# One-shot cutover: pull DISCORD_TOKEN/CLIENT_ID (+ DB / Pastefy) from the Render
+# service via the Render API, stage them into /opt/lucid-deobf/.env on the VPS,
+# restart the bot under pm2, wait for /health discordReady, then suspend Render.
+# Secrets are never printed — only lengths / EMPTY flags. Re-runnable via dispatch.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/vps-cutover.yml']
+
+jobs:
+  cutover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read env vars from the Render API
+        run: |
+          set -e
+          HTTP_CODE=$(curl -s -o envs.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${{ secrets.RENDER_DEPLOY_TOKEN }}" \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/env-vars?limit=100")
+          echo "render env-vars http: $HTTP_CODE"
+          node scripts/render-env-extract.js
+
+      - name: Stage env on the VPS and restart the bot
+        env:
+          VPS_PASS: ${{ secrets.VPS_SSH_PASS }}
+        run: |
+          set -e
+          sudo apt-get update -qq >/dev/null 2>&1 || true
+          sudo apt-get install -y -qq sshpass >/dev/null 2>&1
+          SSHOPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=25"
+          HOSTP="-p 29908 root@sg-sgp12.tryaltare.ai"
+          SCPOPTS="-o StrictHostKeyChecking=no -P 29908"
+          sshpass -p "$VPS_PASS" ssh $SSHOPTS $HOSTP 'mkdir -p /root/.cutover'
+          sshpass -p "$VPS_PASS" scp $SCPOPTS scripts/vps-env-merge.js scripts/vps-health-check.js root@sg-sgp12.tryaltare.ai:/root/.cutover/
+          sshpass -p "$VPS_PASS" scp $SCPOPTS envv.txt root@sg-sgp12.tryaltare.ai:/root/.cutover/envv.txt
+          sshpass -p "$VPS_PASS" scp $SCPOPTS scripts/vps-remote-cutover.sh root@sg-sgp12.tryaltare.ai:/root/.cutover/
+          sshpass -p "$VPS_PASS" ssh $SSHOPTS $HOSTP 'bash /root/.cutover/vps-remote-cutover.sh'
+
+      - name: Wait for the bot to come online on the VPS
+        id: verify
+        env:
+          VPS_PASS: ${{ secrets.VPS_SSH_PASS }}
+        run: |
+          set -e
+          SSHPASS_BIN=sshpass
+          READY=no
+          for i in $(seq 1 12); do
+            sleep 5
+            OUT=$($SSHPASS_BIN -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=25 -p 29908 \
+              root@sg-sgp12.tryaltare.ai 'node /root/.cutover/vps-health-check.js' 2>/dev/null || echo SSH-FAIL)
+            echo "attempt $i: $OUT"
+            echo "$OUT" | grep -q 'discordReady=true' && READY=yes && break
+          done
+          echo "ready=$READY" >> "$GITHUB_OUTPUT"
+          $SSHPASS_BIN -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -p 29908 root@sg-sgp12.tryaltare.ai \
+            'echo "--- pm2 ---"; pm2 ls; echo "--- out log ---"; tail -n 12 /root/.pm2/logs/lucid-deobf-out.log 2>/dev/null; echo "--- err log ---"; tail -n 5 /root/.pm2/logs/lucid-deobf-error.log 2>/dev/null' || true
+          if [ "$READY" != "yes" ]; then
+            echo "bot did NOT come online on the VPS — Render suspension SKIPPED"
+            exit 1
+          fi
+
+      - name: Suspend the Render service
+        if: steps.verify.outputs.ready == 'yes'
+        run: |
+          set -e
+          CODE=$(curl -s -o susp.json -w '%{http_code}' -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.RENDER_DEPLOY_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"suspended":"suspended"}' \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}")
+          echo "suspend http: $CODE"
+          node -e 'const j=JSON.parse(require("fs").readFileSync("susp.json","utf8"));const s=j.service||j;console.log("render suspended:", s.suspended, "| name:", s.name || "")'
