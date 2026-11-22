@@ -13,6 +13,8 @@
  *      L4 danger rate limit → L5 audit row + DM alert on any denial.
  */
 import { Client, GatewayIntentBits, Events, REST, Routes } from 'discord.js';
+import fs from 'node:fs';
+import path from 'node:path';
 import { CONFIG } from './config.js';
 import { logger } from './logger.js';
 import { COMMANDS, commandByName, toSlashJson } from './commands-index.js';
@@ -267,12 +269,39 @@ process.on('uncaughtException', (err) => {
   logger.error({ err: String(err?.stack || err).slice(0, 600) }, 'uncaught exception');
 });
 
-if (!CONFIG.discordToken) {
-  console.error('DISCORD_TOKEN is not set. Get one at https://discord.com/developers/applications → Bot → Reset Token, then put it in .env');
-  process.exit(1);
+// ---- Discord login: resilient retry, never exit ----------------------------
+// A bad/missing token no longer kills the process: hosts keep their /health +
+// dashboard alive, and every retry re-reads .env so a token fix lands live
+// without a restart. Hosts that swap instances (Render) no longer fail the
+// swap because of a stale token — the new instance simply reports
+// discordReady:false until a valid token is provided.
+const LOGIN_RETRY_MS = 30_000;
+
+/** DISCORD_TOKEN, re-read from .env when the file exists (pm2/VPS flow). */
+function currentToken() {
+  try {
+    const line = fs.readFileSync(path.resolve(process.cwd(), '.env'), 'utf8')
+      .split('\n').find((l) => l.startsWith('DISCORD_TOKEN='));
+    const v = line ? line.slice('DISCORD_TOKEN='.length).trim() : '';
+    if (v) return v;
+  } catch { /* no .env file — token comes from the env provider */ }
+  return CONFIG.discordToken;
 }
 
-client.login(CONFIG.discordToken).catch((e) => {
-  console.error(`Discord login failed: ${String(e?.message || e).slice(0, 300)}`);
-  process.exit(1);
-});
+(async function loginLoop() {
+  for (;;) {
+    const token = currentToken();
+    if (!token) {
+      console.error('DISCORD_TOKEN is not set. Get one at https://discord.com/developers/applications → Bot → Reset Token, then put it in .env — retrying in 30s');
+    } else {
+      try {
+        await client.login(token);
+        return; // gateway up — Events handlers take it from here
+      } catch (e) {
+        console.error(`Discord login failed: ${String(e?.message || e).slice(0, 300)} — retrying in 30s`);
+        try { client.destroy(); } catch { /* not connected yet */ }
+      }
+    }
+    await new Promise((r) => setTimeout(r, LOGIN_RETRY_MS));
+  }
+})();
