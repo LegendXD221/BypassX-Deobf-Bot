@@ -22,6 +22,9 @@ import { prometheusDeepPass } from './prometheus-deep.js';
 import { transformLuauToLua, repairInvalidEscapes } from './luau-shim.js';
 import { parsePayload, captureKeyCarriers, looksLikeLuraphInventory, formatReport } from './luraph15.js';
 import { staticPeel } from './static-peel.js';
+// v2.24.0: vendored OmniDBF family lifters (Clyde / LuaObf / Prostone /
+// IronVeil / MoonVeil-static) — sandboxed worker bridge, see src/ported.js.
+import { runPorted, portedFamilyFor, PORTED_FIRST } from './ported.js';
 import { liftFromHarvest } from './vm-lift.js';
 import { jteDecompile, isLuauBytecode, isLuaBytecode, jteBinaryPresent } from './jte-lift.js';
 import { residualObfuscation, detectLayers, peelSummary } from './layers.js';
@@ -307,13 +310,18 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
       };
 
       let outcome = null;
+      let portedMissNote = null; // v2.24.0: stub/miss message from the vendored lifter
       const route = pickRoute(detected, lang, buffer);
       stage('detect', `${detected.name} ${detected.version || ''} (${detected.confidence}%) → route ${route}${forcedSvc ? ` [forced via .${forced.tag}]` : ''}`);
 
       if (route === 'pyarmor') outcome = await runPyarmorRoute(inputPath, detected, stage, buffer);
       else if (route === 'webcrack') outcome = await runWebcrackRoute(inputPath, buffer, stage);
+      else if (route === 'ported') outcome = await runPortedRoute(inputPath, detected, stage, buffer.length);
       else if (route === 'lua-engine') outcome = await runLuaEngineRoute(inputPath, detected, stage, buffer.length);
       else outcome = await runAutoRoute(inputPath, detected, stage, buffer.length);
+      // Preserve the ported lifter's miss note (stub messages etc.) — the
+      // fallback tiers below replace `outcome`, so it rides separately.
+      if (route === 'ported' && !outcome.ok && outcome.portedNote) portedMissNote = outcome.portedNote;
 
       if (!outcome.ok) {
         // Last resort: opposite toolchain — engine auto for JS-looking input
@@ -345,6 +353,10 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
         // outside the sandbox).
         const h = await tryHarvest(inputPath, detected, lang, stage, stages, t0, buffer, filename);
         if (h) return h;
+        // v2.24.0: vendored OmniDBF static lifter (MoonVeil envelope peel and
+        // any PORTED_FIRST family the primary route missed).
+        const pfb = await tryPorted(inputPath, detected, stage, stages, t0, buffer, lang);
+        if (pfb) return pfb;
         // FINAL FALLBACK: unconditional pure-JS static peel. No walls — every
         // supported service produces output. The user always gets a paste with
         // every recoverable string, decoded payload, function name and numeric
@@ -353,7 +365,7 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
         const peeled = staticPeel(buffer, {
           detected,
           lang,
-          note: outcome.note || familyWallNote(detected),
+          note: portedMissNote || outcome.note || familyWallNote(detected),
         });
         stage('static-peel:hit', `${peeled.recoveredSize} bytes — ${peeled.how}`);
         return {
@@ -431,6 +443,9 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
         stage('passthrough-guard', 'all engine outputs identical to input');
         const h = await tryHarvest(inputPath, detected, lang, stage, stages, t0, buffer, filename);
         if (h) return h;
+        // v2.24.0: vendored static lifter fallback (passthrough path too).
+        const pfb = await tryPorted(inputPath, detected, stage, stages, t0, buffer, lang);
+        if (pfb) return pfb;
         // FINAL FALLBACK: unconditional pure-JS static peel. No walls here
         // either — passthrough echoes mean the engine returned the input
         // verbatim, so the static peel is the honest, useful output.
@@ -438,7 +453,7 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
         const peeled = staticPeel(buffer, {
           detected,
           lang,
-          note: 'engine output was identical to input — delivering the static peel instead',
+          note: portedMissNote || 'engine output was identical to input — delivering the static peel instead',
         });
         stage('static-peel:hit', `${peeled.recoveredSize} bytes — ${peeled.how}`);
         return {
@@ -801,6 +816,9 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
 
 function pickRoute(detected, lang, buffer) {
   if (detected.id === 'pyarmor') return 'pyarmor';
+  // v2.24.0: families with a vendored static lifter route there FIRST — the
+  // engine sweep + jailed harvest stay as fallbacks (dispatch below).
+  if (PORTED_FIRST.has(detected.id)) return 'ported';
   if (detected.id === 'upx' || detected.id === 'native_generic') return 'auto';
   if (detected.id === 'obfuscator_io' || detected.id === 'js_generic') return 'webcrack';
   if (ENGINE_FAMILY_BY_DETECT_ID[detected.id]) return 'lua-engine';
@@ -1175,6 +1193,58 @@ async function runLuaEngineRoute(inputPath, detected, stage, inLen = 0) {
     if (c.workDir) await engine.cleanupWorkDir(c.workDir);
   }
   return { ok: false, note: familyWallNote(detected) };
+}
+
+// ---- ported OmniDBF lifter routes (v2.24.0) ---------------------------------
+// Primary route for PORTED_FIRST families and the fallback tier for moonveil.
+// Success returns the SAME outcome contract as the engine routes
+// ({ ok, files:[{name, buffer}] }) so the shared post-process / verify /
+// passthrough-guard machinery handles the result unchanged.
+
+async function runPortedRoute(inputPath, detected, stage, inLen = 0) {
+  const fam = portedFamilyFor(detected.id);
+  if (!fam) return { ok: false };
+  stage('ported:run', `${detected.name} → vendored OmniDBF static lifter (sandboxed worker, ${Math.round(inLen / 1024)}KB in)`);
+  const r = await runPorted(detected.id, inputPath, { timeoutMs: Math.min(CONFIG.engineTimeoutMs, 180_000) });
+  if (!r.ok) {
+    stage('ported:miss', String(r.error || 'no recovery').slice(0, 200));
+    // MoonVeil stub messages ("upload the payload file itself") and engine
+    // status errors are genuinely useful to surface as a partial note.
+    return { ok: false, portedNote: /stub|deployment|not vendored/i.test(String(r.error)) ? String(r.error) : null };
+  }
+  stage('ported:hit', `${r.output.length}B recovered — ${r.how}`);
+  return {
+    ok: true,
+    files: [{ name: 'deobfuscated.lua', buffer: Buffer.from(r.output, 'utf8') }],
+    how: `${fam.how} (ported)`,
+  };
+}
+
+/** Fallback-tier ported lifter — returns a COMPLETE result object (like tryHarvest). */
+async function tryPorted(inputPath, detected, stage, stages, t0, buffer, lang) {
+  if (!portedFamilyFor(detected.id)) return null;
+  const fam = portedFamilyFor(detected.id);
+  const r = await runPorted(detected.id, inputPath, { timeoutMs: Math.min(CONFIG.engineTimeoutMs, 180_000) });
+  if (!r.ok) {
+    stage('ported:miss', String(r.error || 'no recovery').slice(0, 160));
+    return null;
+  }
+  const codeName = 'deobfuscated.lua';
+  const post = postprocessFile(codeName, Buffer.from(r.output, 'utf8'));
+  stage('ported:hit', `${post.data.length}B — ${r.how}`);
+  return {
+    ok: true,
+    code: post.data.toString('utf8'),
+    binaryOutput: false,
+    outputBuffer: null,
+    codeName,
+    detected, stages, durationMs: Date.now() - t0, lang: lang === 'js' ? 'js' : 'lua',
+    verification: verifyCode(post.data.toString('utf8'), { lang: lang === 'js' ? 'js' : 'lua', filename: codeName }),
+    originalSize: buffer.length,
+    recoveredSize: post.data.length,
+    how: `${r.how} (ported, fallback)`,
+    engine: await engine.probe(),
+  };
 }
 
 async function runAutoRoute(inputPath, _detected, stage, inLen = 0) {

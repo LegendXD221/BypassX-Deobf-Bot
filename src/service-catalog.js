@@ -118,6 +118,12 @@ export const SERVICE_COMMANDS = [
     slash: 'luast.clv.cloud Levels 1-3 static deobfuscator',
     serviceId: 'luast',
   },
+  {
+    cmd: 'prostone', name: 'Prostone',
+    blurb: 'Prostone Deobfuscator — vendored AST+VM pipeline, v2.24.0 port',
+    slash: 'Prostone Deobfuscator — any Prostone file/URL',
+    serviceId: 'prostone',
+  },
 ];
 
 /** Exact per-command lines rendered by the supported-commands card. */

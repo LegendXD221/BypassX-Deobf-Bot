@@ -543,6 +543,39 @@ time = function() return math.floor(__bx_clock) end
 print = function(...) local t = {} for i = 1, select('#', ...) do t[#t + 1] = tostring(select(i, ...)) end if #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = table.concat(t, ' ') end end
 warn = print
 
+-- v2.24.0 (ported from the OmniDBF goofy-trace mocks): Luau's Random class.
+-- VM builds that seed decryptors with Random.new(seed) died here with
+-- "attempt to index a nil value (global 'Random')" — Random is a REAL Luau
+-- stdlib type (not an executor-only global), so the production-shape jail
+-- must provide it. Deterministic LCG → stable captures across runs.
+local __RNG_STATE = 2654435761
+local __RNG_NEXT = function()
+  __RNG_STATE = (__RNG_STATE * 1103515245 + 12345) % 4294967296
+  return __RNG_STATE / 4294967296
+end
+Random = setmetatable({
+  new = function(seed)
+    if type(seed) == 'number' then __RNG_STATE = math.floor(seed) % 4294967296 end
+    return {
+      NextNumber = function(min, max)
+        local v = __RNG_NEXT()
+        if type(min) == 'number' and type(max) == 'number' then return min + (max - min) * v end
+        return v
+      end,
+      NextInteger = function(min, max)
+        if type(min) ~= 'number' then min = 0 end
+        if type(max) ~= 'number' then max = 1 end
+        return math.floor(min + (max - min + 1) * __RNG_NEXT())
+      end,
+      NextUnitVector = function()
+        local v = __RNG_NEXT()
+        return { X = v * 2 - 1, Y = v, Z = 1 - v }
+      end,
+      Clone = function(self) return self end,
+    }
+  end,
+}, { __call = function(self, seed) return self.new(seed) end })
+
 -- v2.12.0 (env-sanity suite / leaked detection 10): Luau's debug.info exists
 -- on every executor; fengari's 5.3 debug lib lacks it. A nil-returning shim
 -- keeps obfuscator probes alive without leaking a fake line number.

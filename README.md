@@ -38,13 +38,13 @@ Powered by the [BypassX Deobf](https://github.com/LegendXD221/BypassX-Deobf) sta
 
 | Service | Versions | Status |
 | --- | --- | --- |
-| **MoonVeil** | v1.x → 2.0.26 (latest) | detected with version; current builds are full-VM — honest wall |
+| **MoonVeil** | v1.x → 2.0.26 (latest) | detected with version; static envelope peel + loader-stub messaging (v2.24.0 port); current builds are full-VM — jailed harvest |
 | **77fuscator** | v0.4.7 → 0.6.1 (latest) | detected with version; auto pipeline + dynamic harvest recover constants and code for tested 0.6.x builds |
 | **Xhider** | latest | detected; MoonSec-style VM |
-| **GoofyScator** | current (polymorphic VM) | detected; anti-tamper + proxy-locals |
-| **Ironveil** | latest | detected |
+| **GoofyScator** | current (polymorphic VM) | detected; anti-tamper + proxy-locals; jailed harvest with executor-mock env (v2.24.0) |
+| **Ironveil** | V1 (vendored static engine, v2.24.0) / latest | V1 builds fully recovered by the vendored static engine; newer builds detected + harvested |
 | **25ms** | branded builds | detected; routes into VM peelers |
-| IronBrew 3, Synapse Xen, wYnFuscate, Boronide, DarkSec, luaobfuscator.com, PSU, generic JS/packers | latest | detected + attempted |
+| **Clyde** (v2.24.0 static VM inverter), **Prostone** (v2.24.0 vendored AST+VM pipeline), **LuaObfuscator.com** (v2.24.0 reconstruction) | latest | dedicated commands / ported lifters — auto route + fallback |
 
 *The bot never pretends: if a build keeps its keys at runtime, you get a clear explanation, not fake output.*
 

@@ -1,6 +1,70 @@
 # WorklogBot — Lucid Deobf Bot
 
 
+## v2.24.0 — OmniDBF family lifters ported into the live bot (vendor/omnidbf)
+
+**User: "Copy the code from the rebranded lucid Deobf and improve our own lucid
+deobf bot with it" — the delivered OmniDBF source (v2.23.1 intake) mined for
+what the hardened repo lacks; everything ported through the sandboxed-worker
+bridge, everything else rejected on hardening grounds.**
+
+### Gap analysis first (the overlapping families were already ours)
+- The OmniDBF bot shares ~10 families with the catalog (.ms3/.ms2/.lph/.ib2/.hcs
+  /... ) — ours are full devirtualizers + engine families, theirs are
+  goto-restoration scripts; no port needed there. REAL gaps: Clyde,
+  LuaObfuscator.com, Prostone, IronVeil V1, MoonVeil static envelope, plus their
+  executor-environment mocks for VM tracing.
+
+### Vendored + bridged (vendor/omnidbf/, CJS island inside the ESM repo)
+- New `package.json` pin `"type":"commonjs"` at vendor/omnidbf/deobfuscators/ —
+  the repo root is `"type":"module"` and `require()` of vendored .js otherwise
+  throws ES-module scope errors.
+- `src/ported-worker.cjs` — CJS worker, one JSON line protocol (mirrors
+  harvester-worker), per-family calling conventions (Prostone detect:true→
+  NotPrometheusError→detect:false retry like upstream bot.js; LuaObf
+  reconstructed/lifted/disasm pick; generic {success,output} contract).
+- `src/ported.js` — ESM bridge: PORTED_FAMILIES registry, PORTED_FIRST routing
+  set, runPorted() through spawnHardened (scrubbed env, 180s cap, SIGKILL,
+  64MB stdout cap, '-' placeholder for empty detect argv — validateArgs
+  rejects empty strings).
+- Pipeline (src/pipeline.js): pickRoute 'ported' FIRST for
+  clyde/luaobfuscator_com/ironveil/prostone; runPortedRoute returns the engine
+  outcome contract ({ok, files:[{name,buffer}]}) so the shared postprocess /
+  verify / passthrough-guard / junk-gate machinery handles ported output
+  unchanged; tryPorted fallback tier after harvest (moonveil static peel + any
+  missed PORTED_FIRST family); portedMissNote rides to the static-peel note.
+- detect.js: 'prostone' forced-routing-only service (zero indicators — it is
+  Prometheus-derived, a content signature would collide with the Prometheus
+  detector); service-catalog: new .prostone command (17 services now).
+
+### Port quality (real OmniDBF Samples as fixtures, test/ported.js — 13 checks)
+- Clyde: 20KB full-stack-max VM build → lifts to the ORIGINAL program
+  (`print("full protection test " .. 42)`) — stack/reg/max modes all green.
+- IronVeil V1: obf.lua → 19KB of real recovered source (Players/RunService/
+  UserInputService + ORBIT config) vs upstream's own deobfuscated.lua.
+- LuaObfuscator.com: ChaoticEvil 6.8KB → 3.2KB reconstructed, parseable.
+- Prostone: non-family input fails clean or round-trips (optimizer drops dead
+  locals — honest contract asserted); zero-indicator detect can't false-win.
+- MoonVeil: envlogger dump runtime NOT vendored (lune executes samples outside
+  the jail) — vendored moonveil_deob.js carries a PORT PATCH stub; static
+  envelope peel + loader-stub messaging work, VM builds keep the engine + jailed
+  harvest path with an honest degradation.
+
+### Deliberately NOT ported (documented in vendor/omnidbf/README.md)
+- goofyscator/decompiler.py — runs the sample in a `lune` interpreter via
+  subprocess: violates the never-execute guarantee. The transferable part (Luau
+  `Random` class mock) landed in src/jail-prelude.js instead — VM builds seeding
+  decryptors with Random.new(seed) previously died on a nil global there.
+- 77fuscator (needs .NET), PSU Java engine (needs JRE), DeltaBypass (heavy
+  Python key-bypass service: numpy/fastapi/captcha).
+
+### Tests
+- test/ported.js (13 checks) registered in test/all.js → 25 suites.
+- service-commands pins updated for the catalog growth (16→17, help "+13 more",
+  supported card last line .prostone, luast penultimate; blurb de-parenthesized).
+- ALL SUITES GREEN (25/25).
+
+
 ## v2.23.1 — OmniDBF bot src delivered as Lucid Deobf + resilient Discord login
 
 **User delivered the long-blocked bot src via two fresh TransferXL links

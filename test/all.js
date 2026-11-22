@@ -35,6 +35,7 @@ const SUITES = [
   { name: 'thirdparty-samples.js', timeoutMs: 420_000 }, // leaked-corpus regression floor + 25ms techniques (v2.10.0)
   { name: 'luraph14-wire.js', timeoutMs: 180_000 }, // v14.7 base85+LZMA wire unwrap + static pool (v2.19.0)
   { name: 'xfuscator.js', timeoutMs: 180_000 },   // Xfuscator v1/v2/v2.1 builds + .obf command delivery (v2.20.0)
+  { name: 'ported.js', timeoutMs: 300_000 },     // vendored OmniDBF family lifters — clyde/lo/prostone/iv/mv (v2.24.0)
 ];
 
 let failed = 0;

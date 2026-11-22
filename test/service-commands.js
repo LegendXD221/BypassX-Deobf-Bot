@@ -92,7 +92,7 @@ await check('registry: all 16 catalog commands exist (prefix + slash) with exact
     assert.match(json.name, /^[-_\p{L}\p{N}]{1,32}$/u, `.${spec.cmd} is not a valid slash command name`);
     if (spec.serviceId) assert.equal(cmd.serviceCmd, true, `.${spec.cmd} must flag serviceCmd`);
   }
-  assert.equal(SERVICE_COMMANDS.length, 16, 'catalog must list exactly 16 service commands');
+  assert.equal(SERVICE_COMMANDS.length, 17, "catalog must list exactly 17 service commands (v2.24.0 added .prostone)");
   assert.equal(commandByName('l'), loggerCmd, '.l must be the environment logger');
 });
 
@@ -121,12 +121,13 @@ await check('supported card: exact per-command lines + exact usage line', () => 
     assert.ok(s.includes(line), `card missing line: ${line}`);
   }
   assert.ok(s.includes(serviceUsageLine('.')), `card missing usage line: ${serviceUsageLine('.')}`);
-  // order must follow the user's list (l first, luast last)
+  // order must follow the catalog (l first, luast penultimate, prostone last — v2.24.0)
   const first = serviceCommandLines('.')[0];
   const last = serviceCommandLines('.').at(-1);
   assert.ok(s.indexOf(first) < s.indexOf(last), 'card order must match the catalog order');
   assert.ok(first.includes('`.l` — **Environment Logger**'), `first line wrong: ${first}`);
-  assert.ok(last.includes('`.luast` — **LuaST**'), `last line wrong: ${last}`);
+  assert.ok(last.includes('`.prostone` — **Prostone**'), `last line wrong: ${last}`);
+  assert.ok(serviceCommandLines('.').at(-2).includes('`.luast` — **LuaST**'), 'luast must stay penultimate');
 });
 
 // ---- 3. resolveForced ------------------------------------------------------------
@@ -301,7 +302,9 @@ await check('v2.20.0: help menu shows .obf, dynamic counts, "." examples; setpre
   const help = JSON.stringify(helpReply('.', {}));
   assert.ok(help.includes('`.obf`'), 'help must list the obf command');
   assert.ok(help.includes('Xfuscator'), 'help must name Xfuscator');
-  assert.ok(help.includes('+12 more'), `dynamic per-service count expected (+12 more), got: ${help.slice(0, 800)}`);
+  // count is dynamic — SERVICE_COMMANDS grows with the catalog (v2.24.0 added
+  // .prostone → 17 services → "+13 more"); the pin tracks the catalog.
+  assert.ok(help.includes(`+${SERVICE_COMMANDS.length - 4} more`), `dynamic per-service count expected (+${SERVICE_COMMANDS.length - 4} more), got: ${help.slice(0, 800)}`);
   assert.ok(!help.includes('`.setprefix`'), 'owner commands stay hidden from public help');
   const panel = JSON.stringify(ownerPanelReply('.', { pinSet: false, db: { enabled: false }, danger: null }));
   assert.ok(panel.includes('`.setprefix`'), 'owner panel must list setprefix');

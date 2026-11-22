@@ -222,14 +222,14 @@ export const SERVICES = [
   },
   {
     id: 'goofyscator', name: 'GoofyScator', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
-    versions: 'current public build (polymorphic VM)',
+    versions: 'current public build (polymorphic VM — jailed harvest w/ executor mocks, v2.24.0)',
     indicators: [
       { re: /\bGoofyScator\b|\bgoofyscator\b|\bgoofyscat(?:e|ion)\b/i, weight: 55, label: 'GoofyScator markers' },
     ],
   },
   {
     id: 'ironveil', name: 'Ironveil', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
-    versions: 'latest',
+    versions: 'V1 (vendored static engine, v2.24.0 port) / latest detected',
     indicators: [
       { re: /\bIronVeil\b|\bironveil_[a-z]/i, weight: 55, label: 'Ironveil markers' },
     ],
@@ -261,12 +261,21 @@ export const SERVICES = [
   // positives in the auto path).
   {
     id: 'clyde', name: 'Clyde', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
-    versions: 'Clyde builds (dedicated .clyde command — forced routing)',
+    versions: 'Clyde builds (dedicated .clyde command — vendored static VM inverter, v2.24.0 port)',
     indicators: [],
   },
   {
     id: 'luast', name: 'LuaST', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
     versions: 'luast.clv.cloud levels 1–3 (dedicated .luast command)',
+    indicators: [],
+  },
+  {
+    // v2.24.0: Prostone (Prometheus-derived) — vendored OmniDBF AST+VM pipeline
+    // (own Lua parser/unparser) behind .prostone. Zero byte indicators: it is
+    // Prometheus-derived, so a content signature would collide with the
+    // Prometheus detector — forced routing only, like .clyde/.luast.
+    id: 'prostone', name: 'Prostone', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
+    versions: 'Prostone builds (dedicated .prostone command — vendored AST+VM pipeline, v2.24.0 port)',
     indicators: [],
   },
 
