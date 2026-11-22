@@ -1,0 +1,15 @@
+name: render-status
+# Read-only: latest deploys on the Render service (status/queue visibility).
+on:
+  workflow_dispatch:
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Service + deploys snapshot
+        run: |
+          BASE="https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}"
+          AUTH="Authorization: Bearer ${{ secrets.RENDER_DEPLOY_TOKEN }}"
+          curl -s -H "$AUTH" "$BASE" | node -e 'let b="";process.stdin.on("data",d=>b+=d).on("end",()=>{const j=JSON.parse(b);const s=j.service||j;console.log("service:",s.name,"| suspended:",s.suspended,"| autoDeploy:",s.autoDeploy)})'
+          curl -s -H "$AUTH" "$BASE/deploys?limit=3" | node -e 'let b="";process.stdin.on("data",d=>b+=d).on("end",()=>{try{const j=JSON.parse(b);const arr=Array.isArray(j)?j:(j.deploys||[]);for(const d of arr)console.log("deploy:",(d.id||"").slice(0,12),"|",d.status,"| commit:",String(d.commit&&d.commit.message||"").slice(0,44),"|",d.createdAt)}catch(e){console.log("deploys parse fail:",b.slice(0,200))}})'
