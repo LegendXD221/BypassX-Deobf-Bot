@@ -4,7 +4,9 @@ set -euo pipefail
 export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH
 APP=/opt/lucid-deobf
 
-node "$APP/scripts/vps-env-merge.js" /root/.cutover/envv.txt
+# merge uses the uploaded copy; keep a copy in the app tree for future reference
+node /root/.cutover/vps-env-merge.js /root/.cutover/envv.txt
+mkdir -p "$APP/scripts" && cp /root/.cutover/vps-env-merge.js "$APP/scripts/" 2>/dev/null || true
 chmod 600 "$APP/.env"
 
 # engine: idempotent — skips if var/engine/bypassx-deobf is already unpacked
