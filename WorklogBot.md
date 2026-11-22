@@ -37,8 +37,13 @@ bot token after the Render-stored one proved dead, and permission to suspend Ren
 - Token merged on the VPS (first segment verified to decode to CLIENT_ID),
   pm2 restarted → **`/health` 200 `discordReady=true`**, 44 global slash commands
   re-registered, Neon Postgres connected (schema ready), dashboard ready.
-- Render service PATCHed to `suspended` via the cutover workflow (single logged-in
-  instance, no double-dispatch of commands).
+- Render service neutralized via the cutover workflow: the `suspended` PATCH is
+  silently dropped by the scoped deploy token (PATCH 200 but field ignored —
+  `suspended` stays `not_suspended`; suspend needs dashboard rights), but
+  `autoDeploy: no` APPLIED and a fresh deploy (202) was triggered — any new boot
+  reads the dead env token and fails login, so the lingering pre-reset gateway
+  session dies and only the VPS answers commands. Dashboard Suspend remains a
+  one-click option for the owner (token scope, not effort).
 
 ### Ops notes
 - VPS survived a provider **power outage** mid-cutover (node unroutable ~10 min,
