@@ -1,6 +1,56 @@
 # WorklogBot — Lucid Deobf Bot
 
 
+## v2.23.1 — OmniDBF bot src delivered as Lucid Deobf + resilient Discord login
+
+**User delivered the long-blocked bot src via two fresh TransferXL links
+(the originals were Google ToS-flagged) and directed: "use this src if name is
+something else Rename It To Lucid Deobf".**
+
+### Bot src intake + rebrand (OmniDBF → Lucid Deobf)
+- TransferXL flow reverse-engineered from the SPA (POST `/api/v2/download/getToken`
+  with `{shortUrl}` → signed S3 URL, 15-min expiry) — both archives fetched
+  headlessly (20.7 MB + 90.6 MB), no browser needed after capture.
+- Content: nested zips → `omnidbf_share.zip` (deployable tree with Samples,
+  Dockerfile, render.yaml, UPTIMEROBOT_SETUP.md) and `omnidbf_source.zip`
+  (full dev tree: bot.js + 12 family deobfuscators + tools/ + envlogger/).
+  A completely separate codebase from our repo (CommonJS `bot.js`, discord.js
+  v14, wasmoon).
+- Rebrand (scripts/rebrand_omnidbf.py, 265 + hits across 164 files on the
+  share tree): OmniDBF→Lucid Deobf, omnidbf→lucid-deobf (package/render/tmpdir
+  prefixes/paste titles), OMNIDBF_BLOCKLIST→LUCIDDEOBF_BLOCKLIST, folder
+  OmniDBF/→LucidDeobf/, envlogger fingerprint invite gg/odbf→gg/luciddeobf.
+  Discord emoji tokens compacted to spaceless names (Done_LucidDeobf,
+  Loading_LucidDeobf, LucidDeobf_Alert — emoji names can't contain spaces).
+  moonveil HEADER_LINE regex now accepts BOTH fingerprints
+  (`fuhed at (?:OmniDBF|Lucid Deobf)`) so legacy dumps still detect.
+  Third-party credits preserved untouched (goofycator-v10 attribution,
+  LeakD/PSU/Boronide invites, obfuscator samples).
+  Dockerfile probe grep + report.luau header renamed consistently
+  ('fuhed at Lucid Deobf .gg/luciddeobf').
+- Delivered: `download/lucid-deobf/` (runnable share tree + README + .env.example),
+  `download/Lucid-Deobf.zip`, `download/Lucid-Deobf-source.zip`.
+- Live VPS bot untouched — still our hardened codebase (the delivered src is a
+  separate bot for the user to run/deploy when they want).
+
+### Resilient Discord login (src/index.js)
+- Boot no longer exits on a bad/missing token: 30 s retry loop that RE-READS
+  .env each attempt (token fixes land live without a restart), /health and the
+  dashboard stay up while Discord is down, and instance-swapping hosts (Render)
+  no longer roll back deploys with `update_failed` because the new boot survives
+  a stale token. VPS pm2 flow simplified (no more crash-restart churn on token
+  changes). ALL 24 SUITES PASSED.
+
+### Render zombie neutralization (ops)
+- Scoped deploy token: `suspended` PATCH silently dropped (service still
+  `not_suspended`) but `autoDeploy: no` APPLIED; deploy triggers accepted
+  (202) yet failed as `update_failed` while the boot exited on the dead token —
+  fixed by the resilient login above: the next deploy swaps cleanly to a
+  degraded-live instance and the lingering pre-reset gateway session dies.
+  User confirmed the old-token Render instance is harmless either way;
+  dashboard Suspend remains a one-click option.
+
+
 ## v2.23.0 — cutover complete: VPS is the live home, Render suspended
 
 **User: "We Got A Vps So Now We Can Move Our Bot To The Vps" → gave SSH creds, the
