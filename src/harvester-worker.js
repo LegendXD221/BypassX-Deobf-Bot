@@ -36,7 +36,7 @@ const writeOut = (obj) => {
   }
 };
 import fengari from 'fengari';
-import { safeToJsString } from './fengari-safe.js';
+import { safeToJsString, readEnvlog } from './fengari-safe.js';
 import * as jailPrelude from './jail-prelude.js';
 // v2.18.0 — antitamper identity escalation (tier4): the V2 catalog's
 // 'escalate' counter wired into the recon path.
@@ -46,9 +46,13 @@ import { executorLua } from './antitamper/env-hardening.js';
 const { lua, lauxlib, lualib, to_luastring, to_jsstring } = fengari;
 
 const INPUT = process.argv[2];
-const BUDGET_TOTAL = Number(process.env.BX_BUDGET || process.argv[4]) || 300e6;
+// v2.25.0 VPS mode (BX_VPS=1): the persistent VPS host has dedicated CPU/RAM
+// and no per-instance billing wall — raise the harvest ceilings when set.
+// Defaults (and every test) keep the Render-era numbers unchanged.
+const VPS = process.env.BX_VPS === '1';
+const BUDGET_TOTAL = Number(process.env.BX_BUDGET || process.argv[4]) || (VPS ? 500e6 : 300e6);
 const HOOK_INTERVAL = 2.5e6;
-const MAX_SINK = 60_000;
+const MAX_SINK = VPS ? 120_000 : 60_000;
 const MAX_STR = 8192;
 const MAX_OUT = 20_000;
 const MAX_CHUNKS = 64;
@@ -114,9 +118,9 @@ function dumpAndExit(note) {
       chunks.push(s);
       chunkBytes += s.length;
     }
-    writeOut({ ok: true, ran, runError, budgetHit: budget <= 0, partial: Boolean(note), note: note || null, strings, chunks, log: logLines.slice(0, 50) });
+    writeOut({ ok: true, ran, runError, budgetHit: budget <= 0, partial: Boolean(note), note: note || null, strings, chunks, log: logLines.slice(0, 50), envlog: readEnvlog(L) });
   } catch {
-    writeOut({ ok: true, ran: false, strings: [], chunks: [], log: [] });
+    writeOut({ ok: true, ran: false, strings: [], chunks: [], log: [], envlog: { reads: [], writes: [] } });
   }
   process.exit(0);
 }
@@ -160,7 +164,7 @@ let heapSpin = false;
 // spawn timeout and died via SIGKILL with ZERO capture. The hook runs INSIDE
 // the JS thread, so it can check the wall clock and dump the partial pool
 // deterministically. harvest.js sets BX_WALL_MS from its own timeoutMs.
-const WALL_MS = Number(process.env.BX_WALL_MS || process.argv[3]) || 100_000;
+const WALL_MS = Number(process.env.BX_WALL_MS || process.argv[3]) || (VPS ? 220_000 : 100_000);
 const DEADLINE = Date.now() + WALL_MS;
 function spinBreak(note) {
   try { dumpAndExit(note); } catch { /* fall through to hard exit */ }

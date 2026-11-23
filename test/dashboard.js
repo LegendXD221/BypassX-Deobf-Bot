@@ -84,7 +84,7 @@ assert.ok(eng && eng.antitamper && Array.isArray(eng.services), 'engine: shape')
 assert.equal(eng.antitamper.catalogSize, CATALOG_SIZE, 'engine: catalog size matches shipped module');
 assert.ok(eng.antitamper.familyCount >= 12, 'engine: family count (V2 = 12+)');
 assert.ok(eng.antitamper.killVectors > 0, 'engine: kill vectors counted');
-assert.equal(eng.antitamper.identities.length, 3, 'engine: three executor identities');
+assert.equal(eng.antitamper.identities.length, 8, 'engine: executor identities (V3 ladder = 8)');
 assert.ok(eng.antitamper.sanityProbes >= 101, 'engine: sanity probe count (V2 = 101)');
 assert.ok(eng.antitamper.counters.neutralize > 0 && eng.antitamper.counters.env > 0, 'engine: defuse counters populated');
 assert.ok(eng.services.length >= 16, 'engine: 16-service matrix present');

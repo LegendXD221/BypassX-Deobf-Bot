@@ -31,6 +31,7 @@ import { residualObfuscation, detectLayers, peelSummary } from './layers.js';
 import { makeReadableLua, makeReadableJs, readabilityScore } from './readable.js';
 // AntiTamper V2 (v2.15.0): static defuse tier + reply-facing summary
 import { neutralize as atNeutralize, defuseSummary } from './antitamper/index.js';
+import * as atEvidence from './antitamper/evidence.js';
 import { finalizeReadable } from './finalize.js';
 
 // v2.4.0 "Total Deobf": the pipeline is a PEEL LOOP. Each pass strips one
@@ -280,6 +281,15 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
         if (at.changed) {
           working = Buffer.from(at.code, 'utf8');
           atNote = defuseSummary(at.report);
+          // v2.25.0 AntiTamper V3: persistent evidence — on the VPS every
+          // defusal is recorded (append-only JSONL, capped) so escalation
+          // patterns and vector families are visible across restarts.
+          atEvidence.record({
+            type: 'defuse',
+            vectors: (at.report?.edits || []).map((e) => ({ id: e.id, count: e.count })),
+            bytesSaved: at.report?.bytesSaved || 0,
+            file: (filename || '').slice(0, 120),
+          });
         }
       } catch { /* the defuser never blocks the pipeline */ }
     }

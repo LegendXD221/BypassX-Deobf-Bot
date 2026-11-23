@@ -36,6 +36,8 @@ const SUITES = [
   { name: 'luraph14-wire.js', timeoutMs: 180_000 }, // v14.7 base85+LZMA wire unwrap + static pool (v2.19.0)
   { name: 'xfuscator.js', timeoutMs: 180_000 },   // Xfuscator v1/v2/v2.1 builds + .obf command delivery (v2.20.0)
   { name: 'ported.js', timeoutMs: 300_000 },     // vendored OmniDBF family lifters — clyde/lo/prostone/iv/mv (v2.24.0)
+  { name: 'notable.js' },                          // notable-string classifier — webhook/token/loader/etc (v2.25.0)
+  { name: 'envlog.js', timeoutMs: 300_000 },       // env logger V2: global-env access recorder + evidence store (v2.25.0)
 ];
 
 let failed = 0;

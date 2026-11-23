@@ -44,7 +44,7 @@ const writeOut = (obj) => {
   }
 };
 import fengari from 'fengari';
-import { safeToJsString } from './fengari-safe.js';
+import { safeToJsString, readEnvlog } from './fengari-safe.js';
 import * as jail from './jail-prelude.js';
 // AntiTamper V2 (v2.15.0): adaptive escalation intelligence + layers
 import { isExecutorGated as atIsExecutorGated, EXECUTOR_IDENTITIES as atExecutorIdentities } from './antitamper/catalog.js';
@@ -53,10 +53,16 @@ import { executorLadder as atExecutorLadder } from './antitamper/env-hardening.j
 const { lua, lauxlib, lualib, to_luastring, to_jsstring } = fengari;
 
 const INPUT = process.argv[2];
-const BUDGET_TOTAL = Number(process.env.BX_BUDGET) || 260e6;
+// v2.25.0 VPS mode (BX_VPS=1): dedicated CPU/RAM on the persistent VPS — the
+// lift budgets roughly double and the probe/rerun ladders deepen. Defaults
+// (and every test) keep the Render-era numbers unchanged.
+const VPS = process.env.BX_VPS === '1';
+const BUDGET_TOTAL = Number(process.env.BX_BUDGET) || (VPS ? 500e6 : 260e6);
 const HOOK_INTERVAL = 2.5e6;
-const LIFT_BUDGET = Math.floor(BUDGET_TOTAL * 0.45); // in-hook budget for run 2
-const TIME_WALL_MS = 100_000;
+const LIFT_BUDGET = Math.floor(BUDGET_TOTAL * (VPS ? 0.5 : 0.45)); // in-hook budget for run 2
+const TIME_WALL_MS = Number(process.env.BX_WALL_MS || process.argv[3]) || (VPS ? 220_000 : 100_000);
+const RERUN_ATTEMPTS = VPS ? 12 : 8;
+const EXTRA_TARGETED_PASSES = VPS ? 4 : 2;
 
 if (!INPUT) {
   console.error('usage: vm-lift-worker <input>');
@@ -214,6 +220,7 @@ do
   do
     local mt = getmetatable(_G) or {}
     local oldidx = mt.__index
+    local oldnew = mt.__newindex -- v2.25.0: the prelude's env-access recorder — captured BEFORE overwrite
     local __INEV = false
     mt.__index = function(t, k)
       local v = oldidx and oldidx(t, k) or nil
@@ -225,7 +232,14 @@ do
       return v
     end
     mt.__newindex = function(t, k, v)
-      rawset(t, k, v)
+      -- v2.25.0 env logger V2: WRAP the previous __newindex instead of
+      -- replacing it — probe-phase global writes keep flowing into
+      -- _BX_ENVLOG after the GW event is logged.
+      if oldnew and type(oldnew) == 'function' then
+        oldnew(t, k, v)
+      else
+        rawset(t, k, v)
+      end
       if __CUR > 0 and not __INEV then
         __INEV = true
         evd('GW:' .. tostring(k) .. ':' .. __typ(v))
@@ -717,7 +731,7 @@ _BX_RESULT.ok = __ok
 if not __ok then _BX_RESULT.err = tostring(__e) end
 if __bx_lift_dump then pcall(__bx_lift_dump, __ok and 'clean-exit' or 'error') end
 if __bx_lift_wants_rerun then
-  for __attempt = 1, 8 do
+  for __attempt = 1, ${RERUN_ATTEMPTS} do
     if not __bx_lift_wants_rerun() then break end
     if __bx_lift_reset_for_rerun then pcall(__bx_lift_reset_for_rerun) end
     local __burn = __attempt * 53
@@ -867,7 +881,10 @@ function fail(msg) {
 
 // ---- main ---------------------------------------------------------------------
 let dumped = false;
-const out = { ok: true, ran: false, runError: null, strings: [], chunks: [], log: [], lift: null };
+// v2.25.0 env logger V2: the last live Lua state — dumpAndExit reads the
+// _BX_ENVLOG recorder from it so every exit path carries the env record.
+let lastState = null;
+const out = { ok: true, ran: false, runError: null, strings: [], chunks: [], log: [], lift: null, envlog: { reads: [], writes: [] } };
 // v2.18.2 — v14.7 static recovery (module-level: dumpAndExit can fire from
 // INSIDE the fengari hook (spin-break / wall clock) while main() is still
 // running — the pool + VM source must ride EVERY dump path).
@@ -884,6 +901,7 @@ function dumpAndExit(note) {
   if (dumped) return;
   dumped = true;
   applyV14Recovery();
+  try { out.envlog = readEnvlog(lastState ? lastState.L : null); } catch { /* keep empty */ }
   if (note) { out.partial = true; out.note = note; }
   writeOut(out);
   process.exit(0);
@@ -959,6 +977,7 @@ async function main() {
   let d1 = { ran: false, runError: null, strings: [], chunks: [], log: [] };
   for (const src of run1Sources) {
     const s1x = freshState({ left: Math.floor(BUDGET_TOTAL * 0.55) });
+    lastState = s1x;
     runLua(s1x, jail.PRELUDE, 'prelude');
     const l = loadSample(s1x, src);
     if (l.loaded) {
@@ -1046,6 +1065,7 @@ async function main() {
   if (!chunkHit2 && timeLeft) {
     const attempt = (source, tag, probeOps) => {
       const s2 = freshState({ left: Math.floor(BUDGET_TOTAL * 0.35) });
+      lastState = s2;
       runLua(s2, jail.PRELUDE, 'prelude');
       if (escLayer) runLua(s2, escLayer, 'executor-layer');
       runLua(s2, LIFT_LUA_FULL, 'lift-instrumentation');
@@ -1087,7 +1107,7 @@ async function main() {
     ];
     if (repaired && repaired !== transformed) passes.push({ src: repaired, tag: 'esc-repaired', ops: null });
     let cleanExitOp = null;
-    for (let pass = 0; pass < passes.length + 2 && Date.now() - t0 < TIME_WALL_MS; pass++) {
+    for (let pass = 0; pass < passes.length + EXTRA_TARGETED_PASSES && Date.now() - t0 < TIME_WALL_MS; pass++) {
       let spec = passes[pass];
       if (!spec) {
         // targeted pass: probe uncovered opids, exit op last

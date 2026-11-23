@@ -27,6 +27,10 @@ export const MAX_SINK = 24_000;
 export const MAX_CHUNKS = 64;
 export const MAX_CHUNK_BYTES = 2 * 1024 * 1024;
 export const MAX_CHUNKS_TOTAL = 3 * 1024 * 1024;
+// v2.25.0 env logger V2: global-env access recorder caps (reads/writes)
+export const MAX_ENVLOG_NAMES = 256;
+export const MAX_ENVLOG_HITS = 999;
+export const ENVLOG_DUMP_NAMES = 64;
 
 // v2.15.0 AntiTamper V2: the prelude string now COMPOSES the production-shape
 // hardening layer (src/antitamper/env-hardening.js — game metatable lock +
@@ -38,9 +42,51 @@ export const PRELUDE = `
 _BX_SINK = {}
 _BX_LOG = {}
 _BX_CHUNKS = {}
+-- v2.25.0 env logger V2: global-env access recorder — the guest's READS and
+-- WRITES of named globals are counted here (deduped, capped). Replies show
+-- WHAT the script touches (game, HttpService, webhook globals, token stores)
+-- — the fastest signal for "what does this obfuscated thing actually do".
+-- String keys only (VM numeric registries live in locals) and NEVER jail
+-- instrumentation names (_BX_*/__bx/_bx_). _BX_MUTE-guarded so the lifter's
+-- own serialization never pollutes the record.
+_BX_ENVLOG = { r = {}, w = {} }
 local __N = 0
 local __C = 0
 local __B = 0
+local __ENVN_R = 0
+local __ENVN_W = 0
+function __bx_envrec(side, k)
+  -- _BX_MUTE the WHOLE body: string.sub here is sink-wrapped (__wrap1) and
+  -- would otherwise feed jail chatter ('_BX_', 'iden', '__bx' fragments of
+  -- instrumentation names) into the recovered pool — that chatter pushed
+  -- run-1 string counts over the escalation gate in the E2E suite.
+  local wasMuted = rawget(_G, '_BX_MUTE')
+  rawset(_G, '_BX_MUTE', true)
+  if type(k) ~= 'string' then
+    rawset(_G, '_BX_MUTE', wasMuted)
+    return
+  end
+  local p = k:sub(1, 4)
+  if p == '_BX_' or p == '__bx' or p == '_bx_' then
+    rawset(_G, '_BX_MUTE', wasMuted)
+    return
+  end
+  local t = _BX_ENVLOG[side]
+  local c = t[k]
+  if c then
+    if c < ${MAX_ENVLOG_HITS} then t[k] = c + 1 end
+    rawset(_G, '_BX_MUTE', wasMuted)
+    return
+  end
+  local n = (side == 'r') and __ENVN_R or __ENVN_W
+  if n >= ${MAX_ENVLOG_NAMES} then
+    rawset(_G, '_BX_MUTE', wasMuted)
+    return
+  end
+  if side == 'r' then __ENVN_R = __ENVN_R + 1 else __ENVN_W = __ENVN_W + 1 end
+  t[k] = 1
+  rawset(_G, '_BX_MUTE', wasMuted)
+end
 function __bx_rec(v)
   -- _BX_MUTE: instrumentation (lift worker serialization/probing) sets this
   -- while building its own strings so jail chatter never pollutes the pool.
@@ -585,6 +631,9 @@ debug.info = function(...) return nil end
 -- indexing, calling, arithmetic and concat — obfuscator state machines that
 -- probe odd globals keep running instead of dying on nil. Installed LAST so
 -- the compat shims above bind real values first.
+-- v2.25.0 env logger V2: the polyglot fallback is now ALSO the env-access
+-- sensor — every missing-global read and every global write passes through the
+-- recorder (mute-guarded, capped) before production semantics apply.
 local __N2; __N2 = setmetatable({}, {
   __index = function() return __N2 end, __call = function() return __N2 end,
   __add = function() return 0 end, __sub = function() return 0 end, __mul = function() return 0 end,
@@ -595,8 +644,15 @@ local __N2; __N2 = setmetatable({}, {
   __tostring = function() return '0' end, __eq = function() return false end,
   __lt = function() return false end, __le = function() return false end, __metatable = 'The game',
 })
-setmetatable(_G, { __index = function(t, k)
-  if __NILPROBE[k] then return nil end
-  return __N2
-end })
+setmetatable(_G, {
+  __index = function(t, k)
+    __bx_envrec('r', k)
+    if __NILPROBE[k] then return nil end
+    return __N2
+  end,
+  __newindex = function(t, k, v)
+    __bx_envrec('w', k)
+    rawset(t, k, v)
+  end,
+})
 ` + PRODUCTION_LUA;

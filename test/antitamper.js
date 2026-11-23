@@ -180,7 +180,9 @@ test('C1 production layer + executor ladder compose per identity', () => {
   const prod = harden('production');
   assert.ok(prod.lua.includes("The game") && prod.lua.includes('__pairs'), 'production layer features');
   const ladder = executorLadder(EXECUTOR_IDENTITIES);
-  assert.strictEqual(ladder.length, 3, 'three identities');
+  // v2.25.0 AntiTamper V3: the VPS ladder deepened to 8 live identities
+  // (synapse, scriptware, krnl + wave, solara, delta, fluxus, codex).
+  assert.strictEqual(ladder.length, 8, 'eight identities (V3 ladder)');
   const names = EXECUTOR_IDENTITIES.map((i) => i.name);
   ladder.forEach((l, i) => {
     assert.ok(l.lua.includes(names[i]), `layer ${l.key} carries ${names[i]}`);
@@ -195,7 +197,9 @@ test('D1 behavioral audit is 100% green across all profiles', () => {
   assert.strictEqual(res.ok, true, `failures: ${JSON.stringify(res.failures.slice(0, 6))}`);
   assert.strictEqual(res.total, res.passed);
   assert.ok(res.total >= 100, `audit surface must stay wide (${res.total})`);
-  assert.deepStrictEqual(res.identities, ['synapse', 'scriptware', 'krnl']);
+  assert.deepStrictEqual(res.identities, [
+    'synapse', 'scriptware', 'krnl', 'wave', 'solara', 'delta', 'fluxus', 'codex',
+  ]);
 });
 
 // ===== E. end-to-end escalation =======================================================

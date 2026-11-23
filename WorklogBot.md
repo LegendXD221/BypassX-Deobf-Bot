@@ -1,6 +1,69 @@
 # WorklogBot — Lucid Deobf Bot
 
 
+## v2.25.0 — AntiTamper V3 + env logger V2 + DeobfVM/dumper VPS mode
+
+**User request: "Improve the anti temper more because we have Vps / Improve the env logger more bcause cwe have Vp / Improve the deobfvm and dumpperr more"**
+
+### AntiTamper V3 (VPS edition)
+- **Executor ladder deepened 3 → 8 identities**: wave, solara, delta, fluxus,
+  codex join synapse/scriptware/krnl. Each is a full generated masquerade
+  layer (`executorLua`) — zero hand-maintained Lua; the VPS host affords the
+  deeper ladder on the same shared instruction budget.
+- **Persistent tamper evidence** (`src/antitamper/evidence.js`): append-only
+  JSONL at `var/antitamper/evidence.jsonl` (cap 5000 lines, self-pruning,
+  failure-safe) recording defusals (vector + count), logger recordings
+  (verdict + notable previews), env-access summaries and boot audits. The
+  old engine threw every tamper signal away with the ephemeral disk.
+- **Boot self-audit**: `ClientReady` runs `sanity.audit()` (production shape +
+  all 8 executor layers) and records the result — the VPS proves at every
+  boot that the jail is still production-shaped.
+
+### env logger V2 (`/l` dumper upgrade)
+- **Global-env access recorder** in the shared jail prelude: every global
+  READ/WRITE the guest performs is counted into `_BX_ENVLOG` (deduped, capped
+  256 names / 999 hits, `_BX_MUTE`-guarded so lifter serialization and the
+  recorder's own `string.sub` calls never pollute the string sinks — the
+  chatter bug pushed run-1 counts over the escalation gate in E1 and was
+  caught by the suite). Reads capture missing-global probes (env-shape
+  tells); writes capture every `_G` write.
+- Workers emit `envlog` on every dump path (fengari-safe `readEnvlog()`;
+  the lift worker's `_G` wrapper now WRAPS the prelude's `__newindex`
+  instead of replacing it). The logger card gains "Globals touched" +
+  "Global-env access" sections; the recording text gains an annotated
+  `--==== global-env access ====` block.
+- **Notable-string classifier** (`src/notable.js`): exfil webhooks, bot-token
+  shapes, second-stage loader chains, IP endpoints, asset refs, credential
+  keywords, payload blobs are flagged and surfaced FIRST in the card and the
+  recording — token loggers are visible in seconds instead of buried in
+  thousands of decrypted strings.
+- **VPS disk artifacts** (env-gated `BX_DUMP_ARTIFACTS=1`): every recording
+  is persisted to `var/dumps/logger-<ts>-<file>.lua` (0600, newest-200 prune)
+  — the paste may expire, the disk copy does not.
+
+### DeobfVM VPS mode (env-gated `BX_VPS=1`, defaults unchanged for tests/Render)
+- vm-lift-worker: instruction budget 260M → 500M, wall clock 100s → 220s,
+  probe rerun ladder 8 → 12 attempts, targeted lift passes +2 → +4, lift
+  budget share 45% → 50%.
+- harvester-worker: budget 300M → 500M, wall 100s → 220s, string sink cap
+  60k → 120k.
+
+### Ops (same session)
+- VPS recovered again from the provider outage; the pm2 daemon had been killed
+  by host pressure (node load ~20) and stayed dead — the container has NO
+  systemd/cron (PID 1 = tini) so pm2 startup never hooked anything. Fixed with
+  an in-container watchdog (`/root/pm2-watchdog.sh`, 60s loop, resurrect +
+  fallback direct start) + an 8-hourly external cron watchdog.
+- v2.24.0 was already live on the box (tarball overlay + pm2 restart); this
+  v2.25.0 deploy reuses the same flow with the two VPS env flags appended.
+
+### Tests
+- New suites: `test/notable.js` (11) + `test/envlog.js` (4, incl. worker E2E
+  envlog capture + evidence store round-trip on an isolated varDir).
+- Updated: dashboard + antitamper expect the 8-identity ladder.
+- ALL 27 SUITES GREEN (26 + ported.js v2.24.0 suite on the correct base).
+
+
 ## v2.24.0 — OmniDBF family lifters ported into the live bot (vendor/omnidbf)
 
 **User: "Copy the code from the rebranded lucid Deobf and improve our own lucid

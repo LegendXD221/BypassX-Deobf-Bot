@@ -30,6 +30,7 @@ import {
   acquireDanger, releaseDanger, audit, confirmGate,
 } from './owner-guard.js';
 import * as db from './db.js';
+import { bootAudit as atBootAudit } from './antitamper/evidence.js';
 import { setDashboardClient, announceDashboard, initDashboardToken } from './dashboard.js';
 import { startKeepalive, markDiscordReady } from './keepalive.js';
 
@@ -71,6 +72,7 @@ client.once(Events.ClientReady, async (c) => {
   setDashboardClient(c);
   await initDashboardToken(); // DB-backed token — survives Render redeploys
   announceDashboard();
+  atBootAudit(); // v2.25.0 AntiTamper V3: jail-shape audit → evidence store (fire-and-forget)
   c.user.setPresence({
     activities: [{ name: '.deobf | .lph .ms3 .ms2 +12 more | best deobf bot', type: 3 }], // 3 = WATCHING
     status: 'online',

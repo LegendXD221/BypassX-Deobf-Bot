@@ -27,6 +27,8 @@ import { logger } from '../logger.js';
 import { bumpJob } from '../keepalive.js';
 import { detectService } from '../detect.js';
 import { verifyCode } from '../validate.js';
+import { classifyStrings, kindLabel } from '../notable.js';
+import { record as recordEvidence } from '../antitamper/evidence.js';
 import { describe as dbDescribe, logDeobf, stat } from '../db.js';
 
 /** Classify one captured chunk: source (lua/js), bytecode, or data. */
@@ -45,6 +47,20 @@ function classifyChunkBasic(text) {
 export function buildLoggerReport(h = {}) {
   const strings = Array.isArray(h.strings) ? h.strings : [];
   const { kept, dropped } = reconstructPool(strings);
+
+  // v2.25.0 env logger V2: global-env access record from the jailed run —
+  // WHAT the script read from / wrote to _G (deduped, capped by the worker).
+  const rawEnv = h.envlog && typeof h.envlog === 'object' ? h.envlog : null;
+  const env = {
+    reads: Array.isArray(rawEnv?.reads) ? rawEnv.reads.slice(0, 12) : [],
+    writes: Array.isArray(rawEnv?.writes) ? rawEnv.writes.slice(0, 12) : [],
+    readTotal: rawEnv?.reads?.reduce((a, r) => a + (r.c || 0), 0) || 0,
+    writeTotal: rawEnv?.writes?.reduce((a, w) => a + (w.c || 0), 0) || 0,
+  };
+
+  // v2.25.0 dumper upgrade: notable-string classification — exfil endpoints,
+  // credentials, loader chains surface FIRST instead of drowning in noise.
+  const notable = classifyStrings(kept, { cap: 24 });
 
   const seen = new Set();
   const chunks = [];
@@ -79,6 +95,8 @@ export function buildLoggerReport(h = {}) {
     counts,
     strings: { kept, dropped },
     urls,
+    env,
+    notable,
     ran: Boolean(h.ran),
     runError: h.runError || h.error || null,
   };
@@ -122,8 +140,22 @@ export function buildRecordingText(report, { filename = 'input.lua' } = {}) {
   if (report.strings.kept.length) {
     parts.push(harvestToLua({ strings: report.strings.kept }, { detectedName: 'Environment Logger recording' }));
   }
+  if (report.notable?.length) {
+    parts.push([
+      '--==== notable strings (safety-relevant — classify first) ====\n',
+      ...report.notable.map((x) => `-- [${kindLabel(x.kind)}] ${x.s.length > 200 ? x.s.slice(0, 200) + '…' : x.s}`),
+    ].join('\n'));
+  }
   if (report.urls.length) {
     parts.push(`--==== URLs recorded ==== \n${report.urls.map((u) => `-- ${u}`).join('\n')}`);
+  }
+  if (report.env?.reads?.length || report.env?.writes?.length) {
+    const fmt = (list) => list.map((x) => `-- ${x.n} (×${x.c})`).join('\n');
+    parts.push([
+      `--==== global-env access (${report.env.readTotal} reads / ${report.env.writeTotal} writes) ====`,
+      report.env.reads.length ? '-- reads:\n' + fmt(report.env.reads) : null,
+      report.env.writes.length ? '-- writes:\n' + fmt(report.env.writes) : null,
+    ].filter(Boolean).join('\n'));
   }
   return parts.join('\n\n');
 }
@@ -181,7 +213,36 @@ export async function runLogger(ctx, { lift = liftVM } = {}) {
     const report = buildLoggerReport(h || {});
     report.signature = signature;
 
+    try {
+      recordEvidence({
+        type: 'logger',
+        verdict: report.verdict,
+        chunks: report.counts.total,
+        strings: report.strings.kept.length,
+        notable: (report.notable || []).slice(0, 8).map((x) => ({ kind: x.kind, preview: x.s.slice(0, 80) })),
+        file: att.filename,
+      });
+    } catch { /* evidence never breaks a run */ }
+
     const recordingText = buildRecordingText(report, { filename: att.filename });
+
+    // v2.25.0 (VPS edition): the recording persists on DISK — the paste may
+    // expire, the VPS copy does not. Env-gated (BX_DUMP_ARTIFACTS=1) with a
+    // newest-200 prune so the store cannot grow unbounded.
+    if (process.env.BX_DUMP_ARTIFACTS === '1') {
+      try {
+        const dumpsDir = ensureVarDir('dumps');
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const safe = String(att.filename || 'input').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 60);
+        await fsp.writeFile(path.join(dumpsDir, `logger-${stamp}-${safe}.lua`), recordingText, { mode: 0o600, flag: 'w' });
+        const old = (await fsp.readdir(dumpsDir)).filter((f) => f.startsWith('logger-')).sort();
+        for (const f of old.slice(0, Math.max(0, old.length - 200))) {
+          await fsp.rm(path.join(dumpsDir, f), { force: true }).catch(() => {});
+        }
+      } catch (e) {
+        logger.warn({ err: String(e.message || e).slice(0, 120) }, 'logger: artifact dump failed');
+      }
+    }
     let paste = null;
     try {
       paste = await createPaste({

@@ -18,6 +18,7 @@ import {
   SeparatorBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder, FileBuilder,
 } from 'discord.js';
 import { TIER, SERVICES } from './detect.js';
+import { kindLabel } from './notable.js';
 import { SERVICE_COMMANDS, serviceCommandLines, serviceUsageLine } from './service-catalog.js';
 import { CONFIG } from './config.js';
 import { prettyEngine } from './pretty.js';
@@ -207,7 +208,25 @@ export function loggerReply(report, paste, filename, prefix, fileBuffer = null) 
       { label: 'load() chunks', value: `${report.counts.total} captured — ${report.counts.sources} source, ${report.counts.bytecode} bytecode, ${report.counts.data} data` },
       { label: 'Pool strings', value: `${report.strings.kept.length} decrypted${report.strings.dropped ? ` (${report.strings.dropped} noise fragments filtered)` : ''}` },
       { label: 'URLs seen', value: String(report.urls.length) },
+      // v2.25.0 env logger V2: global-env access record + notable strings
+      { label: 'Globals touched', value: `${report.env?.reads?.length || 0} read${report.env?.writes?.length ? ` · ${report.env.writes.length} written` : ''}${report.env?.readTotal ? ` (${report.env.readTotal} hits)` : ''}` },
+      { label: 'Notable strings', value: report.notable?.length ? `${report.notable.length} flagged${report.notable.some((x) => x.kind === 'webhook' || x.kind === 'token') ? ' — ⚠️ credential/exfil markers' : ''}` : 'none flagged' },
     ]);
+    if (report.notable?.length) {
+      c.addSeparatorComponents(SEP());
+      c.addTextDisplayComponents(T([
+        '**Notable strings** (safety-relevant first)',
+        ...report.notable.slice(0, 6).map((x) => `• \`${kindLabel(x.kind)}\` — ${clamp(x.s.replace(/\s+/g, ' '), 110)}`),
+      ].join('\n')));
+    }
+    if (report.env?.reads?.length || report.env?.writes?.length) {
+      c.addSeparatorComponents(SEP());
+      c.addTextDisplayComponents(T([
+        '**Global-env access**',
+        report.env.reads.length ? `• reads: ${report.env.reads.slice(0, 8).map((r) => `\`${r.n}\``).join(', ')}` : null,
+        report.env.writes.length ? `• writes: ${report.env.writes.slice(0, 8).map((w) => `\`${w.n}\``).join(', ')}` : null,
+      ].filter(Boolean).join('\n')));
+    }
     if (report.urls.length) {
       c.addSeparatorComponents(SEP());
       c.addTextDisplayComponents(T([
