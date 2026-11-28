@@ -17,6 +17,7 @@ import * as engine from './engine.js';
 import { postprocessFile, beautifyCode } from './postprocess.js';
 import { spawnHardened } from './security.js';
 import { harvestConstants, harvestToLua, liftVM } from './harvest.js';
+import { hasLua53, runLua53Jailed } from './lua53-runner.js';
 import { verifyCode } from './validate.js';
 import { prometheusDeepPass } from './prometheus-deep.js';
 import { transformLuauToLua, repairInvalidEscapes } from './luau-shim.js';
@@ -1061,6 +1062,15 @@ async function runLift(inputPath, detected, stage) {
     const nChunks = (h.chunks || []).length;
     const hasSnap = Boolean(h.lift && h.lift.snap);
     if (!h.ok || (nStrings < 3 && nChunks === 0 && !hasSnap)) {
+      if (hasLua53()) {
+        const l53 = await runLua53Jailed(inputPath, { timeoutMs: Math.min(CONFIG.engineTimeoutMs, 30_000) });
+        const lStrings = (l53.strings || []).length;
+        const lChunks = (l53.chunks || []).length;
+        if (l53.ok && (lStrings >= 3 || lChunks > 0)) {
+          stage('vm-lift:hit', `${lStrings} strings decrypted, ${lChunks} load()-chunks captured (64-bit Lua 5.3 jail)`);
+          return { ...l53, lift: null };
+        }
+      }
       stage('vm-lift:miss', h.error || `only ${nStrings} strings, ${nChunks} chunks, snap=${hasSnap}`);
       return null;
     }

@@ -9,6 +9,7 @@
  */
 import { spawnHardened } from './security.js';
 import { logger } from './logger.js';
+import { hasLua53, runLua53Jailed } from './lua53-runner.js';
 
 const workerPath = new URL('./harvester-worker.js', import.meta.url)
   .pathname.replace(/^\/([A-Za-z]:)/, '$1');
@@ -38,8 +39,14 @@ export async function harvestConstants(inputPath, { timeoutMs = 120_000, budget 
   if (!line) return { ok: false, error: 'harvest worker produced no result' };
   try {
     const data = JSON.parse(line);
-    if (!data.ok) return { ok: false, error: data.error || 'harvest failed' };
-    return {
+    if (!data.ok) {
+      if (hasLua53()) {
+        const l53 = await runLua53Jailed(inputPath, { timeoutMs });
+        if (l53.ok) return l53;
+      }
+      return { ok: false, error: data.error || 'harvest failed' };
+    }
+    const fengariRes = {
       ok: true,
       ran: data.ran,
       strings: data.strings || [],
@@ -47,6 +54,13 @@ export async function harvestConstants(inputPath, { timeoutMs = 120_000, budget 
       log: data.log || [],
       runError: data.runError,
     };
+    if (hasLua53() && fengariRes.chunks.length === 0 && (fengariRes.runError || fengariRes.strings.length < 3)) {
+      const l53 = await runLua53Jailed(inputPath, { timeoutMs });
+      if (l53.ok && (l53.chunks.length > 0 || l53.strings.length > fengariRes.strings.length || (l53.ran && !fengariRes.ran))) {
+        return l53;
+      }
+    }
+    return fengariRes;
   } catch (e) {
     logger.warn({ err: String(e.message || e).slice(0, 150) }, 'harvest: bad worker output');
     return { ok: false, error: 'harvest output parse failed' };
