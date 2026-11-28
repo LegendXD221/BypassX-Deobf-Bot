@@ -831,11 +831,19 @@ export function codeToolReply({
       c.addSeparatorComponents(SEP());
       c.addTextDisplayComponents(T(clamp(note, 700)));
     }
-    if (code != null || fileBuffer) {
+    if (paste || code != null || fileBuffer) {
       c.addSeparatorComponents(SEP());
       if (paste) {
-        const defs = [{ label: '🧾 Open paste', url: paste.url }, { label: 'Raw', url: paste.rawUrl }];
-        c.addActionRowComponents(linkRow(defs));
+        const parts = paste.parts || [];
+        if (parts.length > 1) {
+          const shown = parts.slice(0, 4).map((p) => ({ label: `Part ${p.index}/${p.of}`, url: p.url }));
+          c.addActionRowComponents(linkRow([...shown, { label: 'Raw', url: paste.rawUrl }]));
+          const rest = parts.slice(4).map((p) => `[Part ${p.index}](${p.url})`).join(' • ');
+          if (rest) c.addTextDisplayComponents(T(`-# More parts: ${clamp(rest, 350)}`));
+        } else {
+          const defs = [{ label: '🧾 Open paste', url: paste.url }, { label: 'Raw', url: paste.rawUrl }];
+          c.addActionRowComponents(linkRow(defs));
+        }
       }
       if (code != null) {
         const budget = Math.max(220, Math.min(1500, v2TextBudgetLeft(c) - 180));
@@ -850,7 +858,7 @@ export function codeToolReply({
         files.push(new AttachmentBuilder(buf, { name }));
         c.addFileComponents(new FileBuilder().setURL(`attachment://${name}`));
       }
-      if (paste && code != null && paste.parts?.length > 1) {
+      if (paste && paste.parts?.length > 1) {
         c.addTextDisplayComponents(T(`-# Large output delivered as ${paste.parts.length} paste parts.`));
       }
     }

@@ -69,6 +69,17 @@ function unescapeLuaQuoted(raw) {
       const hex = raw.slice(i + 2, i + 4);
       out.push(parseInt(hex, 16) || 0);
       i += 3;
+    } else if (n === 'u' && raw[i + 2] === '{') {
+      const end = raw.indexOf('}', i + 3);
+      if (end !== -1) {
+        const cp = parseInt(raw.slice(i + 3, end), 16) || 0;
+        const encoded = Buffer.from(String.fromCodePoint(Math.min(0x10ffff, cp)), 'utf8');
+        for (const b of encoded) out.push(b);
+        i = end;
+      } else {
+        out.push(117);
+        i += 1;
+      }
     } else if (n === 'z') {
       // \z skips following whitespace — skip until next non-ws
       let j = i + 2;
@@ -77,7 +88,7 @@ function unescapeLuaQuoted(raw) {
     } else if (n >= '0' && n <= '9') {
       let j = i + 1, v = 0, digits = 0;
       while (j < raw.length && digits < 3 && raw[j] >= '0' && raw[j] <= '9') {
-        v = v * 8 + (raw.charCodeAt(j) - 48);
+        v = v * 10 + (raw.charCodeAt(j) - 48);
         j += 1; digits += 1;
       }
       out.push(v & 0xff);
