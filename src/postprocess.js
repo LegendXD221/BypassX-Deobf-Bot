@@ -246,3 +246,89 @@ export function beautifyCode(name, data) {
     return { data, passes };
   }
 }
+
+function stripLuaCommentsSafe(src) {
+  let out = '';
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const ch = src[i];
+    if (ch === '\'' || ch === '"') {
+      const q = ch;
+      let j = i + 1;
+      while (j < n && src[j] !== q) {
+        if (src[j] === '\\') j += 2;
+        else j++;
+      }
+      out += src.slice(i, Math.min(n, j + 1));
+      i = j + 1;
+      continue;
+    }
+    if (ch === '[') {
+      const m = src.slice(i, i + 32).match(/^\[(=*)\[/);
+      if (m) {
+        const close = ']' + m[1] + ']';
+        const end = src.indexOf(close, i + m[0].length);
+        if (end !== -1) {
+          out += src.slice(i, end + close.length);
+          i = end + close.length;
+          continue;
+        }
+      }
+    }
+    if (ch === '-' && src[i + 1] === '-') {
+      const m = src.slice(i + 2, i + 34).match(/^\[(=*)\[/);
+      if (m) {
+        const close = ']' + m[1] + ']';
+        const end = src.indexOf(close, i + 2 + m[0].length);
+        if (end !== -1) { i = end + close.length; out += ' '; continue; }
+      }
+      const nl = src.indexOf('\n', i);
+      if (nl === -1) break;
+      out += '\n';
+      i = nl + 1;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Minify Lua or JS source safely (preserves string literals and long brackets).
+ */
+export function minifyCode(name, data) {
+  const passes = [];
+  try {
+    if (!Buffer.isBuffer(data) || data.length === 0 || data.subarray(0, 1024).includes(0)) {
+      return { data, passes };
+    }
+    let text = data.toString('utf8');
+    const ext = path.extname(name).toLowerCase();
+    const lang = LUA_EXT.has(ext) ? 'lua'
+      : JS_EXT.has(ext) ? 'js'
+      : (/\blocal\s+(function|\w)\b/.test(text.slice(0, 4000)) && /\bend\b/.test(text.slice(0, 4000))) ? 'lua'
+      : (/\b(function|const|let|var)\b/.test(text.slice(0, 4000)) && !/\bthen\b/.test(text.slice(0, 4000))) ? 'js'
+      : null;
+    if (!lang) return { data, passes };
+
+    if (lang === 'lua') {
+      text = stripLuaCommentsSafe(text);
+      passes.push('lua comment strip');
+    } else {
+      text = text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:\\])\/\/[^\n]*/g, '$1');
+      passes.push('js comment strip');
+    }
+    text = text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .join('\n');
+    passes.push(`${lang} minify`);
+    text = redactSecrets(sanitizePaths(text)).replace(/\s+$/g, '\n');
+    return { data: Buffer.from(text, 'utf8'), passes };
+  } catch {
+    return { data, passes };
+  }
+}

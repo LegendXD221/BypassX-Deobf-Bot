@@ -111,8 +111,9 @@ do
   getexecutorname = function()
     return '${name}', '${version}'
   end
-  getthreadidentity = function() return ${ident} end
-  setthreadidentity = function() end
+  local __bx_thread_id = ${ident}
+  getthreadidentity = function() return __bx_thread_id end
+  setthreadidentity = function(n) if type(n) == 'number' then __bx_thread_id = n end end
   checkcaller = function() return true end
 
   -- env tables (distinct, like real executors) --------------------------------
@@ -274,9 +275,12 @@ do
   end
 
   -- filesystem (in-memory; executor workspace semantics) ------------------------
+  local __bx_dirs = {}
   writefile = function(p, c)
     if type(p) ~= 'string' then error("bad argument #1 to 'writefile' (string expected)", 2) end
-    __bx_fs[p] = tostring(c or '')
+    local s = tostring(c or '')
+    __bx_fs[p] = s
+    if #s >= 16 and _BX_LOG and #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = 'writefile:' .. p .. ':' .. s:sub(1, 200) end
   end
   appendfile = function(p, c)
     if type(p) ~= 'string' then error("bad argument #1 to 'appendfile' (string expected)", 2) end
@@ -289,17 +293,34 @@ do
   end
   isfile = function(p) return type(p) == 'string' and __bx_fs[p] ~= nil end
   delfile = function(p) __bx_fs[p] = nil end
-  isfolder = function() return false end
-  makefolder = function() end
-  delfolder = function() end
-  listdir = function() return {} end
+  isfolder = function(p) return type(p) == 'string' and __bx_dirs[p] == true end
+  makefolder = function(p) if type(p) == 'string' then __bx_dirs[p] = true end end
+  delfolder = function(p)
+    if type(p) ~= 'string' then return end
+    __bx_dirs[p] = nil
+    local pref = p .. '/'
+    for k in pairs(__bx_fs) do if k:sub(1, #pref) == pref then __bx_fs[k] = nil end end
+  end
+  listfiles = function(dir)
+    local out = {}
+    local pref = type(dir) == 'string' and dir ~= '' and (dir:gsub('/+$', '') .. '/') or ''
+    for k in pairs(__bx_fs) do
+      if pref == '' or k:sub(1, #pref) == pref then out[#out + 1] = k end
+    end
+    return out
+  end
+  listdir = listfiles
   israwfile = isfile
 
   -- misc executor surface ---------------------------------------------------------
   setclipboard = function() end
   toclipboard = setclipboard
   setfpscap = function() end
-  queue_on_teleport = function(c) __bx_queue[#__bx_queue + 1] = tostring(c or '') end
+  queue_on_teleport = function(c)
+    local s = tostring(c or '')
+    __bx_queue[#__bx_queue + 1] = s
+    if #s >= 8 and _BX_LOG and #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = 'queue_on_teleport:' .. s:sub(1, 300) end
+  end
   fireclickdetector = function() end
   firetouchinterest = function() end
   fireproximityprompt = function() end

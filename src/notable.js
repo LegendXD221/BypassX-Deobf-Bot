@@ -21,6 +21,8 @@
  */
 
 const RE_WEBHOOK = /(?:(?:canary\.|ptb\.)?discord(?:app)?\.com|discord\.gg)\/api\/(?:v\d+\/)?webhooks\/|(?:webhook\.lewisakura\.moe|hooks\.hyra\.io|hooks\.slack\.com|api\.telegram\.org\/bot|webhook\.site|requestbin\.\w+|ngrok(?:-free)?\.app|ngrok\.io|pipedream\.net|oastify\.com|burpcollaborator\.net)/i;
+const RE_IPLOGGER = /\b(?:api\.ipify\.org|grabify\.link|iplogger\.org|ip-api\.com|icanhazip\.com|ifconfig\.me|checkip\.amazonaws\.com|ipinfo\.io)\b/i;
+const RE_STEALER = /\.ROBLOSECURITY|Local Storage[\\/]leveldb|discord[\\/]Local Storage|io\.popen\s*\(|os\.execute\s*\(|require\s*\(\s*["'](?:ffi|lfs)["']\s*\)/i;
 const RE_GATEWAY = /(?:gateway|discord)\.(?:com|app|gg|status)\//i;
 // Discord bot-token shape: three dot-separated segments (id.timestamp.hmac).
 // Not \b-anchored per-part — ids are mixed-alphabet base64 (e.g. 'AAAABBBB…').
@@ -38,7 +40,7 @@ const RE_LOADER = /\b(?:loadstring|load|require|getgenv|queue_on_teleport|HttpSe
 // REAL word-start/end chars (letters/digits) and treats '_' as a boundary.
 const RE_SECRET_KW = /(?:^|[^A-Za-z0-9])(?:password|passwd|api[_-]?key|apikey|secret|token|cookie|hwid|license|auth|webhook)(?:[^A-Za-z0-9]|$)/i;
 
-export const NOTABLE_KINDS = ['webhook', 'token', 'loader', 'guild-join', 'ip-endpoint', 'url', 'secret', 'asset', 'base64'];
+export const NOTABLE_KINDS = ['webhook', 'token', 'stealer', 'iplogger', 'loader', 'guild-join', 'ip-endpoint', 'url', 'secret', 'asset', 'base64'];
 
 /**
  * Classify one string → kind or null.
@@ -49,6 +51,8 @@ export function classifyString(s) {
   if (typeof s !== 'string' || s.length < 4) return null;
   if (RE_WEBHOOK.test(s)) return 'webhook';
   if (RE_TOKEN.test(s)) return 'token';
+  if (RE_STEALER.test(s)) return 'stealer';
+  if (RE_IPLOGGER.test(s)) return 'iplogger';
   if (RE_GATEWAY.test(s) && RE_URL.test(s)) return 'guild-join';
   if (RE_ASSET_STRONG.test(s)) return 'asset';
   if (RE_LOADER.test(s)) return 'loader';
@@ -87,6 +91,8 @@ export function kindLabel(kind) {
   switch (kind) {
     case 'webhook': return 'exfil webhook';
     case 'token': return 'credential token';
+    case 'stealer': return 'stealer / dangerous API';
+    case 'iplogger': return 'IP logger';
     case 'guild-join': return 'gateway/guild endpoint';
     case 'ip-endpoint': return 'IP endpoint';
     case 'url': return 'URL';
