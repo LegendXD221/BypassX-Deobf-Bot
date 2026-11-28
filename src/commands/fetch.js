@@ -4,7 +4,7 @@
 import { CONFIG } from '../config.js';
 import { getInputBuffer } from '../ctx.js';
 import { detectService, guessLanguage } from '../detect.js';
-import { codeToolReply, errorReply, fmtBytes } from '../replies.js';
+import { BRAND, codeToolReply, errorReply, fmtBytes } from '../replies.js';
 
 export default {
   name: 'fetch',
@@ -37,6 +37,7 @@ export default {
     return ctx.reply(codeToolReply({
       title: '🌐 Fetched Script',
       subtitle: att.note || detLabel,
+      accent: BRAND.info,
       factsRows: [
         { label: 'File', value: att.filename || 'fetched.lua' },
         { label: 'Size', value: fmtBytes(att.buffer.length) },

@@ -7,7 +7,7 @@ import { CONFIG } from '../config.js';
 import { getInputBuffer } from '../ctx.js';
 import { classifyString, kindLabel } from '../notable.js';
 import { redactSecrets } from '../redact.js';
-import { codeToolReply, errorReply, fmtBytes } from '../replies.js';
+import { BRAND, codeToolReply, errorReply, fmtBytes } from '../replies.js';
 
 const SCAN_RULES = [
   { kind: 'webhook', severity: 'HIGH', re: /(?:(?:canary\.|ptb\.)?discord(?:app)?\.com|discord\.gg)\/api\/(?:v\d+\/)?webhooks\/[^\s"'`<>\\]{6,}|(?:webhook\.lewisakura\.moe|hooks\.hyra\.io|hooks\.slack\.com|api\.telegram\.org\/bot|webhook\.site|requestbin\.\w+|ngrok(?:-free)?\.app|ngrok\.io|pipedream\.net)[^\s"'`<>\\]*/gi },
@@ -88,9 +88,13 @@ export default {
       ? report.findings.map((f, i) => `${i + 1}. [${f.severity}] (${f.label}) ${f.sample}`)
       : ['No webhooks, IP loggers, stealers, dangerous OS/FFI calls, or remote loaders detected.'];
 
+    const accent = report.crit > 0 || report.high > 0
+      ? BRAND.err
+      : report.med > 0 ? BRAND.warn : BRAND.ok;
     return ctx.reply(codeToolReply({
       title: `🛡️ Threat Scan — ${report.verdict}`,
       subtitle: `${report.findings.length} indicator(s) found`,
+      accent,
       factsRows: [
         { label: 'File', value: att.filename || 'script' },
         { label: 'Size', value: fmtBytes(att.buffer.length) },

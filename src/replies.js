@@ -24,10 +24,11 @@ import { CONFIG } from './config.js';
 import { prettyEngine } from './pretty.js';
 
 export const BRAND = {
-  color: 0x7c3aed,
-  ok: 0x22c55e,
+  color: 0x8b5cf6,
+  info: 0x3b82f6,
+  ok: 0x10b981,
   warn: 0xf59e0b,
-  err: 0xef4444,
+  err: 0xf43f5e,
   name: 'Lucid Deobf',
 };
 
@@ -64,14 +65,41 @@ export function v2(containers, { files = [], ephemeral = false } = {}) {
 }
 
 const TIER_LABEL = {
-  [TIER.FULL]: '⬤ full recovery',
-  [TIER.PARTIAL]: '◐ partial recovery',
-  [TIER.DETECT]: '○ detect only',
+  [TIER.FULL]: '🟢 Full Recovery',
+  [TIER.PARTIAL]: '🟡 Partial Recovery',
+  [TIER.DETECT]: '⚪ Detect Only',
 };
 
 export function confidenceBar(pct) {
   const filled = Math.min(10, Math.max(0, Math.round(pct / 10)));
-  return `${'█'.repeat(filled)}${'░'.repeat(10 - filled)}`;
+  return `${'▰'.repeat(filled)}${'▱'.repeat(10 - filled)}`;
+}
+
+function codeLangFromName(name) {
+  const ext = String(name || '').toLowerCase();
+  if (/\.(?:js|mjs|cjs|ts|jsx|tsx)$/.test(ext)) return 'js';
+  if (/\.(?:py|pyw)$/.test(ext)) return 'py';
+  if (/\.(?:lua|luau|glua|txt)$/.test(ext)) return 'lua';
+  return '';
+}
+
+function attachOutputFile(c, files, buf, outName, paste, {
+  noPasteNote = '-# Pastefy upload failed — full output is attached below.',
+  overLimitPasteNote = '-# Output exceeds Discord 8 MB attachment limit — full output is in the Pastefy link above.',
+  overLimitTruncNote = '-# Pastefy failed and output exceeded 8 MB — attached first 7.9 MB.',
+} = {}) {
+  const safeName = safeAttachmentName(outName, 'output.lua');
+  if (buf.length <= MAX_DISCORD_ATTACHMENT) {
+    files.push(new AttachmentBuilder(buf, { name: safeName }));
+    c.addFileComponents(new FileBuilder().setURL(`attachment://${safeName}`));
+    if (!paste && noPasteNote) c.addTextDisplayComponents(T(noPasteNote));
+  } else if (paste) {
+    if (overLimitPasteNote) c.addTextDisplayComponents(T(overLimitPasteNote));
+  } else {
+    files.push(new AttachmentBuilder(buf.subarray(0, SAFE_TRUNC_SLICE), { name: safeName }));
+    c.addFileComponents(new FileBuilder().setURL(`attachment://${safeName}`));
+    if (overLimitTruncNote) c.addTextDisplayComponents(T(overLimitTruncNote));
+  }
 }
 
 function fmtBytes(n) {
@@ -102,11 +130,11 @@ function brandHeader(c, title, subtitle, client) {
   }
 }
 
-/** Uniform facts block — every row is `**Label** value`. */
+/** Uniform facts block — crisp `▸ **Label** · value` rows. */
 function facts(c, rows) {
   const body = rows.filter(Boolean).map((r) => {
     const { label, value } = r;
-    return `**${label}** ${value}`;
+    return `▸ **${label}** · ${value}`;
   }).join('\n');
   if (!body) return;
   c.addTextDisplayComponents(T(body));
@@ -117,33 +145,30 @@ function facts(c, rows) {
 export function helpReply(prefix, client) {
   const highlights = SERVICES.slice(0, 10).map((s) => s.name).join(' • ');
   const card = container(BRAND.color, (c) => {
-    brandHeader(c, '🧩 Lucid Deobf — help',
-      'Send an obfuscated file or a link — get back only the deobfuscated code, verified for syntax.', client);
+    brandHeader(c, '⚡ Lucid Deobf — Command Center',
+      'Send an obfuscated file or paste link — get clean, verified source code back.', client);
     c.addSeparatorComponents(SEP());
     c.addTextDisplayComponents(T([
-      '**Deobfuscate**',
-      `• **\`${prefix}deobf\`** \`<file | link>\` — full pipeline → pure code via Pastefy`,
-      `• **\`${prefix}lph\` \`${prefix}ms3\` \`${prefix}ms2\` \`${prefix}l\` +${Math.max(0, SERVICE_COMMANDS.length - 4)} more** — per-service commands, full list in \`${prefix}families\``,
-      `• **\`${prefix}detect\`** \`<file | link>\` — obfuscator ID + confidence %, no deobfuscation`,
-      `• **\`${prefix}families\`** — every supported service with its own command`,
+      '**🔓 Deobfuscation**',
+      `▸ **\`${prefix}deobf\`** \`<file | link>\` — full multi-stage pipeline → pure code + Pastefy`,
+      `▸ **\`${prefix}lph\` \`${prefix}ms3\` \`${prefix}ms2\` \`${prefix}l\` +${Math.max(0, SERVICE_COMMANDS.length - 4)} more** — targeted lifters (\`${prefix}families\`)`,
+      `▸ **\`${prefix}detect\`** \`<file | link>\` — identify obfuscator + confidence score`,
       '',
-      '**Obfuscate**',
-      `• **\`${prefix}obf\`** \`<file | link>\` — Xfuscator: our own obfuscator, shipped with the bot (v1 / v2 / v2.1)`,
+      '**🛡️ Security & Recon**',
+      `▸ **\`${prefix}scan\`** \`<file | link>\` — scan for webhooks, IP loggers, stealers & loaders`,
+      `▸ **\`${prefix}strings\`** \`<file | link>\` — extract & classify notable string constants`,
+      `▸ **\`${prefix}fetch\`** \`<link>\` — fetch raw script from any paste/repo URL`,
       '',
-      '**Utilities**',
-      `• **\`${prefix}scan\`** \`<file | link>\` — threat scan for webhooks, IP loggers, stealers & loaders`,
-      `• **\`${prefix}fetch\`** \`<link>\` — fetch raw script from any paste/repo link & detect`,
-      `• **\`${prefix}beautify\`** / **\`${prefix}minify\`** \`<file | link>\` — reformat or compact Lua/JS code`,
-      `• **\`${prefix}strings\`** \`<file | link>\` — extract the string table for quick recon`,
-      `• **\`${prefix}paste\`** \`<file | text>\` — upload any text/file to Pastefy`,
-      `• **\`${prefix}stats\`** — success rate, jobs served, uptime and engine build`,
-      `• **\`${prefix}history\`** — your last deobfuscation jobs`,
+      '**🧰 Code Tools & Obfuscator**',
+      `▸ **\`${prefix}beautify\`** / **\`${prefix}minify\`** \`<file | link>\` — reformat or compact Lua/JS`,
+      `▸ **\`${prefix}obf\`** \`<file | link>\` — Xfuscator Lua packer (v1 / v2 / v2.1)`,
+      `▸ **\`${prefix}paste\`** \`<file | text>\` — upload directly to Pastefy`,
       '',
-      '**Info**',
-      `• **\`${prefix}ping\`** • **\`${prefix}invite\`** • **\`${prefix}help\`**`,
+      '**📊 Bot & Account**',
+      `▸ **\`${prefix}stats\`** • **\`${prefix}history\`** • **\`${prefix}ping\`** • **\`${prefix}invite\`**`,
     ].join('\n')));
     c.addSeparatorComponents(SEP());
-    c.addTextDisplayComponents(T(`**Supported (highlights)**\n${highlights} • …and ${Math.max(0, SERVICES.length - 10)} more — see \`${prefix}families\``));
+    c.addTextDisplayComponents(T(`**Supported Obfuscators** (${SERVICES.length} total)\n${highlights} • *see \`${prefix}families\`*`));
   });
   return v2([card]);
 }
@@ -435,22 +460,10 @@ export function successReply(result, paste, filename, sourceUrl, sourceNote) {
       const preview = result.code.length <= sliceLen
         ? result.code
         : `${result.code.slice(0, sliceLen)}\n… (${result.code.length - sliceLen} more chars${paste ? ' in the paste' : ''})`;
-      c.addTextDisplayComponents(T(`**Preview**${result.code.length > sliceLen ? ' (truncated)' : ''}\n\`\`\`\n${clamp(preview, budget)}\n\`\`\``));
-      const outName = safeAttachmentName(result.codeName, 'deobfuscated.lua');
-      const codeBuf = Buffer.from(result.code, 'utf8');
-      if (codeBuf.length <= MAX_DISCORD_ATTACHMENT) {
-        files.push(new AttachmentBuilder(codeBuf, { name: outName }));
-        c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
-        if (!paste) {
-          c.addTextDisplayComponents(T('-# Pastefy upload failed — the full code is delivered as the attached file instead.'));
-        }
-      } else if (paste) {
-        c.addTextDisplayComponents(T('-# Output exceeds Discord 8 MB attachment limit — full code is in the Pastefy link above.'));
-      } else {
-        files.push(new AttachmentBuilder(codeBuf.subarray(0, SAFE_TRUNC_SLICE), { name: outName }));
-        c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
-        c.addTextDisplayComponents(T('-# Pastefy failed and output exceeded 8 MB — attached first 7.9 MB.'));
-      }
+      const lang = codeLangFromName(result.codeName || filename);
+      c.addTextDisplayComponents(T(`**Preview**${result.code.length > sliceLen ? ' *(truncated)*' : ''}\n\`\`\`${lang}\n${clamp(preview, budget)}\n\`\`\``));
+      attachOutputFile(c, files, Buffer.from(result.code, 'utf8'), result.codeName || 'deobfuscated.lua', paste);
+      c.addTextDisplayComponents(T('-# Tip: run `.scan` on recovered scripts to check for webhooks, IP loggers, or stealers.'));
     }
   });
   return v2([card], { files });
@@ -828,16 +841,9 @@ export function codeToolReply({
         const budget = Math.max(220, Math.min(1500, v2TextBudgetLeft(c) - 180));
         const sliceLen = Math.max(150, budget - 80);
         const preview = code.length <= sliceLen ? code : `${code.slice(0, sliceLen)}\n… (${code.length - sliceLen} more chars)`;
-        c.addTextDisplayComponents(T(`**Preview**${code.length > sliceLen ? ' (truncated)' : ''}\n\`\`\`\n${clamp(preview, budget)}\n\`\`\``));
-        const name = safeAttachmentName(codeName, 'output.txt');
-        const codeBuf = Buffer.from(code, 'utf8');
-        if (codeBuf.length <= MAX_DISCORD_ATTACHMENT) {
-          files.push(new AttachmentBuilder(codeBuf, { name }));
-          c.addFileComponents(new FileBuilder().setURL(`attachment://${name}`));
-        } else if (!paste) {
-          files.push(new AttachmentBuilder(codeBuf.subarray(0, SAFE_TRUNC_SLICE), { name }));
-          c.addFileComponents(new FileBuilder().setURL(`attachment://${name}`));
-        }
+        const lang = codeLangFromName(codeName);
+        c.addTextDisplayComponents(T(`**Preview**${code.length > sliceLen ? ' *(truncated)*' : ''}\n\`\`\`${lang}\n${clamp(preview, budget)}\n\`\`\``));
+        attachOutputFile(c, files, Buffer.from(code, 'utf8'), codeName || 'output.txt', paste || true, { noPasteNote: null });
       } else if (fileBuffer) {
         const name = safeAttachmentName(codeName, 'output.bin');
         const buf = fileBuffer.length <= MAX_DISCORD_ATTACHMENT ? fileBuffer : fileBuffer.subarray(0, SAFE_TRUNC_SLICE);

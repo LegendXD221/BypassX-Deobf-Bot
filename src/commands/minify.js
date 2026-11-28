@@ -4,7 +4,7 @@
 import { CONFIG } from '../config.js';
 import { getInputBuffer } from '../ctx.js';
 import { minifyCode } from '../postprocess.js';
-import { codeToolReply, errorReply, fmtBytes } from '../replies.js';
+import { BRAND, codeToolReply, errorReply, fmtBytes } from '../replies.js';
 
 export default {
   name: 'minify',
@@ -38,6 +38,7 @@ export default {
     return ctx.reply(codeToolReply({
       title: '🗜️ Minified',
       subtitle: `${result.passes.join(' • ')} (${savedPct}% smaller)`,
+      accent: BRAND.ok,
       factsRows: [
         { label: 'File', value: att.filename || 'code' },
         { label: 'Before → After', value: `${fmtBytes(att.buffer.length)} → ${fmtBytes(result.data.length)}` },
