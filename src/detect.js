@@ -33,6 +33,7 @@ export const SERVICES = [
       { re: /\bLPH_(?:ENCSTR|ENCFUNC|CRASH|JIT|NOJIT|STR|VM)\b/, weight: 45, label: 'LPH_* VM macros' },
       { re: /lura\.ph/i, weight: 30, label: 'lura.ph domain reference' },
       { re: /--\s*Luraph/i, weight: 20, label: 'Luraph comment' },
+      { re: /return\s+setmetatable\(\{[\s\S]{0,600}\[\d+\]\s*=\s*(?:bit32|buffer|string|table|math)\.\w+/, weight: 45, label: 'Luraph v15 setmetatable lib slots' },
     ],
   },
   {
@@ -200,9 +201,12 @@ export const SERVICES = [
     versions: 'v1.x → v2.0.26 (latest)',
     indicators: [
       { re: /generated using MoonVeil v?([\d.]+)/i, weight: 60, version: 1, label: 'MoonVeil version header' },
+      { re: /(?:moonveil|moon_veil)[^\n]{0,80}(?:stage|payload|v?1\.4\.5)/i, weight: 50, label: 'MoonVeil staged-build marker' },
+      { re: /(?:mv|moonveil)[_$-]?(?:loader|vm|decrypt|stage)/i, weight: 40, label: 'MoonVeil loader marker' },
       { re: /--[[-]\s*MoonVeil|moonveil\.cc/i, weight: 40, label: 'MoonVeil banner / domain' },
       { re: /\bMoonVeil\b/i, weight: 20, label: 'MoonVeil mention' },
     ],
+    extra: 'moonveil_structural',
   },
   {
     id: '77fuscator', name: '77fuscator', lang: 'lua', tier: TIER.PARTIAL, engineFamily: null,
@@ -438,6 +442,14 @@ export function detectService(buf) {
     if (service.extra === 'needs_magic_check') {
       if (!binaryMagic) score = Math.max(0, score - 30);
       else score += 25;
+    }
+    if (service.extra === 'moonveil_structural') {
+      const binCount = (text.match(/(?<![A-Za-z0-9_])0b[01]+(?![A-Za-z0-9_])/g) || []).length;
+      const hexCount = (text.match(/(?<![A-Za-z0-9_])0x[0-9a-f]+(?![A-Za-z0-9_])/gi) || []).length;
+      if (binCount >= 3 && hexCount >= 8 && /return\s*\(?\s*\{\s*function/.test(text)) {
+        score += 45;
+        evidence.push('MoonVeil VM literal/control-flow shape');
+      }
     }
 
     // Binary-services sanity: UPX/native need a PE/ELF/Mach-O container,

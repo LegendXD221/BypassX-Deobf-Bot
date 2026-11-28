@@ -195,7 +195,12 @@ export async function safeFetch(rawUrl, { maxBytes, timeoutMs = 30_000, headers 
       throw new Error(`File too large: ${(len / 1024 / 1024).toFixed(2)} MB (limit ${(maxBytes / 1024 / 1024).toFixed(0)} MB).`);
     }
     const buffer = await readCapped(res.body, maxBytes, cur.host);
-    return { buffer, contentType: res.headers.get('content-type') || '', finalUrl: cur };
+    const contentType = res.headers.get('content-type') || '';
+    const head = buffer.subarray(0, 512).toString('utf8').trimStart().toLowerCase();
+    if (head.startsWith('<!doctype html') || head.startsWith('<html')) {
+      throw new Error(`URL returned an HTML page instead of raw script (\`${cur.host}\`) — use the raw link or attach the file.`);
+    }
+    return { buffer, contentType, finalUrl: cur };
   }
   throw new Error('Too many redirects (max 5).');
 }

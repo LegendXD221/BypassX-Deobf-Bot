@@ -50,6 +50,7 @@ _BX_CHUNKS = {}
 -- instrumentation names (_BX_*/__bx/_bx_). _BX_MUTE-guarded so the lifter's
 -- own serialization never pollutes the record.
 _BX_ENVLOG = { r = {}, w = {} }
+local __raw_sub = string.sub
 local __N = 0
 local __C = 0
 local __B = 0
@@ -642,6 +643,248 @@ if math and math.nan == nil then math.nan = 0 / 0 end
 print = function(...) local t = {} for i = 1, select('#', ...) do t[#t + 1] = tostring(select(i, ...)) end if #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = table.concat(t, ' ') end end
 warn = print
 
+-- Roblox Datatype Mocks (Vector2, Vector3, CFrame, Color3, UDim/UDim2, Rect, Ray, Sequences, Path2DControlPoint)
+do
+  local sqrt, sin, cos, atan2, acos, abs, floor, max, min =
+    math.sqrt, math.sin, math.cos, math.atan2, math.acos, math.abs, math.floor, math.max, math.min
+
+  local v2mt = {}
+  local function mkv2(x, y) return setmetatable({ X = x or 0, Y = y or 0, x = x or 0, y = y or 0 }, v2mt) end
+  v2mt.__index = {
+    Dot = function(a, b) return a.X * b.X + a.Y * b.Y end,
+    Cross = function(a, b) return a.X * b.Y - a.Y * b.X end,
+    Lerp = function(a, b, t) return mkv2(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t) end,
+    Abs = function(a) return mkv2(abs(a.X), abs(a.Y)) end,
+    Floor = function(a) return mkv2(floor(a.X), floor(a.Y)) end,
+  }
+  local oldV2Idx = v2mt.__index
+  v2mt.__index = function(t, k)
+    if k == 'Magnitude' then return sqrt(t.X * t.X + t.Y * t.Y) end
+    if k == 'Unit' then local m = sqrt(t.X * t.X + t.Y * t.Y); return m > 0 and mkv2(t.X / m, t.Y / m) or mkv2(0, 0) end
+    return oldV2Idx[k]
+  end
+  v2mt.__add = function(a, b) return mkv2(a.X + b.X, a.Y + b.Y) end
+  v2mt.__sub = function(a, b) return mkv2(a.X - b.X, a.Y - b.Y) end
+  v2mt.__unm = function(a) return mkv2(-a.X, -a.Y) end
+  v2mt.__mul = function(a, b)
+    if type(a) == 'number' then return mkv2(a * b.X, a * b.Y) end
+    if type(b) == 'number' then return mkv2(a.X * b, a.Y * b) end
+    return mkv2(a.X * b.X, a.Y * b.Y)
+  end
+  v2mt.__div = function(a, b)
+    if type(b) == 'number' then return mkv2(a.X / b, a.Y / b) end
+    return mkv2(a.X / b.X, a.Y / b.Y)
+  end
+  v2mt.__eq = function(a, b) return type(b) == 'table' and a.X == b.X and a.Y == b.Y end
+  v2mt.__tostring = function(a) return string.format('%g, %g', a.X, a.Y) end
+  Vector2 = { new = mkv2, zero = mkv2(0, 0), one = mkv2(1, 1), xAxis = mkv2(1, 0), yAxis = mkv2(0, 1) }
+
+  local v3mt = {}
+  local function mkv3(x, y, z) return setmetatable({ X = x or 0, Y = y or 0, Z = z or 0, x = x or 0, y = y or 0, z = z or 0 }, v3mt) end
+  local v3methods = {
+    Dot = function(a, b) return a.X * b.X + a.Y * b.Y + a.Z * b.Z end,
+    Cross = function(a, b) return mkv3(a.Y * b.Z - a.Z * b.Y, a.Z * b.X - a.X * b.Z, a.X * b.Y - a.Y * b.X) end,
+    Lerp = function(a, b, t) return mkv3(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t, a.Z + (b.Z - a.Z) * t) end,
+    FuzzyEq = function(a, b, eps) eps = eps or 1e-5; return abs(a.X - b.X) <= eps and abs(a.Y - b.Y) <= eps and abs(a.Z - b.Z) <= eps end,
+    Abs = function(a) return mkv3(abs(a.X), abs(a.Y), abs(a.Z)) end,
+    Floor = function(a) return mkv3(floor(a.X), floor(a.Y), floor(a.Z)) end,
+  }
+  v3mt.__index = function(t, k)
+    if k == 'Magnitude' then return sqrt(t.X * t.X + t.Y * t.Y + t.Z * t.Z) end
+    if k == 'Unit' then local m = sqrt(t.X * t.X + t.Y * t.Y + t.Z * t.Z); return m > 0 and mkv3(t.X / m, t.Y / m, t.Z / m) or mkv3(0, 0, 0) end
+    return v3methods[k]
+  end
+  v3mt.__add = function(a, b) return mkv3(a.X + b.X, a.Y + b.Y, a.Z + b.Z) end
+  v3mt.__sub = function(a, b) return mkv3(a.X - b.X, a.Y - b.Y, a.Z - b.Z) end
+  v3mt.__unm = function(a) return mkv3(-a.X, -a.Y, -a.Z) end
+  v3mt.__mul = function(a, b)
+    if type(a) == 'number' then return mkv3(a * b.X, a * b.Y, a * b.Z) end
+    if type(b) == 'number' then return mkv3(a.X * b, a.Y * b, a.Z * b) end
+    return mkv3(a.X * b.X, a.Y * b.Y, a.Z * b.Z)
+  end
+  v3mt.__div = function(a, b)
+    if type(b) == 'number' then return mkv3(a.X / b, a.Y / b, a.Z / b) end
+    return mkv3(a.X / b.X, a.Y / b.Y, a.Z / b.Z)
+  end
+  v3mt.__eq = function(a, b) return type(b) == 'table' and a.X == b.X and a.Y == b.Y and a.Z == b.Z end
+  v3mt.__tostring = function(a) return string.format('%g, %g, %g', a.X, a.Y, a.Z) end
+  Vector3 = {
+    new = mkv3,
+    zero = mkv3(0, 0, 0), one = mkv3(1, 1, 1),
+    xAxis = mkv3(1, 0, 0), yAxis = mkv3(0, 1, 0), zAxis = mkv3(0, 0, 1),
+    FromNormalId = function() return mkv3(0, 1, 0) end,
+    FromAxis = function() return mkv3(1, 0, 0) end,
+  }
+
+  local cfmt = {}
+  local function mkcf(x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22)
+    return setmetatable({
+      X = x or 0, Y = y or 0, Z = z or 0,
+      _r = { r00 or 1, r01 or 0, r02 or 0, r10 or 0, r11 or 1, r12 or 0, r20 or 0, r21 or 0, r22 or 1 },
+    }, cfmt)
+  end
+  local cfmethods = {
+    GetComponents = function(c) local r = c._r; return c.X, c.Y, c.Z, r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9] end,
+    components = function(c) return c:GetComponents() end,
+    Inverse = function(c)
+      local r = c._r
+      local ix = -(r[1]*c.X + r[4]*c.Y + r[7]*c.Z)
+      local iy = -(r[2]*c.X + r[5]*c.Y + r[8]*c.Z)
+      local iz = -(r[3]*c.X + r[6]*c.Y + r[9]*c.Z)
+      return mkcf(ix, iy, iz, r[1], r[4], r[7], r[2], r[5], r[8], r[3], r[6], r[9])
+    end,
+    PointToWorldSpace = function(c, v)
+      local r = c._r
+      return mkv3(c.X + r[1]*v.X + r[2]*v.Y + r[3]*v.Z, c.Y + r[4]*v.X + r[5]*v.Y + r[6]*v.Z, c.Z + r[7]*v.X + r[8]*v.Y + r[9]*v.Z)
+    end,
+    PointToObjectSpace = function(c, v)
+      local dx, dy, dz = v.X - c.X, v.Y - c.Y, v.Z - c.Z
+      local r = c._r
+      return mkv3(r[1]*dx + r[4]*dy + r[7]*dz, r[2]*dx + r[5]*dy + r[8]*dz, r[3]*dx + r[6]*dy + r[9]*dz)
+    end,
+    VectorToWorldSpace = function(c, v)
+      local r = c._r
+      return mkv3(r[1]*v.X + r[2]*v.Y + r[3]*v.Z, r[4]*v.X + r[5]*v.Y + r[6]*v.Z, r[7]*v.X + r[8]*v.Y + r[9]*v.Z)
+    end,
+    ToWorldSpace = function(a, b) return a * b end,
+    ToObjectSpace = function(a, b) return a:Inverse() * b end,
+    Lerp = function(a, b, t)
+      return mkcf(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t, a.Z + (b.Z - a.Z) * t,
+        a._r[1], a._r[2], a._r[3], a._r[4], a._r[5], a._r[6], a._r[7], a._r[8], a._r[9])
+    end,
+    ToEulerAnglesXYZ = function(c)
+      local r = c._r
+      return atan2(-r[6], r[9]), atan2(r[3], sqrt(r[1]*r[1] + r[2]*r[2])), atan2(-r[2], r[1])
+    end,
+  }
+  cfmt.__index = function(c, k)
+    local r = c._r
+    if k == 'Position' or k == 'p' then return mkv3(c.X, c.Y, c.Z) end
+    if k == 'LookVector' then return mkv3(-r[3], -r[6], -r[9]) end
+    if k == 'RightVector' then return mkv3(r[1], r[4], r[7]) end
+    if k == 'UpVector' then return mkv3(r[2], r[5], r[8]) end
+    if k == 'Rotation' then return mkcf(0, 0, 0, r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9]) end
+    return cfmethods[k]
+  end
+  cfmt.__mul = function(a, b)
+    if getmetatable(b) == v3mt then return a:PointToWorldSpace(b) end
+    local ar, br = a._r, b._r
+    local x = a.X + ar[1]*b.X + ar[2]*b.Y + ar[3]*b.Z
+    local y = a.Y + ar[4]*b.X + ar[5]*b.Y + ar[6]*b.Z
+    local z = a.Z + ar[7]*b.X + ar[8]*b.Y + ar[9]*b.Z
+    return mkcf(x, y, z,
+      ar[1]*br[1]+ar[2]*br[4]+ar[3]*br[7], ar[1]*br[2]+ar[2]*br[5]+ar[3]*br[8], ar[1]*br[3]+ar[2]*br[6]+ar[3]*br[9],
+      ar[4]*br[1]+ar[5]*br[4]+ar[6]*br[7], ar[4]*br[2]+ar[5]*br[5]+ar[6]*br[8], ar[4]*br[3]+ar[5]*br[6]+ar[6]*br[9],
+      ar[7]*br[1]+ar[8]*br[4]+ar[9]*br[7], ar[7]*br[2]+ar[8]*br[5]+ar[9]*br[8], ar[7]*br[3]+ar[8]*br[6]+ar[9]*br[9])
+  end
+  cfmt.__add = function(a, v) return mkcf(a.X + v.X, a.Y + v.Y, a.Z + v.Z, a._r[1], a._r[2], a._r[3], a._r[4], a._r[5], a._r[6], a._r[7], a._r[8], a._r[9]) end
+  cfmt.__sub = function(a, v) return mkcf(a.X - v.X, a.Y - v.Y, a.Z - v.Z, a._r[1], a._r[2], a._r[3], a._r[4], a._r[5], a._r[6], a._r[7], a._r[8], a._r[9]) end
+  cfmt.__tostring = function(c) return string.format('%g, %g, %g, %g, %g, %g, %g, %g, %g, %g, %g, %g', c:GetComponents()) end
+  local function cfAngles(rx, ry, rz)
+    rx, ry, rz = rx or 0, ry or 0, rz or 0
+    local cx, sx, cy, sy, cz, sz = cos(rx), sin(rx), cos(ry), sin(ry), cos(rz), sin(rz)
+    return mkcf(0, 0, 0,
+      cy*cz, -cy*sz, sy,
+      sx*sy*cz + cx*sz, -sx*sy*sz + cx*cz, -sx*cy,
+      -cx*sy*cz + sx*sz, cx*sy*sz + sx*cz, cx*cy)
+  end
+  CFrame = {
+    identity = mkcf(0, 0, 0),
+    new = function(a, b, c, ...)
+      if type(a) == 'table' and a.X ~= nil then
+        if type(b) == 'table' and b.X ~= nil then return CFrame.lookAt(a, b) end
+        return mkcf(a.X, a.Y, a.Z)
+      end
+      return mkcf(a or 0, b or 0, c or 0, ...)
+    end,
+    Angles = cfAngles,
+    fromEulerAnglesXYZ = cfAngles,
+    fromOrientation = function(rx, ry, rz) return cfAngles(0, ry or 0, 0) * cfAngles(rx or 0, 0, 0) * cfAngles(0, 0, rz or 0) end,
+    lookAt = function(at, lookAt, up)
+      up = up or mkv3(0, 1, 0)
+      local f = (lookAt - at).Unit
+      local r = f:Cross(up).Unit
+      local u = r:Cross(f).Unit
+      return mkcf(at.X, at.Y, at.Z, r.X, u.X, -f.X, r.Y, u.Y, -f.Y, r.Z, u.Z, -f.Z)
+    end,
+  }
+
+  local c3mt = {}
+  local function mkc3(r, g, b) return setmetatable({ R = r or 0, G = g or 0, B = b or 0 }, c3mt) end
+  c3mt.__index = {
+    Lerp = function(a, b, t) return mkc3(a.R + (b.R - a.R) * t, a.G + (b.G - a.G) * t, a.B + (b.B - a.B) * t) end,
+    ToHSV = function(c)
+      local mx, mn = max(c.R, c.G, c.B), min(c.R, c.G, c.B)
+      local d = mx - mn
+      local h = 0
+      if d > 0 then
+        if mx == c.R then h = ((c.G - c.B) / d) % 6
+        elseif mx == c.G then h = (c.B - c.R) / d + 2
+        else h = (c.R - c.G) / d + 4 end
+        h = h / 6
+      end
+      return h, mx == 0 and 0 or d / mx, mx
+    end,
+    ToHex = function(c) return string.format('%02x%02x%02x', floor(c.R * 255 + 0.5), floor(c.G * 255 + 0.5), floor(c.B * 255 + 0.5)) end,
+  }
+  c3mt.__eq = function(a, b) return type(b) == 'table' and a.R == b.R and a.G == b.G and a.B == b.B end
+  c3mt.__tostring = function(c) return string.format('%g, %g, %g', c.R, c.G, c.B) end
+  Color3 = {
+    new = mkc3,
+    fromRGB = function(r, g, b) return mkc3((r or 0) / 255, (g or 0) / 255, (b or 0) / 255) end,
+    fromHSV = function(h, s, v)
+      h, s, v = (h or 0) % 1, s or 1, v or 1
+      local i = floor(h * 6)
+      local f = h * 6 - i
+      local p, q, t = v * (1 - s), v * (1 - f * s), v * (1 - (1 - f) * s)
+      local m = i % 6
+      if m == 0 then return mkc3(v, t, p) elseif m == 1 then return mkc3(q, v, p)
+      elseif m == 2 then return mkc3(p, v, t) elseif m == 3 then return mkc3(p, q, v)
+      elseif m == 4 then return mkc3(t, p, v) else return mkc3(v, p, q) end
+    end,
+    fromHex = function(hex)
+      hex = tostring(hex):gsub('^#', '')
+      local n = tonumber(hex, 16) or 0
+      return mkc3(floor(n / 65536) % 256 / 255, floor(n / 256) % 256 / 255, n % 256 / 255)
+    end,
+  }
+
+  local udmt = {}
+  local function mkud(s, o) return setmetatable({ Scale = s or 0, Offset = o or 0 }, udmt) end
+  udmt.__add = function(a, b) return mkud(a.Scale + b.Scale, a.Offset + b.Offset) end
+  udmt.__sub = function(a, b) return mkud(a.Scale - b.Scale, a.Offset - b.Offset) end
+
+  local u2mt = {}
+  local function mku2(xs, xo, ys, yo)
+    if type(xs) == 'table' then return setmetatable({ X = xs, Y = xo or mkud(0, 0) }, u2mt) end
+    return setmetatable({ X = mkud(xs, xo), Y = mkud(ys, yo) }, u2mt)
+  end
+  u2mt.__index = { Lerp = function(a, b, t) return mku2(a.X.Scale + (b.X.Scale - a.X.Scale)*t, a.X.Offset + (b.X.Offset - a.X.Offset)*t, a.Y.Scale + (b.Y.Scale - a.Y.Scale)*t, a.Y.Offset + (b.Y.Offset - a.Y.Offset)*t) end }
+  u2mt.__add = function(a, b) return mku2(a.X + b.X, a.Y + b.Y) end
+  u2mt.__sub = function(a, b) return mku2(a.X - b.X, a.Y - b.Y) end
+
+  Rect = { new = function(a, b, c, d)
+    local mn = type(a) == 'table' and a or mkv2(a or 0, b or 0)
+    local mx = type(a) == 'table' and (b or mkv2(0, 0)) or mkv2(c or 0, d or 0)
+    return { Min = mn, Max = mx, Width = mx.X - mn.X, Height = mx.Y - mn.Y }
+  end }
+  Ray = { new = function(o, d) return { Origin = o or mkv3(0,0,0), Direction = d or mkv3(0,0,0) } end }
+  NumberRange = { new = function(a, b) return { Min = a or 0, Max = b or a or 0 } end }
+  NumberSequenceKeypoint = { new = function(t, v, e) return { Time = t or 0, Value = v or 0, Envelope = e or 0 } end }
+  NumberSequence = { new = function(v)
+    if type(v) == 'table' then return { Keypoints = v } end
+    return { Keypoints = { NumberSequenceKeypoint.new(0, v or 0), NumberSequenceKeypoint.new(1, v or 0) } }
+  end }
+  ColorSequenceKeypoint = { new = function(t, c) return { Time = t or 0, Value = c or mkc3(0,0,0) } end }
+  ColorSequence = { new = function(a, b)
+    if type(a) == 'table' and a.R == nil then return { Keypoints = a } end
+    return { Keypoints = { ColorSequenceKeypoint.new(0, a or mkc3(0,0,0)), ColorSequenceKeypoint.new(1, b or a or mkc3(0,0,0)) } }
+  end }
+  Path2DControlPoint = { new = function(pos, lt, rt)
+    return { Position = pos or mku2(0,0,0,0), LeftTangent = lt or mku2(0,0,0,0), RightTangent = rt or mku2(0,0,0,0) }
+  end }
+end
+
 -- v2.24.0 (ported from the OmniDBF goofy-trace mocks): Luau's Random class.
 -- VM builds that seed decryptors with Random.new(seed) died here with
 -- "attempt to index a nil value (global 'Random')" — Random is a REAL Luau
@@ -701,6 +944,7 @@ setmetatable(_G, {
   __index = function(t, k)
     __bx_envrec('r', k)
     if __NILPROBE[k] then return nil end
+    if type(k) == 'string' and (__raw_sub(k, 1, 4) == 'LUAQ' or k == 'LuaqSeal' or __raw_sub(k, 1, 11) == 'Test_table:') then return nil end
     return __N2
   end,
   __newindex = function(t, k, v)

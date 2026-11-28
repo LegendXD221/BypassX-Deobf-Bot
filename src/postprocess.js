@@ -40,6 +40,51 @@ function tidyTrailingJunk(text) {
   return out;
 }
 
+const LUA_KEYWORDS = new Set([
+  'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
+  'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then',
+  'true', 'until', 'while',
+]);
+
+const KNOWN_LUA_ROBLOX_GLOBALS = new Set([
+  'game', 'workspace', 'script', 'shared', 'math', 'string', 'table', 'task',
+  'bit32', 'buffer', 'utf8', 'os', 'coroutine', 'debug', 'Instance', 'Vector3',
+  'Vector2', 'CFrame', 'Color3', 'UDim', 'UDim2', 'Rect', 'Ray', 'Enum',
+  'Random', 'NumberRange', 'NumberSequence', 'ColorSequence', 'Players',
+  'RunService', 'HttpService', 'UserInputService', 'ReplicatedStorage',
+  'TweenService', 'StarterGui', 'CoreGui', 'Lighting', 'SoundService',
+  'pairs', 'ipairs', 'next', 'type', 'typeof', 'tostring', 'tonumber',
+  'pcall', 'xpcall', 'error', 'assert', 'select', 'unpack', 'loadstring',
+  'spawn', 'wait', 'delay', 'tick', 'time', 'print', 'warn', 'rawget', 'rawset',
+]);
+
+/**
+ * Conservative, syntax-preserving Lua idiom cleanup (ported from PostProcess.luau & finalize.py).
+ */
+function cleanLuaIdioms(text) {
+  let out = text;
+  // 1. Boolean negations: not (a == b) -> a ~= b, not (a ~= b) -> a == b
+  out = out.replace(/\bnot\s*\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*==\s*([A-Za-z0-9_."']+)\s*\)/g, '$1 ~= $2');
+  out = out.replace(/\bnot\s*\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*~=\s*([A-Za-z0-9_."']+)\s*\)/g, '$1 == $2');
+  // 2. Unwrap getfenv()/getgenv()/getrenv()/_G/_ENV lookups for known globals
+  out = out.replace(/\b(?:getfenv|getgenv|getrenv)\(\)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\b/g, (m, g) => (KNOWN_LUA_ROBLOX_GLOBALS.has(g) ? g : m));
+  out = out.replace(/\b(?:getfenv|getgenv|getrenv)\(\)\s*\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]/g, (m, g) => (KNOWN_LUA_ROBLOX_GLOBALS.has(g) ? g : m));
+  out = out.replace(/\b(?:_G|_ENV)\s*\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]/g, (m, g) => (KNOWN_LUA_ROBLOX_GLOBALS.has(g) ? g : m));
+  // 3. Simplify obj["Key"] -> obj.Key and { ["key"] = v } -> { key = v } for valid non-keyword identifiers
+  out = out.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\[\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*\]/g, (m, obj, k) => (LUA_KEYWORDS.has(k) ? m : `${obj}.${k}`));
+  out = out.replace(/\{\s*\[\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*\]\s*=/g, (m, k) => (LUA_KEYWORDS.has(k) ? m : `{ ${k} =`));
+  // 4. Method call sugar: obj.Method(obj, ...) -> obj:Method(...)
+  out = out.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\(\1\s*,\s*/g, '$1:$2(');
+  out = out.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\(\1\)/g, '$1:$2()');
+  // 5. Fold simple literal string method calls: ("abc"):upper() -> "ABC"
+  out = out.replace(/\("([^"\n\\]{1,120})"\):(upper|lower|reverse)\(\)/g, (_, s, fn) => {
+    if (fn === 'upper') return `"${s.toUpperCase()}"`;
+    if (fn === 'lower') return `"${s.toLowerCase()}"`;
+    return `"${s.split('').reverse().join('')}"`;
+  });
+  return out;
+}
+
 function stripLuaStrings(line) {
   let out = line.replace(/--\[\[[^\]]*\]\]/g, '-- ');
   out = out.replace(/'(?:[^'\\]|\\.)*'/g, "''");
@@ -151,6 +196,12 @@ export function postprocessFile(name, data) {
     const tidied = tidyTrailingJunk(text);
     if (tidied !== text) { text = tidied; passes.push('trailing-junk tidy'); }
   } catch { /* ignore */ }
+  if (lang === 'lua') {
+    try {
+      const cleaned = cleanLuaIdioms(text);
+      if (cleaned !== text) { text = cleaned; passes.push('lua idiom cleanup'); }
+    } catch { /* ignore */ }
+  }
   try {
     const lines = text.split('\n');
     const avgLen = lines.reduce((s, l) => s + l.length, 0) / Math.max(1, lines.length);

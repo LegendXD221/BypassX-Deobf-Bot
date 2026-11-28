@@ -187,10 +187,12 @@ do
   end
 
   -- hooks (globals + metamethod fields — the two shapes antitamper uses) ------
+  local __HOOKED_FUNCS = setmetatable({}, { __mode = 'k' })
   hookfunction = function(target, hook)
     if type(target) ~= 'function' or type(hook) ~= 'function' then
       error("bad argument (function expected)", 2)
     end
+    __HOOKED_FUNCS[target] = hook
     -- global function swap: find the global bound to this exact function
     for k, v in next, _G do
       if v == target then
@@ -202,6 +204,17 @@ do
     return target
   end
   replaceclosure = hookfunction
+  isfunctionhooked = function(fn)
+    return __HOOKED_FUNCS[fn] ~= nil
+  end
+  restorefunction = function(fn)
+    local h = __HOOKED_FUNCS[fn]
+    if not h then return end
+    __HOOKED_FUNCS[fn] = nil
+    for k, v in next, _G do
+      if v == h then _G[k] = fn end
+    end
+  end
   getrawmetatable = function(obj) return debug.getmetatable(obj) end
   setrawmetatable = function(obj, mt) return debug.setmetatable(obj, mt) end
   setreadonly = function() return true end

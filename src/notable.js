@@ -20,7 +20,7 @@
  * Every other string is unclassified (undefined kind).
  */
 
-const RE_WEBHOOK = /(?:(?:canary\.|ptb\.)?discord(?:app)?\.com|discord\.gg)\/api\/(?:v\d+\/)?webhooks\/|(?:webhook\.lewisakura\.moe|hooks\.hyra\.io|hooks\.slack\.com|api\.telegram\.org\/bot)/i;
+const RE_WEBHOOK = /(?:(?:canary\.|ptb\.)?discord(?:app)?\.com|discord\.gg)\/api\/(?:v\d+\/)?webhooks\/|(?:webhook\.lewisakura\.moe|hooks\.hyra\.io|hooks\.slack\.com|api\.telegram\.org\/bot|webhook\.site|requestbin\.\w+|ngrok(?:-free)?\.app|ngrok\.io|pipedream\.net|oastify\.com|burpcollaborator\.net)/i;
 const RE_GATEWAY = /(?:gateway|discord)\.(?:com|app|gg|status)\//i;
 // Discord bot-token shape: three dot-separated segments (id.timestamp.hmac).
 // Not \b-anchored per-part — ids are mixed-alphabet base64 (e.g. 'AAAABBBB…').
