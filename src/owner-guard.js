@@ -22,14 +22,18 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType,
   MessageFlags, ContainerBuilder, TextDisplayBuilder,
 } from 'discord.js';
+import crypto from 'node:crypto';
 import { CONFIG } from './config.js';
 import { logger } from './logger.js';
 import * as db from './db.js';
+import { redactSecrets } from './redact.js';
 
 // ---- L1: identity ------------------------------------------------------------
 
 export function isOwner(userId) {
-  return String(userId || '') === String(CONFIG.ownerId);
+  const id = String(userId || '');
+  const owner = String(CONFIG.ownerId || '').trim();
+  return /^\d{17,22}$/.test(owner) && id === owner;
 }
 
 // ---- L2: PIN -------------------------------------------------------------------
@@ -54,9 +58,13 @@ export function checkPin(userId, provided) {
   if (st?.lockedUntil && st.lockedUntil > now) {
     return { ok: false, locked: true, retryMs: st.lockedUntil - now };
   }
-  if (provided && provided === pin) {
-    pinFails.delete(userId);
-    return { ok: true };
+  if (provided) {
+    const a = Buffer.from(String(provided));
+    const b = Buffer.from(String(pin));
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+      pinFails.delete(userId);
+      return { ok: true };
+    }
   }
   // Reset the counter only when a previous lockout has fully expired.
   const lockExpired = Boolean(st?.lockedUntil && st.lockedUntil <= now);
@@ -68,8 +76,10 @@ export function checkPin(userId, provided) {
 
 /** Prefix flow: strip the pin token from args when present. Returns the rest. */
 export function stripPinArg(args) {
-  if (!pinRequired()) return args;
-  if (args?.[0] === process.env.OWNER_PIN) return args.slice(1);
+  if (!pinRequired() || !args?.length) return args;
+  const a = Buffer.from(String(args[0] || ''));
+  const b = Buffer.from(String(process.env.OWNER_PIN || ''));
+  if (a.length === b.length && crypto.timingSafeEqual(a, b)) return args.slice(1);
   return args;
 }
 
@@ -116,8 +126,8 @@ export function dangerStatus() {
 export async function audit(client, { userId, username, command, args, allowed, layer, result }) {
   const entry = {
     userId, username, command,
-    args: String(args || '').slice(0, 200),
-    allowed, layer, result: String(result || '').slice(0, 200),
+    args: redactSecrets(String(args || '')).slice(0, 200),
+    allowed, layer, result: redactSecrets(String(result || '')).slice(0, 200),
   };
   if (allowed) logger.info({ cmd: command, user: userId }, 'owner audit: ALLOWED');
   else logger.warn({ cmd: command, user: userId, layer }, 'owner audit: DENIED');

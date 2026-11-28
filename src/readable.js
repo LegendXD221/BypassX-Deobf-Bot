@@ -24,13 +24,13 @@ import { verifyCode } from './validate.js';
 const RANK = { failed: 0, unverifiable: 1, verified: 2 };
 
 /** A pass survives only if the output parses at the same-or-better level. */
-function sameOrBetter(before, after) {
+function sameOrBetter(before, after, beforeRank = null) {
   try {
-    const a = verifyCode(before, { lang: 'lua', filename: 'r.lua' });
-    const b = verifyCode(after, { lang: 'lua', filename: 'r.lua' });
-    return (RANK[b.status] ?? 0) >= (RANK[a.status] ?? 0);
+    const aRank = beforeRank !== null ? beforeRank : (RANK[verifyCode(before, { lang: 'lua', filename: 'r.lua' }).status] ?? 0);
+    const bRank = RANK[verifyCode(after, { lang: 'lua', filename: 'r.lua' }).status] ?? 0;
+    return bRank >= aRank ? bRank : -1;
   } catch {
-    return false;
+    return -1;
   }
 }
 
@@ -293,19 +293,22 @@ function collectNamePreferences(src, ids) {
   const idAlt = `(?:${MACHINE_NAME_RE.source})`;
   const scans = [
     // v0.Name = "hi" — the unparser's primary naming source
-    new RegExp(`\\b(${idAlt})\\.Name\\s*=\\s*"([^"\\\\]{1,64})"`, 'g'),
+    { re: new RegExp(`\\b(${idAlt})\\.Name\\s*=\\s*"([^"\\\\]{1,64})"`, 'g'), lc: false },
     // v0 = Instance.new("ScreenGui") — class-based fallback, lcfirst
-    new RegExp(`\\b(${idAlt})\\s*=\\s*Instance\\.new\\(\\s*"([^"\\\\]{1,64})"\\s*\\)`, 'g'),
+    { re: new RegExp(`\\b(${idAlt})\\s*=\\s*Instance\\.new\\(\\s*"([^"\\\\]{1,64})"\\s*\\)`, 'g'), lc: true },
+    // v0 = game:GetService("Players") — contextual naming (basicbeautify)
+    { re: new RegExp(`\\b(${idAlt})\\s*=\\s*game:GetService\\(\\s*"([^"\\\\]{1,64})"\\s*\\)`, 'g'), lc: true },
+    // v0 = Vector3.new(...) / Color3.* / UDim2.* / CFrame.*
+    { re: new RegExp(`\\b(${idAlt})\\s*=\\s*(Vector3|Color3|UDim2|CFrame)\\.`, 'g'), fn: (t) => ({ Vector3: 'pos', Color3: 'color', UDim2: 'size', CFrame: 'cf' }[t]) },
   ];
-  for (let si = 0; si < scans.length; si++) {
+  for (const s of scans) {
     let m;
-    while ((m = scans[si].exec(src)) !== null) {
+    while ((m = s.re.exec(src)) !== null) {
       const id = m[1];
       if (!ids.has(id) || prefs.has(id)) continue;
-      const raw = sanitizePreferred(m[2]);
+      const raw = s.fn ? s.fn(m[2]) : sanitizePreferred(m[2]);
       if (!raw || raw === id) continue;
-      if (si === 1) {
-        // class-based: ScreenGui → screenGui (keep Part → part)
+      if (s.lc) {
         const lc = raw.charAt(0).toLowerCase() + raw.slice(1);
         if (lc === id) continue;
         prefs.set(id, lc);
@@ -372,9 +375,9 @@ function renameMachineNames(src) {
 
   // Single combined pass — no cascading renames. Applied to CODE segments only
   // (v2.12.0 fix): renaming a machine id inside a string literal ("v0 is set")
-  // used to corrupt string data.
+  // used to corrupt string data. Also never rename member-access keys (t.v0 / obj:v0).
   const parts = [...mapping.keys()].map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  const combined = new RegExp(`\\b(?:${parts.join('|')})\\b`, 'g');
+  const combined = new RegExp(`(?<![.:])\\b(?:${parts.join('|')})\\b`, 'g');
   const segs = scanLuaSegments(src);
   let changed = false;
   for (const seg of segs) {
@@ -396,36 +399,52 @@ export function makeReadableLua(src) {
   const passes = [];
   let out = String(src ?? '');
   if (!out) return { code: out, passes };
+  let curRank = RANK[verifyCode(out, { lang: 'lua', filename: 'r.lua' }).status] ?? 0;
 
   // P1 — string-escape decode
   try {
     const next = mapSegments(out, ['string'], decodeStringToken);
-    if (next !== out && sameOrBetter(out, next)) { out = next; passes.push('string-escape decode'); }
+    if (next !== out) {
+      const r = sameOrBetter(out, next, curRank);
+      if (r >= 0) { out = next; curRank = r; passes.push('string-escape decode'); }
+    }
   } catch { /* gated out */ }
 
   // P2 — literal concat fold (across string/code/string segments)
   try {
     const segs = foldConcatSegments(scanLuaSegments(out));
     const next = reassemble(segs);
-    if (next !== out && sameOrBetter(out, next)) { out = next; passes.push('literal concat fold'); }
+    if (next !== out) {
+      const r = sameOrBetter(out, next, curRank);
+      if (r >= 0) { out = next; curRank = r; passes.push('literal concat fold'); }
+    }
   } catch { /* gated out */ }
 
   // P3 — small arithmetic fold (code segments only)
   try {
     const next = mapSegments(out, ['code'], foldArithSegment);
-    if (next !== out && sameOrBetter(out, next)) { out = next; passes.push('constant arithmetic fold'); }
+    if (next !== out) {
+      const r = sameOrBetter(out, next, curRank);
+      if (r >= 0) { out = next; curRank = r; passes.push('constant arithmetic fold'); }
+    }
   } catch { /* gated out */ }
 
   // P3b — Color3.new(N/255,…) → Color3.fromRGB(N,…) (code segments only)
   try {
     const next = mapSegments(out, ['code'], foldColor3Segment);
-    if (next !== out && sameOrBetter(out, next)) { out = next; passes.push('Color3.fromRGB normalize'); }
+    if (next !== out) {
+      const r = sameOrBetter(out, next, curRank);
+      if (r >= 0) { out = next; curRank = r; passes.push('Color3.fromRGB normalize'); }
+    }
   } catch { /* gated out */ }
 
   // P4 — machine-name rename (luaparse-gated whole-file pass)
   try {
     const next = renameMachineNames(out);
-    if (next !== out && next && sameOrBetter(out, next)) { out = next; passes.push('machine-name rename'); }
+    if (next !== out && next) {
+      const r = sameOrBetter(out, next, curRank);
+      if (r >= 0) { out = next; curRank = r; passes.push('machine-name rename'); }
+    }
   } catch { /* gated out */ }
 
   return { code: out, passes };

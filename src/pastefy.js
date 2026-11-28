@@ -24,7 +24,7 @@ const ANON_TOKEN = 'bypassx-deobf-bot-anonymous';
  * escaping, so budgeting on raw bytes is what broke large pastes before.
  */
 const CHUNK_ESCAPED_BYTES = 950_000;
-const RETRIES = 3;
+const RETRIES = 2;
 
 /** Size of `s` after JSON string escaping (without the surrounding quotes). */
 function escapedLength(s) {
@@ -106,7 +106,10 @@ function buildShapes(spec) {
 async function postPaste(body, authHeader, timeoutMs) {
   let lastErr = null;
   for (let i = 0; i < RETRIES; i++) {
-    if (i > 0) await new Promise((r) => setTimeout(r, Math.min(8000, 600 * 2 ** i)));
+    if (i > 0) {
+      const waitMs = lastErr?.retryAfterMs ? Math.min(15_000, lastErr.retryAfterMs) : Math.min(8000, 600 * 2 ** i);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
     try {
       const res = await fetch(`${BASE}/api/v2/paste`, {
         method: 'POST',
@@ -146,11 +149,13 @@ async function postPaste(body, authHeader, timeoutMs) {
  * Throws Error with .code on failure — callers degrade gracefully.
  */
 export async function createPaste({
-  title, text, token = CONFIG.pastefyToken, timeoutMs = 20_000,
+  title, text, token = CONFIG.pastefyToken, timeoutMs = 12_000,
 }) {
   if (!text || !String(text).trim()) {
     throw Object.assign(new Error('nothing to paste (empty content)'), { code: 'paste_empty' });
   }
+  const deadline = Date.now() + Math.max(4_000, timeoutMs);
+  const perReqTimeout = () => Math.max(3_000, Math.min(8_000, deadline - Date.now()));
   const auth = `Bearer ${token || ANON_TOKEN}`;
   const chunks = splitForPaste(text);
   const of = chunks.length;
@@ -160,8 +165,9 @@ export async function createPaste({
   // differ in field names, sizes are identical).
   let shape = null;
   for (const body of buildShapes({ title: `${title}`.slice(0, 180), text: chunks[0] })) {
+    if (Date.now() >= deadline) break;
     try {
-      shape = await postPaste(body, auth, timeoutMs);
+      shape = await postPaste(body, auth, perReqTimeout());
       break;
     } catch (e) {
       if (e.code === 'paste_auth') throw e;
@@ -177,10 +183,11 @@ export async function createPaste({
   // Remaining chunks — same shape fields, updated title/content. Gentle pace:
   // back-to-back multi-hundred-KB posts can trip the server's 500 guard.
   for (let i = 1; i < of; i++) {
+    if (Date.now() >= deadline) throw Object.assign(new Error('pastefy multi-part deadline exceeded'), { code: 'paste_transient' });
     if (i > 1) await new Promise((r) => setTimeout(r, 400));
     const spec = { title: `${title} (Part ${i + 1}/${of})`.slice(0, 180), text: chunks[i] };
     const body = buildShapes(spec)[0];
-    const p = await postPaste(body, auth, timeoutMs);
+    const p = await postPaste(body, auth, perReqTimeout());
     parts.push({ id: p.id, url: `${BASE}/${p.id}`, index: i + 1, of });
   }
 

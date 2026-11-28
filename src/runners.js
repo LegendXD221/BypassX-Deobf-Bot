@@ -6,9 +6,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { exec as execCb } from 'node:child_process';
-import { spawnHardened } from './security.js';
+import { spawnHardened, buildSandboxEnv } from './security.js';
 import { ensureVarDir } from './config.js';
 import { logger } from './logger.js';
+import { redactSecrets } from './redact.js';
 
 // bin/ lives at the repo ROOT (next to package.json), not under src/.
 const harnessPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'eval-harness.cjs');
@@ -58,15 +59,19 @@ export function runShell(rawCmd, defaultTimeoutMs = 90_000) {
   const m = cmd.match(/\s%%\s*(\d{1,3})\s*$/);
   if (m) timeoutMs = Math.min(300_000, Number(m[1]) * 1000);
   const clean = cmd.replace(/\s%%\s*\d{1,3}\s*$/, '');
+  if (/(?:^|[\s;|&`/])\.env\b|\/proc\/(?:\d+|self)\/environ|dump\.pm2/i.test(clean)) {
+    return Promise.resolve({ ok: false, output: '[blocked: direct secret/env file reads are disabled]', ms: 0, exit: 1, timeoutCap: timeoutMs / 1000 });
+  }
   return new Promise((resolve) => {
     const t0 = Date.now();
-    execCb(clean, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, cwd: process.cwd(), shell: '/bin/bash' }, (err, stdout, stderr) => {
+    const safeEnv = buildSandboxEnv();
+    execCb(clean, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, cwd: process.cwd(), shell: '/bin/bash', env: safeEnv }, (err, stdout, stderr) => {
       const ms = Date.now() - t0;
       let output = String(stdout || '');
       if (String(stderr || '').trim()) output += (output ? '\n' : '') + `[stderr]\n${stderr}`;
       if (err && err.killed) output += (output ? '\n' : '') + `[killed at ${timeoutMs / 1000}s timeout]`;
       else if (err) output += (output ? '\n' : '') + `[exit ${err.code ?? '?'}] ${String(err.message).split('\n')[0]}`;
-      output = output.trim() || '(no output)';
+      output = redactSecrets(output.trim()) || '(no output)';
       logger.info({ ms, cmd: clean.slice(0, 80) }, 'owner shell');
       resolve({ ok: !err, output, ms, exit: err ? (err.code ?? 'sig') : 0, timeoutCap: timeoutMs / 1000 });
     });
@@ -78,7 +83,7 @@ export function runShell(rawCmd, defaultTimeoutMs = 90_000) {
  * Skips blacklisted guilds. Resolves { sent, failed, skipped, total }.
  */
 export async function broadcastAll(client, text, { isBlacklisted = null } = {}) {
-  const guilds = [...(client?.guilds?.cache?.values() || [])].slice(0, 200);
+  const guilds = [...(client?.guilds?.cache?.values() || [])];
   let sent = 0;
   let skipped = 0;
   let failed = 0;
@@ -92,8 +97,12 @@ export async function broadcastAll(client, text, { isBlacklisted = null } = {}) 
       if (!ch) { failed += 1; continue; }
       await ch.send({ content: `📣 **Lucid Deobf** — ${text}` });
       sent += 1;
-      await new Promise((r) => setTimeout(r, 250)); // gentle pace (rate limits)
-    } catch {
+      await new Promise((r) => setTimeout(r, 300)); // gentle pace (rate limits)
+    } catch (e) {
+      const retryAfter = Number(e?.rawError?.retry_after || 0);
+      if (retryAfter > 0 && retryAfter <= 15) {
+        await new Promise((r) => setTimeout(r, retryAfter * 1000 + 250));
+      }
       failed += 1;
     }
   }

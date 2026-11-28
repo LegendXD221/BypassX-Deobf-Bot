@@ -13,6 +13,7 @@
  * All passes are pure functions over Buffer → Buffer; never throw.
  */
 import path from 'node:path';
+import { redactSecrets, sanitizePaths } from './redact.js';
 
 const LUA_EXT = new Set(['.lua', '.luac', '.glua']);
 const JS_EXT = new Set(['.js', '.mjs', '.cjs', '.ts', '.jsx', '.tsx']);
@@ -69,9 +70,10 @@ function beautifyLua(src) {
     const stripped = stripLuaStrings(line);
     if (/^\s*(end|until|\)|\}|\])\b/.test(stripped)) depth = Math.max(0, depth - 1);
     out.push('  '.repeat(depth) + line.replace(/^\s+/, ''));
-    const openers = stripped.match(/\b(?:then|do|repeat)\b/g) || [];
-    const trailingFn = /function\b[^end]*$/.test(stripped);
-    const net = openers.length + (trailingFn ? 1 : 0)
+    const openers = (stripped.match(/\b(?:then|do|repeat|function)\b/g) || []).length;
+    const closers = (stripped.match(/\bend\b/g) || []).length;
+    const leadingClose = /^\s*(end|until|\)|\}|\])\b/.test(stripped) ? 1 : 0;
+    const net = openers - closers + leadingClose
       + (stripped.match(/\{/g) || []).length - (stripped.match(/\}/g) || []).length
       + (stripped.match(/\(/g) || []).length - (stripped.match(/\)/g) || []).length;
     if (net > 0) depth += net;
@@ -110,10 +112,12 @@ function beautifyJs(src) {
     const backticks = (line.match(/`/g) || []).length;
     if (backticks % 2 === 1 && !/`.*`/.test(line)) inTemplate = true;
     const stripped = stripJsStringsAndComments(line);
-    if (/^\s*[}\])]/.test(stripped)) depth = Math.max(0, depth - 1);
+    const leadingClose = /^\s*[}\])]/.test(stripped) ? 1 : 0;
+    if (leadingClose) depth = Math.max(0, depth - 1);
     out.push('  '.repeat(depth) + line.replace(/^\s+/, ''));
     const net = (stripped.match(/\{/g) || []).length - (stripped.match(/\}/g) || []).length
-      + (stripped.match(/\(/g) || []).length - (stripped.match(/\)/g) || []).length;
+      + (stripped.match(/\(/g) || []).length - (stripped.match(/\)/g) || []).length
+      + leadingClose;
     if (net > 0) depth += net;
     else if (net < 0) depth = Math.max(0, depth + net);
   }
@@ -157,7 +161,7 @@ export function postprocessFile(name, data) {
     }
   } catch { /* best effort */ }
 
-  text = text.replace(/\s+$/g, '\n');
+  text = redactSecrets(sanitizePaths(text)).replace(/\s+$/g, '\n');
   if (text !== original) passes.push('pure-output tidy');
   return { data: Buffer.from(text, 'utf8'), passes };
 }
@@ -185,7 +189,7 @@ export function beautifyCode(name, data) {
     text = tidyTrailingJunk(text);
     const beautified = lang === 'lua' ? beautifyLua(text) : beautifyJs(text);
     if (beautified && beautified !== text) { text = beautified; passes.push(`${lang} beautify`); }
-    text = text.replace(/\s+$/g, '\n');
+    text = redactSecrets(sanitizePaths(text)).replace(/\s+$/g, '\n');
     return { data: Buffer.from(text, 'utf8'), passes };
   } catch {
     return { data, passes };

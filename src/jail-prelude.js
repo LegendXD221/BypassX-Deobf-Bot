@@ -142,6 +142,25 @@ string.gsub = function(s, pat, rep, ...)
   __bx_rec(a)
   return a, b
 end
+if utf8 and type(utf8.char) == 'function' then __wrap1(utf8, 'char') end
+-- SafeStringUnpack (kvms): zero-pad short buffers to packsize(fmt) so
+-- anti-tamper short-buffer probes do not abort, and record unpacked strings.
+if type(string.unpack) == 'function' then
+  local __orig_unpack = string.unpack
+  local __packsize = string.packsize
+  string.unpack = function(fmt, s, pos)
+    if type(fmt) == 'string' and type(s) == 'string' and type(__packsize) == 'function' then
+      local okSz, need = pcall(__packsize, fmt)
+      if okSz and type(need) == 'number' and need > #s and need <= 4096 then
+        s = s .. string.rep('\\0', need - #s)
+      end
+    end
+    local r1, r2, r3, r4 = __orig_unpack(fmt, s, pos)
+    if type(r1) == 'string' then __bx_rec(r1) end
+    if type(r2) == 'string' then __bx_rec(r2) end
+    return r1, r2, r3, r4
+  end
+end
 
 -- remove host-reaching libraries
 -- v2.11.0: clocks ADVANCE (leaked-corpus exploit). A frozen os.clock()/tick()
@@ -250,7 +269,12 @@ unpack = unpack or table.unpack
 local __bx_orig_load = load
 local __bx_chunk_bytes = 0
 load = function(chunk, chunkname, mode, env)
-  if type(chunk) == 'string' then
+  local tc = type(chunk)
+  if tc ~= 'string' and tc ~= 'function' then
+    -- Authentic Luau contract (novalogger/davix): never invoke tostring() on trap tables.
+    return nil, "bad argument #1 to 'loadstring' (string expected, got " .. tc .. ")"
+  end
+  if tc == 'string' then
     local n = #chunk
     if n >= 8 and n <= ${MAX_CHUNK_BYTES} and __C < ${MAX_CHUNKS} and __bx_chunk_bytes < ${MAX_CHUNKS_TOTAL} then
       __C = __C + 1
@@ -354,7 +378,7 @@ bit32 = {
   bnot = function(a) return (~__n32(a)) & __f end,
   lshift = function(a, b) b = __n32(b) % 32 return (__n32(a) << b) & __f end,
   rshift = function(a, b) b = __n32(b) % 32 return (__n32(a) >> b) & __f end,
-  arshift = function(a, b) b = __n32(b) % 32 return __n32(a) >> b end,
+  arshift = function(a, b) b = __n32(b) % 32 local x = __n32(a); if x >= 0x80000000 then x = x - 4294967296 end return (x >> b) & __f end,
   tobit = function(a) return __n32(a) end,
   btest = function(...) return bit32.band(...) ~= 0 end,
   extract = function(n, f, w) n = __n32(n) w = w or 1 if f < 0 then f = 0 end if w <= 0 then return 0 end
@@ -384,10 +408,16 @@ buffer.fromstring = function(s) return { __bx_buf = true, s = s or '' } end
 buffer.tostring = function(b) if bx_isbuf(b) then return b.s end return '' end
 buffer.isbuffer = function(b) return bx_isbuf(b) end
 buffer.len = function(b) if bx_isbuf(b) then return #b.s end return 0 end
-buffer.readstring = function(b, o, n) if not bx_isbuf(b) then return '' end return b.s:sub(o + 1, o + n) end
-buffer.writestring = function(b, o, s)
+buffer.readstring = function(b, o, n)
+  if not bx_isbuf(b) then return '' end
+  local s = b.s:sub(o + 1, o + n)
+  __bx_rec(s)
+  return s
+end
+buffer.writestring = function(b, o, s, count)
   if not bx_isbuf(b) then return end
   s = s or ''
+  if count ~= nil then s = s:sub(1, math.max(0, math.floor(count))) end
   b.s = b.s:sub(1, o) .. s .. b.s:sub(o + #s + 1)
 end
 buffer.readi8 = function(b, o) if not bx_isbuf(b) then return 0 end local v = b.s:byte(o + 1) or 0; if v >= 128 then v = v - 256 end return v end
@@ -406,19 +436,19 @@ buffer.readi32 = function(b, o) return bx_int(b, o, 4, true) end
 buffer.readu32 = function(b, o) return bx_int(b, o, 4, false) end
 buffer.readf32 = function(b, o) if not bx_isbuf(b) then return 0 end local ok, v = pcall(string.unpack, '<f', bx_pad(b.s:sub(o + 1, o + 4), 4)); if ok then return v end return 0 end
 buffer.readf64 = function(b, o) if not bx_isbuf(b) then return 0 end local ok, v = pcall(string.unpack, '<d', bx_pad(b.s:sub(o + 1, o + 8), 8)); if ok then return v end return 0 end
-local function bx_write(b, o, n, v)
+local function bx_write(b, o, n, v, signed)
   if not bx_isbuf(b) then return end
-  local fmt = n == 1 and '<B' or ('<I' .. n)
+  local fmt = n == 1 and (signed and '<b' or '<B') or ((signed and '<i' or '<I') .. n)
   local ok, packed = pcall(string.pack, fmt, v)
   if not ok then return end
   b.s = b.s:sub(1, o) .. packed .. b.s:sub(o + n + 1)
 end
-buffer.writei8 = function(b, o, v) bx_write(b, o, 1, v) end
-buffer.writeu8 = function(b, o, v) bx_write(b, o, 1, v) end
-buffer.writei16 = function(b, o, v) bx_write(b, o, 2, v) end
-buffer.writeu16 = function(b, o, v) bx_write(b, o, 2, v) end
-buffer.writei32 = function(b, o, v) bx_write(b, o, 4, v) end
-buffer.writeu32 = function(b, o, v) bx_write(b, o, 4, v) end
+buffer.writei8 = function(b, o, v) bx_write(b, o, 1, v, true) end
+buffer.writeu8 = function(b, o, v) bx_write(b, o, 1, v, false) end
+buffer.writei16 = function(b, o, v) bx_write(b, o, 2, v, true) end
+buffer.writeu16 = function(b, o, v) bx_write(b, o, 2, v, false) end
+buffer.writei32 = function(b, o, v) bx_write(b, o, 4, v, true) end
+buffer.writeu32 = function(b, o, v) bx_write(b, o, 4, v, false) end
 buffer.writef32 = function(b, o, v) if bx_isbuf(b) then local ok, packed = pcall(string.pack, '<f', v); if ok then b.s = b.s:sub(1, o) .. packed .. b.s:sub(o + 5) end end end
 buffer.writef64 = function(b, o, v) if bx_isbuf(b) then local ok, packed = pcall(string.pack, '<d', v); if ok then b.s = b.s:sub(1, o) .. packed .. b.s:sub(o + 9) end end end
 -- Luau readbits/writebits: LSB-first bit fields crossing byte boundaries
@@ -433,12 +463,6 @@ buffer.writebits = function(b, o, n, v)
   if not bx_isbuf(b) or n <= 0 then return end
   v = math.floor(v) % (2 ^ n)
   local bytes = math.ceil(n / 8)
-  for i = 0, bytes - 1 do
-    local byte = b.s:byte(o + i + 1) or 0
-    local mask = 255
-    b.s = b.s:sub(1, o + i) .. string.char(byte) .. b.s:sub(o + i + 2)
-  end
-  -- simplified: write full bytes from the value (matches readbits for n%8==0)
   for i = 0, bytes - 1 do
     local byte = math.floor(v / 256 ^ i) % 256
     b.s = b.s:sub(1, o + i) .. string.char(byte) .. b.s:sub(o + i + 2)
@@ -513,10 +537,28 @@ local __NILSERVICE = {
   websocket = true, WebSocket = true, RequestAsync = true,
   GetAsync = true, PostAsync = true, execConsoleCommand = true,
 }
+local __ARRAY_METHODS = {
+  GetPlayers = true, GetChildren = true, GetDescendants = true,
+  GetConnectedParts = true, GetPropertiesOfClass = true, GetMethodsOfClass = true,
+  GetClasses = true, GetEnums = true, GetTags = true, GetTagged = true, GetVertices = true,
+}
+local __COLL_TAGS = {}
+local __MEM_STORAGE = {}
 local __INERTMT
 __INERTMT = {
   __index = function(t, k)
     if __NILSERVICE[k] then return nil end
+    local sk = rawget(t, '__bx_key')
+    if sk == 'CollectionService' then
+      if k == 'AddTag' then return function(_, obj, tag) __COLL_TAGS[tostring(tag)] = __COLL_TAGS[tostring(tag)] or {}; __COLL_TAGS[tostring(tag)][obj] = true end end
+      if k == 'RemoveTag' then return function(_, obj, tag) if __COLL_TAGS[tostring(tag)] then __COLL_TAGS[tostring(tag)][obj] = nil end end end
+      if k == 'HasTag' then return function(_, obj, tag) return Boolean and false or (__COLL_TAGS[tostring(tag)] ~= nil and __COLL_TAGS[tostring(tag)][obj] == true) end end
+      if k == 'GetTagged' then return function(_, tag) local r = {}; if __COLL_TAGS[tostring(tag)] then for o in pairs(__COLL_TAGS[tostring(tag)]) do r[#r + 1] = o end end return r end end
+    elseif sk == 'MemStorageService' then
+      if k == 'SetItem' then return function(_, key, val) __MEM_STORAGE[tostring(key)] = tostring(val) end end
+      if k == 'GetItem' then return function(_, key) return __MEM_STORAGE[tostring(key)] end end
+      if k == 'HasItem' then return function(_, key) return __MEM_STORAGE[tostring(key)] ~= nil end end
+    end
     local o = setmetatable({}, __INERTMT)
     rawset(o, '__bx_key', k)
     return o
@@ -525,8 +567,16 @@ __INERTMT = {
   __call = function(t, ...)
     local k = rawget(t, '__bx_key')
     if type(k) == 'string' then
-      if k == 'IsClient' or k == 'IsRobloxClient' or k == 'IsLua' then return true end
+      if k == 'IsClient' or k == 'IsRobloxClient' or k == 'IsLua' or k == 'IsRunning' or k == 'IsLoaded' then return true end
       if k:sub(1, 2) == 'Is' or k:sub(1, 2) == 'Has' then return false end
+      if __ARRAY_METHODS[k] then return {} end
+      if k == 'FireServer' or k == 'InvokeServer' or k == 'FireClient' or k == 'FireAllClients' then
+        for i = 2, select('#', ...) do
+          local v = select(i, ...)
+          if type(v) == 'string' then __bx_rec(v) end
+        end
+        return nil
+      end
     end
     return setmetatable({}, __INERTMT) -- neutral object for further chaining
   end,
@@ -584,8 +634,11 @@ task = {
 wait = task.wait
 spawn = task.spawn
 delay = task.delay
-tick = function() __bx_clock = __bx_clock + 0.01; return __bx_clock end
+tick = function() __bx_clock = __bx_clock + 0.01; return 1762500000 + __bx_clock end
 time = function() return math.floor(__bx_clock) end
+elapsedTime = os.clock
+ElapsedTime = os.clock
+if math and math.nan == nil then math.nan = 0 / 0 end
 print = function(...) local t = {} for i = 1, select('#', ...) do t[#t + 1] = tostring(select(i, ...)) end if #_BX_LOG < 200 then _BX_LOG[#_BX_LOG + 1] = table.concat(t, ' ') end end
 warn = print
 

@@ -235,16 +235,37 @@ function danglingRefs(root, names) {
   return hits;
 }
 
+/** Evaluate a constant numeric AST node (literals + unary `-` + binary `+ - * %`). */
+function evalConstNum(n) {
+  if (!n || typeof n !== 'object') return null;
+  if (n.type === 'NumericLiteral') return n.value;
+  if (n.type === 'UnaryExpression' && n.operator === '-') {
+    const v = evalConstNum(n.argument);
+    return v === null ? null : -v;
+  }
+  if (n.type === 'BinaryExpression') {
+    const l = evalConstNum(n.left);
+    const r = evalConstNum(n.right);
+    if (l === null || r === null) return null;
+    if (n.operator === '+') return l + r;
+    if (n.operator === '-') return l - r;
+    if (n.operator === '*') return l * r;
+    if (n.operator === '%' && r !== 0) return l % r;
+  }
+  return null;
+}
+
 /** Rewrite `A(<num>)` calls to decoded literals. Returns count or -1 on any miss. */
 function inlineAccessorCalls(node, accessorName, table, offset) {
   let count = 0;
   const visit = (n) => {
     if (!n || typeof n !== 'object') return;
     if (Array.isArray(n)) { for (const c of n) visit(c); return; }
-    if (n.type === 'CallExpression' && isIdent(n.base, accessorName)
-      && n.arguments?.length === 1 && isNum(n.arguments[0])) {
-      const i = n.arguments[0].value - offset; // call A(K+i) ↔ pool entry i
-      if (!Number.isInteger(n.arguments[0].value) || i < 1 || i > table.length || typeof table[i - 1] !== 'string') {
+    if (n.type === 'CallExpression' && isIdent(n.base, accessorName) && n.arguments?.length === 1) {
+      const argVal = evalConstNum(n.arguments[0]);
+      if (argVal === null) return;
+      const i = argVal - offset; // call A(K+i) ↔ pool entry i
+      if (!Number.isInteger(argVal) || i < 1 || i > table.length || typeof table[i - 1] !== 'string') {
         count = -1;
         return;
       }
@@ -266,10 +287,11 @@ function inlineAccessorCalls(node, accessorName, table, offset) {
 }
 
 /** Run the scaffolding slices in jailed fengari; return decoded pool [1..n]. */
-function decodePoolInSandbox(tableSlice, rotationSrc, decoderSrc, accessorSrc, tableSize) {
+function decodePoolInSandbox(tableName, tableSlice, rotationSrc, decoderSrc, accessorSrc, tableSize) {
   const m = /^local\s+function\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(accessorSrc);
   if (!m) return null;
   const accName = m[1];
+  const tbl = /^[A-Za-z_][A-Za-z0-9_]*$/.test(tableName || '') ? tableName : 'U';
 
   const L = lauxlib.luaL_newstate();
   lualib.luaL_openlibs(L);
@@ -284,13 +306,13 @@ function decodePoolInSandbox(tableSlice, rotationSrc, decoderSrc, accessorSrc, t
 
   const queryChunk = `
 os, io, require, dofile, loadfile, load, loadstring = nil, nil, nil, nil, nil, nil, nil
-local U = ${tableSlice}
+local ${tbl} = ${tableSlice}
 ${rotationSrc}
 ${decoderSrc}
 ${accessorSrc}
 local __out = {}
-for i = 1, #U do
-  local v = U[i]
+for i = 1, #${tbl} do
+  local v = ${tbl}[i]
   if type(v) == "string" then __out[i] = v else __out[i] = false end
 end
 _G.BX_POOL = __out
@@ -391,6 +413,7 @@ export async function prometheusDeepPass(buffer, { stage = null } = {}) {
     // ---- behavioral decode: run the obfuscator's own code verbatim ----
     const tableSlice = slice(src, tableNode);
     const res = decodePoolInSandbox(
+      tableName,
       tableSlice,
       slice(src, rotStmt),
       slice(src, decStmt),

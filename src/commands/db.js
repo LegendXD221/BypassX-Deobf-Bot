@@ -8,6 +8,7 @@
 import { ownerOutputReply, errorReply } from '../replies.js';
 import { logger } from '../logger.js';
 import * as db from '../db.js';
+import { redactSecrets } from '../redact.js';
 
 function fmtRows(res) {
   const lines = [];
@@ -75,11 +76,11 @@ export default {
     const res = await db.rawSql(sql);
     logger.warn({ ms: res.ms, chars: sql.length }, 'owner db sql');
     if (res.error) {
-      return ctx.reply(ownerOutputReply({ title: 'db error', ok: false, input: sql, output: res.error, meta: [`${res.ms}ms`] }));
+      return ctx.reply(ownerOutputReply({ title: 'db error', ok: false, input: sql, output: redactSecrets(res.error), meta: [`${res.ms}ms`] }));
     }
     return ctx.reply(ownerOutputReply({
       title: 'db result', ok: true, input: sql,
-      output: `${fmtRows(res)}\n\n[${res.rowCount} row(s) in ${res.ms}ms]`,
+      output: `${redactSecrets(fmtRows(res))}\n\n[${res.rowCount} row(s) in ${res.ms}ms]`,
       meta: ['raw sql', `${res.ms}ms`],
     }));
   },

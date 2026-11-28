@@ -146,7 +146,7 @@ function scanLuaStrings(text) {
     // Skip line/block comments so we don't pull banner text as code strings.
     if (c === '-' && text[i + 1] === '-') {
       // long-bracket comment? --[==[
-      const lb = /^\[(=*)\[/.exec(text.slice(i + 2));
+      const lb = /^\[(=*)\[/.exec(text.slice(i + 2, i + 18));
       if (lb) {
         const level = lb[1].length;
         const closeStr = ']'.concat('='.repeat(level), ']');
@@ -161,7 +161,7 @@ function scanLuaStrings(text) {
       continue;
     }
     // Long-bracket string [[ ... ]] / [==[ ... ]==]
-    const lbOpen = /^\[(=*)\[(?!.*\]\1\])/.exec(text.slice(i, i + 16));
+    const lbOpen = c === '[' ? /^\[(=*)\[/.exec(text.slice(i, i + 16)) : null;
     if (lbOpen) {
       const level = lbOpen[1].length;
       const closeStr = ']'.concat('='.repeat(level), ']');
@@ -178,22 +178,21 @@ function scanLuaStrings(text) {
     // Quoted string
     if (c === '"' || c === "'") {
       const quote = c;
-      let j = i + 1;
-      let body = '';
+      const bodyStart = i + 1;
+      let j = bodyStart;
       while (j < n) {
         const cj = text[j];
         if (cj === '\\' && j + 1 < n) {
-          body += text.slice(j, j + 2);
           j += 2;
           continue;
         }
-        if (cj === quote) break;
-        if (cj === '\n') break; // unterminated — bail
-        body += cj;
+        if (cj === quote || cj === '\n') break;
         j += 1;
       }
       if (j < n && text[j] === quote) {
-        if (body.length <= MAX_STRING_LEN) {
+        const bodyLen = j - bodyStart;
+        if (bodyLen <= MAX_STRING_LEN) {
+          const body = text.slice(bodyStart, j);
           quoted.push({ raw: body, bytes: unescapeLuaQuoted(body), kind: quote });
         }
         i = j + 1;
@@ -502,7 +501,7 @@ function luaEscape(s) {
 function luaLiteral(s) {
   if (s.length <= 32 || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(s)) return `"${luaEscape(s)}"`;
   let level = 0;
-  while (s.includes(`]${'='.repeat(level)}]`)) level += 1;
+  while (s.includes(`]${'='.repeat(level)}]`) || s.endsWith(`]${'='.repeat(level)}`)) level += 1;
   const eq = '='.repeat(level);
   return `[${eq}[${s}]${eq}]`;
 }

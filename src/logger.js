@@ -2,6 +2,8 @@
  * Lucid Deobf Bot — minimal dependency-free structured logger
  * with an in-memory ring buffer for the owner-only `.logs` command.
  */
+import { redactSecrets } from './redact.js';
+
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
 const minLevel = LEVELS[process.env.LOG_LEVEL || 'info'] ?? 20;
 
@@ -11,9 +13,10 @@ const ring = [];
 function emit(level, obj, msg) {
   if (LEVELS[level] < minLevel) return;
   const ts = new Date().toISOString();
-  const line = obj
+  const raw = obj
     ? `[${ts}] ${level.toUpperCase()} ${msg} ${JSON.stringify(obj)}`
     : `[${ts}] ${level.toUpperCase()} ${msg}`;
+  const line = redactSecrets(raw);
   console.log(line);
   ring.push(line.slice(0, 300));
   if (ring.length > RING_MAX) ring.splice(0, ring.length - RING_MAX);

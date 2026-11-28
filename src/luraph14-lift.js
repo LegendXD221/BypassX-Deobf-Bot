@@ -390,7 +390,7 @@ function reachableBlocks(cfg) {
 }
 
 function dominators(cfg, reach) {
-  // iterative Cooper-Harvey-Kennedy on reachable blocks
+  // iterative Cooper-Harvey-Kennedy on reachable blocks using Uint32Array bitsets
   const order = [];
   const seen = new Set();
   const stack = [cfg.blocks[0]];
@@ -404,30 +404,67 @@ function dominators(cfg, reach) {
       if (reach.has(s) && !seen.has(s)) stack.push(s);
     }
   }
-  const rpo = order.slice().reverse();
-  const rpoIdx = new Map(order.map((b, i) => [b, i]));
-  const dom = new Map();
-  for (const b of rpo) dom.set(b, rpo.includes(b) && b !== order[0] ? new Set(rpo) : new Set([b]));
-  dom.set(order[0], new Set([order[0]]));
+  const n = order.length;
+  const words = Math.ceil(n / 32) || 1;
+  const idxMap = new Map();
+  for (let i = 0; i < n; i++) idxMap.set(order[i], i);
+
+  const bitsets = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const bs = new Uint32Array(words);
+    if (i === 0) {
+      bs[0] = 1;
+    } else {
+      bs.fill(0xffffffff);
+      const rem = n % 32;
+      if (rem !== 0) bs[words - 1] = (1 << rem) - 1;
+    }
+    bitsets[i] = bs;
+  }
+
+  const tmp = new Uint32Array(words);
   let changed = true;
   while (changed) {
     changed = false;
-    for (const b of rpo) {
-      if (b === order[0]) continue;
-      let newDom = null;
+    for (let bi = 1; bi < n; bi++) {
+      const b = order[bi];
+      let hasPred = false;
       for (const p of b.preds) {
-        if (!reach.has(p) || !dom.has(p)) continue;
-        if (newDom === null) newDom = new Set(dom.get(p));
-        else newDom = new Set([...newDom].filter((x) => dom.get(p).has(x)));
+        const pi = idxMap.get(p);
+        if (pi === undefined) continue;
+        const pbs = bitsets[pi];
+        if (!hasPred) {
+          tmp.set(pbs);
+          hasPred = true;
+        } else {
+          for (let w = 0; w < words; w++) tmp[w] &= pbs[w];
+        }
       }
-      if (newDom === null) newDom = new Set([b]);
-      newDom.add(b);
-      const cur = dom.get(b);
-      if (cur.size !== newDom.size || [...newDom].some((x) => !cur.has(x))) {
-        dom.set(b, newDom);
-        changed = true;
+      if (!hasPred) tmp.fill(0);
+      tmp[bi >>> 5] |= 1 << (bi & 31);
+      const cur = bitsets[bi];
+      let diff = false;
+      for (let w = 0; w < words; w++) {
+        if (cur[w] !== tmp[w]) { cur[w] = tmp[w]; diff = true; }
+      }
+      if (diff) changed = true;
+    }
+  }
+
+  const dom = new Map();
+  for (let bi = 0; bi < n; bi++) {
+    const s = new Set();
+    const bs = bitsets[bi];
+    for (let w = 0; w < words; w++) {
+      let word = bs[w];
+      while (word !== 0) {
+        const tz = 31 - Math.clz32(word & -word);
+        const idx = (w << 5) + tz;
+        if (idx < n) s.add(order[idx]);
+        word &= word - 1;
       }
     }
+    dom.set(order[bi], s);
   }
   return dom;
 }

@@ -17,6 +17,8 @@
  * preserving its floor/float semantics. Byte-exact with the loader's output.
  */
 
+import zlib from 'node:zlib';
+
 const POW2 = [];
 for (let i = 0, v = 1; i < 33; i++, v *= 2) POW2[i] = v;
 
@@ -245,13 +247,23 @@ export function findWireBlobs(src) {
   return blobs;
 }
 
-/** Full v14.7 static unwrap: blobs → base85 → LZMA → { vmChunk, data }. */
+function decompressWireStream(raw) {
+  // Check Zstd frame magic (28 B5 2F FD) first if Node zlib exposes zstdDecompressSync
+  if (raw.length >= 4 && raw[0] === 0x28 && raw[1] === 0xb5 && raw[2] === 0x2f && raw[3] === 0xfd) {
+    if (typeof zlib.zstdDecompressSync === 'function') {
+      try { return new Uint8Array(zlib.zstdDecompressSync(raw)); } catch { /* fallback */ }
+    }
+  }
+  return lzmaDecode(raw);
+}
+
+/** Full v14.7 static unwrap: blobs → base85 → LZMA/Zstd → { vmChunk, data }. */
 export function unwrapV14Wire(src) {
   const blobs = findWireBlobs(src);
   if (blobs.length < 2) return { error: `expected 2 LPH blobs, found ${blobs.length}` };
-  // loader order: local q,o = N(blob1), N(blob2) → s=LZMA(q) (VM chunk), data=LZMA(o)
-  const vmChunk = lzmaDecode(b85decode(blobs[0].text));
-  const data = lzmaDecode(b85decode(blobs[1].text));
+  // loader order: local q,o = N(blob1), N(blob2) → s=LZMA/Zstd(q) (VM chunk), data=LZMA/Zstd(o)
+  const vmChunk = decompressWireStream(b85decode(blobs[0].text));
+  const data = decompressWireStream(b85decode(blobs[1].text));
   return { vmChunk, data, blobs: blobs.map((b) => b.len) };
 }
 

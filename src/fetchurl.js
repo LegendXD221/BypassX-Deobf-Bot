@@ -85,19 +85,34 @@ export function isPrivateIp(ip) {
   }
   const low = ip.toLowerCase();
   if (low === '::' || low === '::1') return true;
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(low);
-  if (mapped) return isPrivateIp(mapped[1]);
+  const mapped = /^::ffff:(?:(\d+\.\d+\.\d+\.\d+)|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/.exec(low);
+  if (mapped) {
+    if (mapped[1]) return isPrivateIp(mapped[1]);
+    const hi = parseInt(mapped[2], 16);
+    const lo = parseInt(mapped[3], 16);
+    return isPrivateIp(`${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`);
+  }
+  if (/^64:ff9b::/.test(low)) return true; // NAT64
   // fc00::/7 (unique local), fe80::/10 (link local), ff00::/8 (multicast)
   return /^(f[cd]|fe[89ab]|ff)/.test(low);
 }
 
 const BLOCKED_HOST_SUFFIX = ['localhost', '.local', '.internal', '.home.arpa', '.localdomain'];
+const BLOCKED_TRACKER_DOMAINS = new Set([
+  'grabify.link', 'iplogger.org', 'iplogger.com', '2no.co', 'yip.su', 'iplis.ru',
+  'ezstat.ru', 'blasze.tk', 'ps3cfw.com', 'ipify.org', 'api.ipify.org', 'ip-api.com',
+  'icanhazip.com', 'ident.me', 'ipecho.net', 'wtfismyip.com', 'ipinfo.io',
+  'whatismyipaddress.com', 'bmw-trackers.net', 'roblox-verify.org', 'free-robux-generator.ru',
+]);
 
-/** DNS-resolve the hostname and refuse private/reserved/metadata targets. */
+/** DNS-resolve the hostname and refuse private/reserved/metadata/tracker targets. */
 export async function assertPublicHost(hostname) {
   const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
   if (!host || BLOCKED_HOST_SUFFIX.some((s) => host === s.slice(1) || host.endsWith(s))) {
     throw new Error('Blocked: link points to a non-public host.');
+  }
+  if (BLOCKED_TRACKER_DOMAINS.has(host) || [...BLOCKED_TRACKER_DOMAINS].some((d) => host.endsWith(`.${d}`))) {
+    throw new Error('Blocked: IP logger / tracker / phishing domain.');
   }
   if (net.isIP(host)) {
     if (isPrivateIp(host)) throw new Error('Blocked: link points to a private/reserved address.');
@@ -140,14 +155,20 @@ async function readCapped(body, maxBytes, label) {
  */
 export async function safeFetch(rawUrl, { maxBytes, timeoutMs = 30_000, headers = {} } = {}) {
   let cur = rawUrl instanceof URL ? rawUrl : normalizeUrl(rawUrl);
+  const initialOrigin = cur.origin;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     await assertPublicHost(cur.hostname);
+    const reqHeaders = { 'user-agent': UA, ...headers };
+    if (cur.origin !== initialOrigin) {
+      delete reqHeaders.authorization;
+      delete reqHeaders.Authorization;
+    }
     let res;
     try {
       res = await fetch(cur, {
         redirect: 'manual',
         signal: AbortSignal.timeout(timeoutMs),
-        headers: { 'user-agent': UA, ...headers },
+        headers: reqHeaders,
       });
     } catch (e) {
       if (String(e?.name) === 'TimeoutError') throw new Error(`Timed out fetching \`${cur.host}\`.`);

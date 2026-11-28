@@ -29,6 +29,7 @@ import {
   isOwner, pinRequired, checkPin, stripPinArg, peekPinArg,
   acquireDanger, releaseDanger, audit, confirmGate,
 } from './owner-guard.js';
+import { redactSecrets } from './redact.js';
 import * as db from './db.js';
 import { bootAudit as atBootAudit } from './antitamper/evidence.js';
 import { setDashboardClient, announceDashboard, initDashboardToken } from './dashboard.js';
@@ -135,9 +136,21 @@ async function runOwnerCommand(cmd, ctx, rawArgs) {
   try {
     // L2 — optional PIN.
     if (pinRequired()) {
-      const provided = ctx.isSlash
-        ? (ctx.interaction.options.getString('pin') || '')
-        : (peekPinArg(rawArgs) === process.env.OWNER_PIN ? (rawArgs.shift(), process.env.OWNER_PIN) : '');
+      let provided = '';
+      if (ctx.isSlash) {
+        provided = ctx.interaction.options.getString('pin') || '';
+      } else {
+        const candidate = peekPinArg(rawArgs);
+        const stripped = stripPinArg(rawArgs);
+        if (stripped !== rawArgs) {
+          rawArgs.splice(0, rawArgs.length, ...stripped);
+          provided = candidate;
+          // Scrub the plaintext PIN message from chat history immediately.
+          ctx.message?.delete?.().catch(() => {});
+        } else {
+          provided = candidate || '';
+        }
+      }
       const pin = checkPin(ctx.userId, provided);
       if (!pin.ok) {
         await audit(client, {
@@ -178,7 +191,7 @@ async function runOwnerCommand(cmd, ctx, rawArgs) {
 
     await audit(client, {
       userId: ctx.userId, username: ctx.userTag, command: cmd.name,
-      args: (rawArgs || []).join(' '), allowed: true, layer: 'all layers passed',
+      args: redactSecrets((rawArgs || []).join(' ')), allowed: true, layer: 'all layers passed',
     });
     await cmd.run(ctx);
   } finally {
@@ -187,7 +200,11 @@ async function runOwnerCommand(cmd, ctx, rawArgs) {
 }
 
 async function dispatch(cmd, ctx, rawArgs) {
-  const bl = await blacklisted(ctx);
+  const gid = ctx.interaction?.guildId || ctx.message?.guildId;
+  const [bl, gs] = await Promise.all([
+    blacklisted(ctx),
+    !cmd.owner && gid ? db.getGuildSettings(gid) : Promise.resolve(null),
+  ]);
   if (bl) {
     logger.warn({ user: ctx.userId, cmd: cmd.name, kind: bl }, 'blacklisted entity blocked');
     audit(client, {
@@ -197,14 +214,10 @@ async function dispatch(cmd, ctx, rawArgs) {
     return ctx.reply(blockedReply(bl));
   }
   // Per-guild controls set from the owner dashboard (owner always bypasses).
-  if (!cmd.owner) {
-    const gid = ctx.interaction?.guildId || ctx.message?.guildId;
-    if (gid) {
-      const gs = await db.getGuildSettings(gid);
-      if (gs.disabled) return ctx.reply(guildOffReply('The bot is disabled in this server', 'The owner turned it off from the dashboard.'));
-      if ((cmd.name === 'deobf' || cmd.serviceCmd) && !gs.deobf_enabled) return ctx.reply(guildOffReply('Deobfuscation is off here', 'The owner disabled the deobf commands in this server.'));
-      if (cmd.name === 'detect' && !gs.detect_enabled) return ctx.reply(guildOffReply('Detection is off here', 'The owner disabled the detect command in this server.'));
-    }
+  if (gs) {
+    if (gs.disabled) return ctx.reply(guildOffReply('The bot is disabled in this server', 'The owner turned it off from the dashboard.'));
+    if ((cmd.name === 'deobf' || cmd.serviceCmd) && !gs.deobf_enabled) return ctx.reply(guildOffReply('Deobfuscation is off here', 'The owner disabled the deobf commands in this server.'));
+    if (cmd.name === 'detect' && !gs.detect_enabled) return ctx.reply(guildOffReply('Detection is off here', 'The owner disabled the detect command in this server.'));
   }
   if (cmd.owner && !isOwner(ctx.userId)) return ownerDenied(cmd, ctx);
   if (cmd.owner) return runOwnerCommand(cmd, ctx, rawArgs);
@@ -219,6 +232,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const ctx = makeCtx({ interaction, client });
   ctx.args = [];
   try {
+    // Beat Discord's 3-second interaction ACK deadline BEFORE any DB/network work on heavy commands.
+    if (cmd.heavy) await ctx.defer();
     await dispatch(cmd, ctx, ctx.args);
   } catch (e) {
     logger.error({ err: String(e?.stack || e).slice(0, 600), cmd: cmd.name }, 'slash command crashed');
@@ -231,10 +246,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
 // ---- prefix commands --------------------------------------------------------
 client.on(Events.MessageCreate, async (message) => {
   try {
-    if (message.author?.bot) return;
-    // Per-guild prefix (dashboard) falls back to the global PREFIX.
-    const prefix = message.guildId ? ((await db.guildPrefix(message.guildId)) || CONFIG.prefix) : CONFIG.prefix;
-    if (!prefix || !message.content?.startsWith(prefix)) return;
+    if (message.author?.bot || message.webhookId || message.system || !message.content) return;
+    // Fast synchronous prefix lookup — zero DB latency on regular chat messages.
+    let prefix = CONFIG.prefix;
+    if (message.guildId) {
+      const peek = db.peekGuildPrefix(message.guildId);
+      if (peek.hit) {
+        prefix = peek.prefix || CONFIG.prefix;
+      } else {
+        // Cold cache: if the message doesn't even start with a short prefix candidate, warm in background.
+        if (message.content.startsWith(CONFIG.prefix)) {
+          db.getGuildSettings(message.guildId).catch(() => {});
+        } else {
+          prefix = (await db.guildPrefix(message.guildId)) || CONFIG.prefix;
+        }
+      }
+    }
+    if (!prefix || !message.content.startsWith(prefix)) return;
 
     const parts = message.content.slice(prefix.length).trim().split(/\s+/);
     const name = (parts.shift() || '').toLowerCase();
@@ -257,9 +285,14 @@ client.on(Events.MessageCreate, async (message) => {
     }
     ctx.prefix = prefix;
 
-    await dispatch(cmd, ctx, ctx.args);
+    try {
+      await dispatch(cmd, ctx, ctx.args);
+    } catch (e) {
+      logger.error({ err: String(e?.stack || e).slice(0, 600), cmd: cmd.name }, 'prefix command crashed');
+      await ctx.send(errorReply('Unexpected error', String(e?.message || e).slice(0, 500))).catch(() => {});
+    }
   } catch (e) {
-    logger.error({ err: String(e?.stack || e).slice(0, 600) }, 'prefix command crashed');
+    logger.error({ err: String(e?.stack || e).slice(0, 600) }, 'prefix handler crashed');
   }
 });
 

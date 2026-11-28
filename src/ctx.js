@@ -6,6 +6,40 @@
  */
 import { AttachmentBuilder } from 'discord.js';
 import { fetchFromUrl, looksLikeUrl } from './fetchurl.js';
+import { logger } from './logger.js';
+
+const MAX_FALLBACK_FILE = 8 * 1024 * 1024;
+
+function extractFallbackTextAndLinks(payload) {
+  const texts = [];
+  const urls = [];
+  const walk = (node) => {
+    if (!node) return;
+    const j = typeof node.toJSON === 'function' ? node.toJSON() : node;
+    if (Array.isArray(j)) { for (const x of j) walk(x); return; }
+    if (typeof j !== 'object') return;
+    if (typeof j.content === 'string' && j.content.trim()) texts.push(j.content.trim());
+    if (typeof j.url === 'string' && /^https?:\/\//i.test(j.url)) {
+      urls.push(j.label ? `${j.label}: ${j.url}` : j.url);
+    }
+    if (Array.isArray(j.components)) walk(j.components);
+    if (Array.isArray(j.accessory)) walk(j.accessory);
+    else if (j.accessory) walk(j.accessory);
+  };
+  if (typeof payload?.content === 'string' && payload.content.trim()) texts.push(payload.content.trim());
+  if (Array.isArray(payload?.components)) walk(payload.components);
+  const body = [...urls, ...texts].join('\n').trim() || 'Result ready (display card exceeded Discord limits).';
+  const safeFiles = Array.isArray(payload?.files)
+    ? payload.files.filter((f) => {
+      const att = f?.attachment;
+      return !Buffer.isBuffer(att) || att.length <= MAX_FALLBACK_FILE;
+    })
+    : [];
+  return {
+    content: body.length <= 1900 ? body : `${body.slice(0, 1899)}…`,
+    files: safeFiles,
+  };
+}
 
 export function makeCtx({ interaction = null, message = null, client }) {
   const isSlash = Boolean(interaction);
@@ -51,10 +85,30 @@ export function makeCtx({ interaction = null, message = null, client }) {
     },
     async reply(payload) {
       if (interaction) {
-        if (interaction.deferred || interaction.replied) return interaction.editReply(payload);
-        return interaction.reply(payload);
+        try {
+          if (interaction.deferred || interaction.replied) {
+            // Cannot add Ephemeral to an already-deferred public reply — strip Ephemeral bit if present.
+            const clean = payload?.flags ? { ...payload, flags: payload.flags & ~64 } : payload;
+            return await interaction.editReply(clean);
+          }
+          return await interaction.reply(payload);
+        } catch (e) {
+          logger.warn({ err: String(e?.message || e).slice(0, 200), phase: 'reply' }, 'discord: reply fallback');
+          if (interaction.channel) {
+            const pub = payload?.flags ? { ...payload, flags: payload.flags & ~64 } : payload;
+            return interaction.channel.send(pub).catch(() => interaction.channel.send(extractFallbackTextAndLinks(pub)).catch(() => {}));
+          }
+          throw e;
+        }
       }
-      if (message) return message.reply(payload);
+      if (message) {
+        try {
+          return await message.reply(payload);
+        } catch (e) {
+          logger.warn({ err: String(e?.message || e).slice(0, 200), phase: 'message.reply' }, 'discord: reply fallback');
+          return message.channel.send(payload).catch(() => message.channel.send(extractFallbackTextAndLinks(payload)).catch(() => {}));
+        }
+      }
     },
 
     /**
@@ -90,7 +144,8 @@ export function makeCtx({ interaction = null, message = null, client }) {
         };
       }
       if (message) {
-        const sent = await message.reply({ content: text, ...mentions }).catch(() => null);
+        let sent = await message.reply({ content: text, ...mentions }).catch(() => null);
+        if (!sent) sent = await message.channel.send({ content: text, ...mentions }).catch(() => null);
         return {
           async update(t) {
             if (sent) await sent.edit({ content: t, ...mentions }).catch(() => {});
@@ -118,12 +173,33 @@ export function makeCtx({ interaction = null, message = null, client }) {
             ? interaction.followUp(payload)
             : interaction.reply(payload));
         } catch (e) {
+          logger.warn({ err: String(e?.message || e).slice(0, 200), phase: 'followUp' }, 'discord: delivery fallback');
           const chan = interaction.channel;
-          if (!chan) throw e;
-          return chan.send(payload).catch(() => {});
+          if (chan) {
+            try { return await chan.send(payload); } catch (e2) {
+              logger.warn({ err: String(e2?.message || e2).slice(0, 200), phase: 'chan.send' }, 'discord: trying safe plain fallback');
+              return chan.send(extractFallbackTextAndLinks(payload)).catch((e3) => {
+                logger.error({ err: String(e3?.message || e3).slice(0, 200) }, 'discord: all send fallbacks failed');
+              });
+            }
+          }
+          const safe = extractFallbackTextAndLinks(payload);
+          return interaction.followUp(safe).catch(() => {});
         }
       }
-      if (message) return message.reply(payload);
+      if (message) {
+        try {
+          return await message.reply(payload);
+        } catch (e) {
+          logger.warn({ err: String(e?.message || e).slice(0, 200), phase: 'message.reply' }, 'discord: reply failed — falling back to channel.send');
+          try { return await message.channel.send(payload); } catch (e2) {
+            logger.warn({ err: String(e2?.message || e2).slice(0, 200), phase: 'channel.send' }, 'discord: trying safe plain fallback');
+            return message.channel.send(extractFallbackTextAndLinks(payload)).catch((e3) => {
+              logger.error({ err: String(e3?.message || e3).slice(0, 200) }, 'discord: all prefix fallbacks failed');
+            });
+          }
+        }
+      }
     },
   };
 }

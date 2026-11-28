@@ -65,7 +65,7 @@ const liftWorkerPath = new URL('./vm-lift-worker.js', import.meta.url)
  */
 export async function liftVM(inputPath, { timeoutMs = 120_000 } = {}) {
   const wallMs = Math.max(5_000, timeoutMs - 10_000);
-  const r = await spawnHardened(process.execPath, [liftWorkerPath, inputPath, String(wallMs)], {
+  const r = await spawnHardened(process.execPath, ['--max-old-space-size=512', liftWorkerPath, inputPath, String(wallMs)], {
     timeoutMs,
     label: 'vm-lift',
     maxBuffer: 64 * 1024 * 1024,

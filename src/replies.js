@@ -244,9 +244,17 @@ export function loggerReply(report, paste, filename, prefix, fileBuffer = null) 
     }
     if (fileBuffer) {
       const outName = 'environment-recording.lua';
-      files.push(new AttachmentBuilder(fileBuffer, { name: outName }));
-      c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
-      if (!paste) c.addTextDisplayComponents(T('-# Pastefy upload failed — the recording is delivered as the attached file instead.'));
+      if (fileBuffer.length <= MAX_DISCORD_ATTACHMENT) {
+        files.push(new AttachmentBuilder(fileBuffer, { name: outName }));
+        c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
+        if (!paste) c.addTextDisplayComponents(T('-# Pastefy upload failed — the recording is delivered as the attached file instead.'));
+      } else if (paste) {
+        c.addTextDisplayComponents(T('-# Recording exceeds Discord 8 MB attachment limit — full dump is in the Pastefy link above.'));
+      } else {
+        files.push(new AttachmentBuilder(fileBuffer.subarray(0, SAFE_TRUNC_SLICE), { name: outName }));
+        c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
+        c.addTextDisplayComponents(T('-# Pastefy failed and recording exceeded 8 MB — attached first 7.9 MB.'));
+      }
     }
   });
   return v2([card], { files });
@@ -336,6 +344,36 @@ function verifiedFact(verification) {
   return { label: 'Verified', value: `○ ${clamp(verification.detail || 'not verifiable', 120)}` };
 }
 
+const MAX_DISCORD_ATTACHMENT = 8 * 1024 * 1024;
+const SAFE_TRUNC_SLICE = 7_900_000;
+
+/** Sanitize filename for Discord AttachmentBuilder + FileBuilder attachment:// URL validator. */
+function safeAttachmentName(raw, fallback = 'output.lua') {
+  const cleaned = String(raw || fallback)
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80);
+  return cleaned || fallback;
+}
+
+/** Total text characters across a ContainerBuilder's TextDisplayBuilder children. */
+function v2TextBudgetLeft(c, maxTotal = 3700) {
+  try {
+    const j = c.toJSON();
+    let used = 0;
+    const walk = (n) => {
+      if (!n || typeof n !== 'object') return;
+      if (Array.isArray(n)) { for (const x of n) walk(x); return; }
+      if (typeof n.content === 'string') used += n.content.length;
+      if (Array.isArray(n.components)) walk(n.components);
+    };
+    walk(j.components);
+    return Math.max(0, maxTotal - used);
+  } catch {
+    return 1400;
+  }
+}
+
 export function successReply(result, paste, filename, sourceUrl, sourceNote) {
   const d = result.detected || {};
   const files = [];
@@ -360,10 +398,19 @@ export function successReply(result, paste, filename, sourceUrl, sourceNote) {
     }
 
     if (result.binaryOutput) {
-      files.push(new AttachmentBuilder(result.outputBuffer, { name: result.codeName || 'unpacked.bin' }));
-      c.addSeparatorComponents(SEP());
-      c.addTextDisplayComponents(T('**Unpacked binary** attached below — text pastes cannot carry executables.'));
-      c.addFileComponents(new FileBuilder().setURL(`attachment://${result.codeName || 'unpacked.bin'}`));
+      const binBuf = result.outputBuffer || Buffer.alloc(0);
+      const outName = safeAttachmentName(result.codeName, 'unpacked.bin');
+      if (binBuf.length <= MAX_DISCORD_ATTACHMENT) {
+        files.push(new AttachmentBuilder(binBuf, { name: outName }));
+        c.addSeparatorComponents(SEP());
+        c.addTextDisplayComponents(T('**Unpacked binary** attached below — text pastes cannot carry executables.'));
+        c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
+      } else {
+        files.push(new AttachmentBuilder(binBuf.subarray(0, SAFE_TRUNC_SLICE), { name: outName }));
+        c.addSeparatorComponents(SEP());
+        c.addTextDisplayComponents(T(`**Unpacked binary** (${fmtBytes(binBuf.length)}) exceeded Discord's 8 MB upload limit — attached first 7.9 MB.`));
+        c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
+      }
     } else if (result.code) {
       c.addSeparatorComponents(SEP());
       // Actions: paste buttons first (multi-part supported), then preview + file.
@@ -373,7 +420,7 @@ export function successReply(result, paste, filename, sourceUrl, sourceNote) {
           const shown = parts.slice(0, 4).map((p) => ({ label: `Part ${p.index}/${p.of}`, url: p.url }));
           c.addActionRowComponents(linkRow([...shown, { label: 'Raw', url: paste.rawUrl }]));
           const rest = parts.slice(4).map((p) => `[Part ${p.index}](${p.url})`).join(' • ');
-          if (rest) c.addTextDisplayComponents(T(`-# More parts: ${rest}`));
+          if (rest) c.addTextDisplayComponents(T(`-# More parts: ${clamp(rest, 350)}`));
         } else {
           c.addActionRowComponents(linkRow([
             { label: '🧾 Open paste', url: paste.url },
@@ -381,15 +428,26 @@ export function successReply(result, paste, filename, sourceUrl, sourceNote) {
           ]));
         }
       }
-      const preview = result.code.length <= 1000
+      const budget = Math.max(220, Math.min(1600, v2TextBudgetLeft(c) - 180));
+      const sliceLen = Math.max(160, budget - 80);
+      const preview = result.code.length <= sliceLen
         ? result.code
-        : `${result.code.slice(0, 800)}\n… (${result.code.length - 800} more chars in the paste)`;
-      c.addTextDisplayComponents(T(`**Preview**${result.code.length > 1000 ? ' (truncated)' : ''}\n\`\`\`\n${clamp(preview, 1600)}\n\`\`\``));
-      const outName = result.codeName || 'deobfuscated.lua';
-      files.push(new AttachmentBuilder(Buffer.from(result.code, 'utf8'), { name: outName }));
-      c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
-      if (!paste) {
-        c.addTextDisplayComponents(T('-# Pastefy upload failed — the full code is delivered as the attached file instead.'));
+        : `${result.code.slice(0, sliceLen)}\n… (${result.code.length - sliceLen} more chars${paste ? ' in the paste' : ''})`;
+      c.addTextDisplayComponents(T(`**Preview**${result.code.length > sliceLen ? ' (truncated)' : ''}\n\`\`\`\n${clamp(preview, budget)}\n\`\`\``));
+      const outName = safeAttachmentName(result.codeName, 'deobfuscated.lua');
+      const codeBuf = Buffer.from(result.code, 'utf8');
+      if (codeBuf.length <= MAX_DISCORD_ATTACHMENT) {
+        files.push(new AttachmentBuilder(codeBuf, { name: outName }));
+        c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
+        if (!paste) {
+          c.addTextDisplayComponents(T('-# Pastefy upload failed — the full code is delivered as the attached file instead.'));
+        }
+      } else if (paste) {
+        c.addTextDisplayComponents(T('-# Output exceeds Discord 8 MB attachment limit — full code is in the Pastefy link above.'));
+      } else {
+        files.push(new AttachmentBuilder(codeBuf.subarray(0, SAFE_TRUNC_SLICE), { name: outName }));
+        c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
+        c.addTextDisplayComponents(T('-# Pastefy failed and output exceeded 8 MB — attached first 7.9 MB.'));
       }
     }
   });
@@ -404,12 +462,14 @@ export function failureReply(result, prefix) {
     brandHeader(c, '⚠️ Could not deobfuscate',
       `${d.name || 'Unknown'}${d.version ? ` ${d.version}` : ''}${d.confidence ? ` — ${d.confidence}% confidence` : ''}`, null);
     c.addSeparatorComponents(SEP());
-    c.addTextDisplayComponents(T(clamp(result?.note || 'The engine recovered no code from this sample.', 900)));
+    c.addTextDisplayComponents(T(clamp(result?.note || 'The engine recovered no code from this sample.', 700)));
     if (result?.stages?.length) {
+      const recent = result.stages.slice(-8);
+      const omitted = result.stages.length - recent.length;
       c.addSeparatorComponents(SEP());
       c.addTextDisplayComponents(T([
-        '**Stages tried**',
-        ...result.stages.map((s) => `• ${s.name}${s.detail ? ` — ${clamp(s.detail, 100)}` : ''}`),
+        `**Stages tried**${omitted > 0 ? ` (last ${recent.length} of ${result.stages.length})` : ''}`,
+        ...recent.map((s) => `• ${s.name}${s.detail ? ` — ${clamp(s.detail, 80)}` : ''}`),
       ].join('\n')));
     }
     c.addSeparatorComponents(SEP());
@@ -720,10 +780,19 @@ export function obfReply({ version, code, filename, sizeIn, sizeOut, paste, sour
     }
     const preview = code.length <= 800 ? code : `${code.slice(0, 600)}\n… (${code.length - 600} more chars in the paste)`;
     c.addTextDisplayComponents(T(`**Preview**${code.length > 800 ? ' (truncated)' : ''}\n\`\`\`lua\n${clamp(preview, 1400)}\n\`\`\``));
-    const outName = `${String(filename || 'output.lua').replace(/\.[^.]*$/, '')}.xfuscator.${version}.lua`;
-    files.push(new AttachmentBuilder(Buffer.from(code, 'utf8'), { name: outName }));
-    c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
-    if (!paste) c.addTextDisplayComponents(T('-# Pastefy upload failed — the full obfuscated file is attached instead.'));
+    const outName = safeAttachmentName(`${String(filename || 'output.lua').replace(/\.[^.]*$/, '')}.xfuscator.${version}.lua`, `xfuscator.${version}.lua`);
+    const codeBuf = Buffer.from(code, 'utf8');
+    if (codeBuf.length <= MAX_DISCORD_ATTACHMENT) {
+      files.push(new AttachmentBuilder(codeBuf, { name: outName }));
+      c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
+      if (!paste) c.addTextDisplayComponents(T('-# Pastefy upload failed — the full obfuscated file is attached instead.'));
+    } else if (paste) {
+      c.addTextDisplayComponents(T('-# Output exceeds Discord 8 MB attachment limit — full code is in the Pastefy link above.'));
+    } else {
+      files.push(new AttachmentBuilder(codeBuf.subarray(0, SAFE_TRUNC_SLICE), { name: outName }));
+      c.addFileComponents(new FileBuilder().setURL(`attachment://${outName}`));
+      c.addTextDisplayComponents(T('-# Pastefy failed and output exceeded 8 MB — attached first 7.9 MB.'));
+    }
   });
   return v2([card], { files });
 }
@@ -754,14 +823,23 @@ export function codeToolReply({
         c.addActionRowComponents(linkRow(defs));
       }
       if (code != null) {
-        const preview = code.length <= 900 ? code : `${code.slice(0, 750)}\n… (${code.length - 750} more chars)`;
-        c.addTextDisplayComponents(T(`**Preview**${code.length > 900 ? ' (truncated)' : ''}\n\`\`\`\n${clamp(preview, 1500)}\n\`\`\``));
-        const name = codeName || 'output.txt';
-        files.push(new AttachmentBuilder(Buffer.from(code, 'utf8'), { name }));
-        c.addFileComponents(new FileBuilder().setURL(`attachment://${name}`));
+        const budget = Math.max(220, Math.min(1500, v2TextBudgetLeft(c) - 180));
+        const sliceLen = Math.max(150, budget - 80);
+        const preview = code.length <= sliceLen ? code : `${code.slice(0, sliceLen)}\n… (${code.length - sliceLen} more chars)`;
+        c.addTextDisplayComponents(T(`**Preview**${code.length > sliceLen ? ' (truncated)' : ''}\n\`\`\`\n${clamp(preview, budget)}\n\`\`\``));
+        const name = safeAttachmentName(codeName, 'output.txt');
+        const codeBuf = Buffer.from(code, 'utf8');
+        if (codeBuf.length <= MAX_DISCORD_ATTACHMENT) {
+          files.push(new AttachmentBuilder(codeBuf, { name }));
+          c.addFileComponents(new FileBuilder().setURL(`attachment://${name}`));
+        } else if (!paste) {
+          files.push(new AttachmentBuilder(codeBuf.subarray(0, SAFE_TRUNC_SLICE), { name }));
+          c.addFileComponents(new FileBuilder().setURL(`attachment://${name}`));
+        }
       } else if (fileBuffer) {
-        const name = codeName || 'output.bin';
-        files.push(new AttachmentBuilder(fileBuffer, { name }));
+        const name = safeAttachmentName(codeName, 'output.bin');
+        const buf = fileBuffer.length <= MAX_DISCORD_ATTACHMENT ? fileBuffer : fileBuffer.subarray(0, SAFE_TRUNC_SLICE);
+        files.push(new AttachmentBuilder(buf, { name }));
         c.addFileComponents(new FileBuilder().setURL(`attachment://${name}`));
       }
       if (paste && code != null && paste.parts?.length > 1) {

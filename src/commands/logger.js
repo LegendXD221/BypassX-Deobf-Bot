@@ -245,10 +245,13 @@ export async function runLogger(ctx, { lift = liftVM } = {}) {
     }
     let paste = null;
     try {
-      paste = await createPaste({
-        title: `Lucid Deobf — Environment Logger — ${att.filename}`,
-        text: recordingText,
-      });
+      paste = await Promise.race([
+        createPaste({
+          title: `Lucid Deobf — Environment Logger — ${att.filename}`,
+          text: recordingText,
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('pastefy upload timed out (15s)')), 15_000)),
+      ]);
     } catch (e) {
       logger.warn({ err: String(e.message || e) }, 'logger: pastefy upload failed — file attachment instead');
     }

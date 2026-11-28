@@ -28,9 +28,9 @@ export const CONFIG = {
   maxUploadBytes: Math.max(1, num('MAX_UPLOAD_MB', 10)) * 1024 * 1024,
   engineTimeoutMs: Math.max(30, num('ENGINE_TIMEOUT_S', 180)) * 1000,
 
-  // Concurrency: at most 2 engine runs at once, queue up to 8.
-  maxConcurrent: 2,
-  maxQueue: 8,
+  // Concurrency: 4 parallel runs on VPS (566GB host), 2 on smaller tiers.
+  maxConcurrent: Math.max(1, num('MAX_CONCURRENT', process.env.BX_VPS === '1' ? 4 : 2)),
+  maxQueue: Math.max(2, num('MAX_QUEUE', process.env.BX_VPS === '1' ? 16 : 8)),
   userCooldownMs: 10_000,
 
   // Bot owner — powerful owner-only commands (eval/exec/servers/…).

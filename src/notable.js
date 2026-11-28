@@ -20,7 +20,7 @@
  * Every other string is unclassified (undefined kind).
  */
 
-const RE_WEBHOOK = /(?:discord(?:app)?\.com|discord\.gg)\/api\/(?:v\d+\/)?webhooks\//i;
+const RE_WEBHOOK = /(?:(?:canary\.|ptb\.)?discord(?:app)?\.com|discord\.gg)\/api\/(?:v\d+\/)?webhooks\/|(?:webhook\.lewisakura\.moe|hooks\.hyra\.io|hooks\.slack\.com|api\.telegram\.org\/bot)/i;
 const RE_GATEWAY = /(?:gateway|discord)\.(?:com|app|gg|status)\//i;
 // Discord bot-token shape: three dot-separated segments (id.timestamp.hmac).
 // Not \b-anchored per-part — ids are mixed-alphabet base64 (e.g. 'AAAABBBB…').
@@ -31,8 +31,8 @@ const RE_IP = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{2,5})?\b/;
 // The weak ':<6 digits>' alternative stays with the generic position.
 const RE_ASSET_STRONG = /\b(?:rbxcdn\.com|assetdelivery\.roblox\.com|roblox\.com\/(?:v\d+\/)?assets|rbxasset(?:id)?:)\//i;
 const RE_ASSET = /\b(?:rbxasset|rbxcdn|assetdelivery)\b|:\d{6,}\b/i;
-const RE_B64 = /\b[A-Za-z0-9+/=]{48,}\b/;
-const RE_LOADER = /\b(?:loadstring|load|require|getgenv|queue_on_teleport)[^\n]{0,40}(?:game:HttpGet|HttpGet|syn\.request|request)\b/i;
+const RE_B64 = /(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{44,}[A-Za-z0-9+/=]{4}(?![A-Za-z0-9+/=])/;
+const RE_LOADER = /\b(?:loadstring|load|require|getgenv|queue_on_teleport|HttpService)[^\n]{0,80}(?:game:HttpGet(?:Async)?|HttpGet(?:Async)?|GetAsync|syn\.request|http_request|http\.request|request)\b/i;
 // Keyword proximity — snake_case boundaries: \b fails between '_' and 'a'
 // ('_api_key_' has word chars on both sides), so the guard excludes only
 // REAL word-start/end chars (letters/digits) and treats '_' as a boundary.
@@ -55,7 +55,7 @@ export function classifyString(s) {
   if (RE_URL.test(s)) return 'url';
   if (RE_IP.test(s)) return 'ip-endpoint';
   if (RE_ASSET.test(s)) return 'asset';
-  if (s.length >= 16 && RE_SECRET_KW.test(s)) return 'secret';
+  if (s.length >= 8 && RE_SECRET_KW.test(s)) return 'secret';
   if (RE_B64.test(s)) return 'base64';
   return null;
 }

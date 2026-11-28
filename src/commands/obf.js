@@ -117,10 +117,13 @@ export default {
 
     let paste = null;
     try {
-      paste = await createPaste({
-        title: `Xfuscator (${version}) — ${att.filename || 'input.lua'}`,
-        text: r.code,
-      });
+      paste = await Promise.race([
+        createPaste({
+          title: `Xfuscator (${version}) — ${att.filename || 'input.lua'}`,
+          text: r.code,
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('pastefy upload timed out (15s)')), 15_000)),
+      ]);
     } catch (e) {
       logger.warn({ err: String(e.message || e) }, 'obf: pastefy upload failed — delivering file attachment instead');
     }

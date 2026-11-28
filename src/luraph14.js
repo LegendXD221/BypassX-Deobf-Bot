@@ -169,19 +169,10 @@ function buildPatchedSource(sourceText) {
 
 // ---- dump parsing -----------------------------------------------------------
 function unescapeRecorded(content) {
-  let out = '';
-  for (let i = 0; i < content.length; i++) {
-    const c = content[i];
-    if (c === '\\') {
-      const m = /^\\x([0-9a-fA-F]{2})/.exec(content.slice(i));
-      if (m) { out += String.fromCharCode(parseInt(m[1], 16)); i += 3; continue; }
-      const n = content[i + 1];
-      const map = { n: '\n', t: '\t', r: '\r', '"': '"', '\\': '\\' };
-      out += map[n] ?? n; i += 1; continue;
-    }
-    out += c;
-  }
-  return out;
+  const map = { n: '\n', t: '\t', r: '\r', '"': '"', '\\': '\\' };
+  return content.replace(/\\x([0-9a-fA-F]{2})|\\(.)/g, (_, hex, ch) => (
+    hex ? String.fromCharCode(parseInt(hex, 16)) : (map[ch] ?? ch)
+  ));
 }
 
 export function extractRecordedPrints(body) {

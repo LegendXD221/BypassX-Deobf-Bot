@@ -50,8 +50,7 @@ function selfDecrypt35(st, I) {
   // m,H,M,N = O[I], L[I], Q(B,P(U(B,14),262143),(P(U(B,28),15))), s[I]
   const m = st.O[I];
   const H = st.L[I];
-  const M = bxor(B, band(rshift(B, 14), 262143), band(rshift(B, 28), 15));
-  // note: bxor with 3 args in Lua = fold; emulate:
+  // bxor with 3 args in Lua = fold:
   const M3 = bxor(bxor(B, band(rshift(B, 14), 262143)), band(rshift(B, 28), 15)) >>> 0;
   const N = st.s[I] >>> 0;
   const C = m < 2097152 ? 7 : 14;
@@ -84,8 +83,12 @@ function selfDecrypt38(st, I) {
 function constDecrypt(st, I) {
   const K = st.s[I];
   const T = st.L[I] >>> 0;
-  const off = bxor(st.y5[K], CONST_KEY) >>> 0;
-  st.y5[K] = off;
+  if (!st._decryptedY5) st._decryptedY5 = new Set();
+  const off = st._decryptedY5.has(K) ? (st.y5[K] >>> 0) : (bxor(st.y5[K], CONST_KEY) >>> 0);
+  if (!st._decryptedY5.has(K)) {
+    st.y5[K] = off;
+    st._decryptedY5.add(K);
+  }
   if (off >= st.buf.length) return null;
   const vi = readVarint(st.buf, off + 1);
   if (!vi) return null;
@@ -297,13 +300,11 @@ export function emulate(cap, env, opts = {}) {
       case 67: { const f = reg(st.L[I]); const packed = reg(st.s[I]); const args = packedArgs(packed); doCall(f, args, st.O[I]); break; }
       case 75: { const f = reg(st.s[I]); const selfv = reg(st.L[I]); const packed = reg(st.O[I]); doCall(f, [selfv, ...packedArgs(packed)], null); break; }
 
-      // ---- multi-result call family 90..96 ----
-      case 90: case 91: case 92: case 93: case 94: case 95: case 96: {
+      // ---- multi-result call family 90..96 (92 & 95 handled in moves/loads above) ----
+      case 90: case 91: case 93: case 94: case 96: {
         const K = I;
         if (v === 94) { const f = reg(st.L[K]); const m2 = st.s[K]; const n2 = st.O[K]; const args = []; for (let x = m2 + 1; x <= m2 + n2; x++) args.push(reg(x)); const rv = callValue(f, args); setReg(m2, rv); }
-        else if (v === 95) setReg(st.s[K], st.Y[K]);
         else if (v === 96) { g = st.O[K]; I = st.s[K] + 1; line(`EXIT g=${g} I=${I}`); status = 'exit'; steps = maxSteps; break; }
-        else if (v === 92) setReg(st.s[K], '\u0000BX:Bkey=' + st.B);
         else if (v === 93) { const m2 = st.s[K]; const H2 = st.O[K]; const M2 = st.L[K]; const f = reg(m2); const args = []; for (let x = m2 + 1; x <= m2 + H2; x++) args.push(reg(x)); const rv = callValue(f, args); for (let x = 1; x <= M2; x++) setReg(m2 + x - 1, rv); }
         else if (v === 91) { const m2 = st.X[st.s[K]]; if (m2) statements.push(`upval[${valText(m2)}][${valText(reg(st.L[K]))}] = ${valText(reg(st.O[K]))}`); }
         else if (v === 90) { const m2 = st.X[st.s[K]]; if (m2) setReg(st.O[K], { __kind: 'upval', of: st.s[K] }); }
@@ -319,7 +320,7 @@ export function emulate(cap, env, opts = {}) {
       case 31: st.D = (typeof reg(st.L[I]) === 'number' ? reg(st.L[I]) : st.D) >>> 0; break;
       case 89 + 200: break;
       case 57: case 98: case 29: { status = 'return@' + I; line(`RETURN (${status})`); steps = maxSteps; break; }
-      case 30: case 32: case 37: case 53: case 104: case 107: case 18: case 50: {
+      case 30: case 32: case 37: case 53: case 104: case 107: case 18: {
         // upvalue/global misc — record, continue
         line(`MISC${v}`);
         break;

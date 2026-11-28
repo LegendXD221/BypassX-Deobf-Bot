@@ -34,16 +34,11 @@ export function finalizeReadable(code, lang = 'lua') {
   const text = String(code || '');
   const lines = text.replace(/^\uFEFF/, '').split('\n');
   const canonical = lang === 'js' ? LUCID_HEADING_JS : LUCID_HEADING_LUA;
-  let seen = false;
-  const out = [];
+  const out = [canonical];
   for (const line of lines) {
-    if (HEADING_RE.test(line)) {
-      if (!seen) { seen = true; out.push(canonical); }
-      continue; // duplicate headings are dropped
-    }
+    if (HEADING_RE.test(line)) continue; // always hoist to line 1 and drop duplicates
     out.push(line);
   }
-  if (!seen) out.unshift(canonical);
   return out.join('\n');
 }
 

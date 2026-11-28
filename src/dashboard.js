@@ -23,6 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG, ensureVarDir } from './config.js';
 import { logger, recentLogs } from './logger.js';
+import { redactSecrets } from './redact.js';
 import * as db from './db.js';
 import { CATALOG, FAMILIES, CATALOG_SIZE, EXECUTOR_IDENTITIES } from './antitamper/catalog.js';
 import { ANTITAMPER_VERSION } from './antitamper/index.js';
@@ -109,8 +110,10 @@ export async function initDashboardToken() {
 /** Log the private dashboard path once at boot (Render logs are owner-only). */
 export function announceDashboard() {
   const t = token();
-  logger.info({ dashboardPath: `/dash/${t}` }, 'dashboard: ready — private URL path (owner-only logs)');
-  logger.info({}, 'dashboard: if the URL stopped working, set DASHBOARD_TOKEN in Render env to pin it forever');
+  // Write directly to stdout so the secret token is NOT stored in the in-memory log ring buffer.
+  console.log(`[dashboard] ready — private URL path: /dash/${t}`);
+  logger.info({}, 'dashboard: ready — private URL printed to stdout (owner-only)');
+  logger.info({}, 'dashboard: if the URL stopped working, set DASHBOARD_TOKEN in env to pin it forever');
   return t;
 }
 
@@ -133,17 +136,22 @@ const FAIL_LIMIT = 8;
 const FAIL_WINDOW_MS = 15 * 60_000;
 
 function ipOf(req) {
-  // Render terminates TLS on a shared proxy: remoteAddress is the PROXY's
-  // internal address for every client. Key the brute-force buckets on the
-  // forwarded client address instead — otherwise one attacker spamming wrong
-  // tokens locks the OWNER (and everyone else) out of the dashboard too.
-  const fwd = req.headers['x-forwarded-for'];
-  if (fwd) return String(fwd).split(',')[0].trim();
-  return String(req.socket?.remoteAddress || '?');
+  const remote = String(req.socket?.remoteAddress || '?');
+  const fromProxy = process.env.TRUST_PROXY === '1'
+    || /^(::ffff:)?(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)|^::1$/.test(remote);
+  if (fromProxy) {
+    const fwd = req.headers['x-forwarded-for'];
+    if (fwd) return String(fwd).split(',')[0].trim();
+  }
+  return remote;
 }
 
 function registerFail(ip) {
   const now = Date.now();
+  if (fails.size >= 2000) {
+    for (const [k, v] of fails) if (v.until <= now) fails.delete(k);
+    if (fails.size >= 2000) fails.clear();
+  }
   const st = fails.get(ip) || { count: 0, until: 0 };
   if (st.until && st.until <= now) { st.count = 0; st.until = 0; } // lockout expired
   st.count += 1;
@@ -176,7 +184,7 @@ export function resetDashboardLimits() {
 
 setInterval(() => {
   const now = Date.now();
-  for (const [ip, st] of fails) if (st.until < now && st.count === 0) fails.delete(ip);
+  for (const [ip, st] of fails) if (st.until <= now) fails.delete(ip);
 }, 60_000).unref();
 
 // ---- http helpers ---------------------------------------------------------------
@@ -339,6 +347,22 @@ export async function handleDashboard(req, res, rawUrl) {
 
   if (!apiAllowed(ip)) return json(res, 429, { ok: false, error: 'slow down (120 req/min cap)' });
 
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    const sfs = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+    if (sfs && sfs !== 'same-origin' && sfs !== 'none') {
+      return json(res, 403, { ok: false, error: 'cross-origin write blocked' });
+    }
+    const origin = req.headers.origin;
+    const host = req.headers.host;
+    if (origin && host) {
+      try {
+        if (new URL(origin).host !== host) return json(res, 403, { ok: false, error: 'origin mismatch' });
+      } catch {
+        return json(res, 403, { ok: false, error: 'invalid origin' });
+      }
+    }
+  }
+
   try {
     return await routeApi(req, res, rest.slice(1).join('/'), search);
   } catch (e) {
@@ -400,7 +424,10 @@ async function routeApi(req, res, route, search = new URLSearchParams()) {
       for (const t of ['bot_stats', 'deobf_history', 'owner_audit', 'blacklist', 'guild_settings', 'dashboard_state']) {
         try {
           const r = await db.rawSql(`SELECT * FROM ${t} ORDER BY 1 DESC LIMIT 5000`);
-          dump[t] = r.rows || [];
+          const rows = r.rows || [];
+          dump[t] = t === 'dashboard_state'
+            ? rows.map((row) => ({ ...row, value: /token|secret|key|pin/i.test(String(row.key || '')) ? '***redacted***' : row.value }))
+            : rows;
         } catch { dump[t] = { error: 'unreadable' }; }
       }
       await audit('dash-backup', Object.entries(dump).map(([k, v]) => `${k}:${Array.isArray(v) ? v.length : 'err'}`).join(' '));
@@ -588,6 +615,10 @@ async function routeApi(req, res, route, search = new URLSearchParams()) {
     }
     const r = await db.rawSql(sql);
     await audit('dash-sql', r.error ? `error: ${r.error}` : `${r.rowCount ?? 0} rows in ${r.ms}ms`, { args: sql.slice(0, 120) });
+    if (r.rows) {
+      r.rows = JSON.parse(redactSecrets(JSON.stringify(r.rows)));
+    }
+    if (r.error) r.error = redactSecrets(r.error);
     return json(res, 200, { ok: !r.error, data: r });
   }
   if (route === 'engine-rebuild') {

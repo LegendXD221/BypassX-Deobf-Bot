@@ -12,7 +12,7 @@
  * `forced` (per-service commands): { id, accept, tag, label } — pins the
  * pipeline onto the requested family (see src/service-catalog.js).
  */
-import { deobfuscate } from '../pipeline.js';
+import { deobfuscate, getQueueInfo } from '../pipeline.js';
 import { createPaste } from '../pastefy.js';
 import { checkCooldown } from '../rate-limit.js';
 import { successReply, failureReply, errorReply, cooldownReply } from '../replies.js';
@@ -55,8 +55,10 @@ export async function runDeobfJob(ctx, { commandName = 'deobf', forced = null } 
   const t0 = Date.now();
   const secs = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
   const targeting = forced ? ` — targeting ${forced.label}` : '';
+  const q = getQueueInfo();
+  const queueHint = q.active >= q.maxConcurrent ? ` (queued #${q.queued + 1})` : '';
   const status = await ctx.statusReply(
-    `<@${ctx.userId}> deobfuscating Your Code${known ? ` (\`${known}\`)` : ''}${targeting} …`,
+    `<@${ctx.userId}> deobfuscating Your Code${known ? ` (\`${known}\`)` : ''}${targeting}${queueHint} …`,
   );
 
   let att;
@@ -71,7 +73,7 @@ export async function runDeobfJob(ctx, { commandName = 'deobf', forced = null } 
     return ctx.send(errorReply('No input', att.error));
   }
   if (att.filename && att.filename !== known) {
-    await status.update(`<@${ctx.userId}> deobfuscating Your Code (\`${att.filename}\`)${targeting} …`);
+    await status.update(`<@${ctx.userId}> deobfuscating Your Code (\`${att.filename}\`)${targeting}${queueHint} …`);
   }
 
   try {
@@ -94,10 +96,13 @@ export async function runDeobfJob(ctx, { commandName = 'deobf', forced = null } 
     let paste = null;
     if (!result.binaryOutput) {
       try {
-        paste = await createPaste({
-          title: `Lucid Deobf — ${result.detected.name}${result.detected.version ? ` ${result.detected.version}` : ''} — ${att.filename}`,
-          text: result.code,
-        });
+        paste = await Promise.race([
+          createPaste({
+            title: `Lucid Deobf — ${result.detected.name}${result.detected.version ? ` ${result.detected.version}` : ''} — ${att.filename}`,
+            text: result.code,
+          }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('pastefy upload timed out (15s)')), 15_000)),
+        ]);
       } catch (e) {
         logger.warn({ err: String(e.message || e) }, 'pastefy upload failed — delivering file attachment instead');
       }

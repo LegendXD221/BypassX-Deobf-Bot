@@ -127,16 +127,19 @@ do
   getreg = getregistry
 
   -- references ----------------------------------------------------------------
+  local __bx_clone_ref = setmetatable({}, { __mode = 'k' })
   cloneref = function(ref)
     if type(ref) ~= 'table' and type(ref) ~= 'userdata' then return ref end
+    local real = __bx_clone_ref[ref] or ref
     local proxy = setmetatable({}, {
-      __index = function(_, k) local v = ref[k] return v end,
-      __newindex = function(_, k, v) ref[k] = v end,
-      __call = function(_, ...) return ref(...) end,
-      __tostring = function() return tostring(ref) end,
+      __index = function(_, k) local v = real[k] return v end,
+      __newindex = function(_, k, v) real[k] = v end,
+      __call = function(_, ...) return real(...) end,
+      __tostring = function() return tostring(real) end,
       __eq = function() return false end,
       __metatable = 'The game',
     })
+    __bx_clone_ref[proxy] = real
     return proxy
   end
   compareinstances = function(a, b) return a == b end
@@ -166,6 +169,8 @@ do
   is_l_closure = islclosure
   isexecutorclosure = function(f) return type(f) == 'function' end
   is_executor_closure = isexecutorclosure
+  isourclosure = isexecutorclosure
+  newlclosure = function(f) return function(...) return f(...) end end
   newcclosure = function(f)
     if type(f) ~= 'function' then error("bad argument #1 to 'newcclosure' (function expected)", 2) end
     -- real executors return a DISTINCT C-wrapped closure: iscclosure(wrapped)
@@ -198,6 +203,7 @@ do
   end
   replaceclosure = hookfunction
   getrawmetatable = function(obj) return debug.getmetatable(obj) end
+  setrawmetatable = function(obj, mt) return debug.setmetatable(obj, mt) end
   setreadonly = function() return true end
   isreadonly = function(obj)
     if type(obj) ~= 'table' then return false end
@@ -213,6 +219,10 @@ do
     return old
   end
   getnamecallmethod = function() return __bx_nc end
+  setnamecallmethod = function(m) __bx_nc = tostring(m or '') end
+  getnilinstances = function() return {} end
+  getscripts = function() return {} end
+  getrunningscripts = function() return {} end
 
   -- script identity ------------------------------------------------------------
   getsenv = function(s)

@@ -44,10 +44,13 @@ const VERIFY_RANK = { failed: 0, unverifiable: 1, verified: 2 };
 
 // ---- global job semaphore ---------------------------------------------------
 const jobState = { active: 0, queue: [] };
+export function getQueueInfo() {
+  return { active: jobState.active, queued: jobState.queue.length, maxConcurrent: CONFIG.maxConcurrent };
+}
 async function withJobSlot(fn) {
   if (jobState.active >= CONFIG.maxConcurrent) {
     if (jobState.queue.length >= CONFIG.maxQueue) throw Object.assign(new Error('busy — too many jobs queued, try again shortly'), { code: 'busy' });
-    await new Promise((resolve) => jobState.queue.push(resolve));
+    await new Promise((resolve) => jobState.queue.push({ resolve }));
   }
   jobState.active += 1;
   try { return await fn(); } finally {
@@ -63,7 +66,7 @@ async function withJobSlot(fn) {
  * obfuscated (or passes stop making progress), stacking a layer report:
  * { ok, code, layers[], inputLayers, layerSummary, readability, ... }
  */
-export async function deobfuscate({ buffer, filename = 'input.lua', hintId = null, forced = null }) {
+export async function deobfuscate({ buffer, filename = 'input.lua', hintId = null, forced = null, onStage = null }) {
   const staticLayers = detectLayers(buffer);
   const layerStack = [];
   const mergedStages = [];
@@ -83,6 +86,7 @@ export async function deobfuscate({ buffer, filename = 'input.lua', hintId = nul
           filename: i === 1 ? filename : `layer${i}.lua`,
           hintId: i === 1 ? hintId : null,
           forced: i === 1 ? forced : null, // family pin applies to the first peel only
+          onStage,
         });
       } catch (e) {
         if (best) {
@@ -241,11 +245,15 @@ function annotateResidual(r, passes, res) {
  * Single peel pass — one detect → route → engine run → fallbacks cycle over
  * the CURRENT buffer. Returns the same result document as v2.3.0.
  */
-async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, forced = null }) {
+async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, forced = null, onStage = null }) {
   const t0 = Date.now();
   return (async () => {
     const stages = [];
-    const stage = (name, detail) => { stages.push({ name, detail }); logger.info({ detail }, `stage: ${name}`); };
+    const stage = (name, detail) => {
+      stages.push({ name, detail });
+      logger.info({ detail }, `stage: ${name}`);
+      if (onStage) { try { onStage(name, detail); } catch { /* ignore */ } }
+    };
 
     const detection = detectService(buffer);
 
@@ -255,12 +263,13 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
     // truthfulness; unknown/weak/foreign detection is overridden by the choice.
     const forcedSvc = resolveForced(detection.best, forced);
     if (forcedSvc) {
+      const sameFamily = detection.best?.service?.id === forcedSvc.id;
       detection.best = {
         service: forcedSvc,
         score: 100,
         confidence: 99,
         evidence: [`forced via .${forced.tag} command`],
-        version: null,
+        version: sameFamily ? (detection.best?.version ?? null) : null,
       };
     }
 
@@ -336,7 +345,7 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
       if (!outcome.ok) {
         // Last resort: opposite toolchain — engine auto for JS-looking input
         // that webcrack refused, webcrack for engine-refused JS-ish output…
-        if (route !== 'auto') {
+        if (route !== 'auto' && route !== 'lua-engine') {
           stage('fallback:auto', 'final generic engine pass');
           const fb = await engine.autoRun(inputPath, { maxDepth: 6 });
           if (fb.ok) {
@@ -364,9 +373,11 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
         const h = await tryHarvest(inputPath, detected, lang, stage, stages, t0, buffer, filename);
         if (h) return h;
         // v2.24.0: vendored OmniDBF static lifter (MoonVeil envelope peel and
-        // any PORTED_FIRST family the primary route missed).
-        const pfb = await tryPorted(inputPath, detected, stage, stages, t0, buffer, lang);
-        if (pfb) return pfb;
+        // any non-PORTED_FIRST family). Skip if route === 'ported' already ran it.
+        if (route !== 'ported') {
+          const pfb = await tryPorted(inputPath, detected, stage, stages, t0, buffer, lang);
+          if (pfb) return pfb;
+        }
         // FINAL FALLBACK: unconditional pure-JS static peel. No walls — every
         // supported service produces output. The user always gets a paste with
         // every recoverable string, decoded payload, function name and numeric
@@ -504,19 +515,62 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
       // chain (chunk capture → v15 ext → v10-14 state-devirt → trace sweep →
       // payload inventory) applies verbatim; only the id differs.
       if ((detected.id === 'luraph' || detected.id === 'tokrascript') && !binaryOutput) {
+        const verStr = detected.version || '';
+        const isV15 = verStr.startsWith('v15');
+        const isV14OrTokra = /^v1[0-4]/.test(verStr) || detected.id === 'tokrascript';
+        const budgetLeft = () => Math.max(15_000, CONFIG.engineTimeoutMs - (Date.now() - t0));
+
         try {
+          // Fast path for Luraph v15: try vendored CFG+SSA/trace devirtualizer FIRST
+          // (~10s) before burning up to 120s in Fengari vm-lift.
+          if (isV15) {
+            stage('luraph15:ext-attempt', 'vendored v15 devirtualizer (full-source lift)');
+            let ext = null;
+            try {
+              const { runExtDeobf } = await import('./luraph15-ext.js');
+              ext = await runExtDeobf(buffer.toString('utf8'), {
+                timeoutMs: Math.min(budgetLeft(), 150_000),
+                version: verStr || 'v15',
+              });
+            } catch (e) {
+              stage('luraph15:ext:miss', String(e.message || e).slice(0, 120));
+            }
+            if (ext) {
+              stage('luraph15:ext', ext.how);
+              const post = postprocessFile('recovered.lua', Buffer.from(ext.code, 'utf8'));
+              if (outcome.workDir) await engine.cleanupWorkDir(outcome.workDir);
+              const tracePhase = ext.phase === 'trace';
+              return {
+                ok: true,
+                code: post.data.toString('utf8'),
+                binaryOutput: false,
+                outputBuffer: null,
+                codeName: 'recovered.lua',
+                detected, stages, durationMs: Date.now() - t0, lang,
+                verification: ext.verification,
+                originalSize: buffer.length,
+                recoveredSize: post.data.length,
+                how: tracePhase
+                  ? 'Luraph v15 devirtualization (vendored engine, behaviour-trace recovery)'
+                  : 'Luraph v15 devirtualization (vendored CFG+SSA full-source lift)',
+                partialNote: tracePhase
+                  ? `Luraph ${verStr || 'v15.x'}: **source recovered** by the vendored engine's behaviour-trace pass — the sample ran in the offline emulator and its executed statements were recorded and re-emitted as real source (${ext.how}).`
+                  : `Luraph ${verStr || 'v15.x'}: **full source recovered** by the vendored devirtualization engine — control flow, closures and constants reconstructed (${ext.how}).`,
+                engine: await engine.probe(),
+              };
+            }
+            stage('luraph15:ext:miss', 'vendored engine could not lift this layout');
+          }
+
           const h = await runLift(inputPath, detected, stage);
           // v2.18.2 — Luraph v14.7 wire: the worker statically unwrapped the
           // base85+LZMA wire (VM interpreter source + program bytecode + full
-          // constant pool). The captured "chunk" is the VM RUNTIME, not user
-          // code — re-peeling it is wrong (it just detects another VM inside).
-          // Terminal result: the decrypted pool as a readable Lua table, with
-          // the VM source + bytecode sizes reported honestly.
+          // constant pool).
           if (h && h.v14wire) {
             const artV14 = pickChunkArtifact(h);
             if (artV14 && artV14.kind === 'source') {
               stage('luraph14:wrecovery', `wire unwrapped statically: VM source ${h.v14wire.vmBytes}B + bytecode ${h.v14wire.dataBytes}B + ${h.v14wire.pool}-string pool`);
-              const poolLua = harvestToLua(h, { detectedName: detected.name, version: detected.version || '' });
+              const poolLua = harvestToLua(h, { detectedName: detected.name, version: verStr });
               return {
                 ok: true,
                 code: poolLua,
@@ -525,7 +579,7 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
                 verification: verifyCode(poolLua, { lang: 'lua', filename: 'recovery.lua' }),
                 originalSize: buffer.length,
                 recoveredSize: poolLua.length,
-                how: `Luraph ${detected.version || 'v14.7'} — wire fully decrypted (base85+LZMA): VM interpreter + program bytecode + ${h.v14wire.pool}-string constant pool recovered statically`,
+                how: `Luraph ${verStr || 'v14.7'} — wire fully decrypted (base85+LZMA): VM interpreter + program bytecode + ${h.v14wire.pool}-string constant pool recovered statically`,
                 partialNote: `The loader's wire is fully unwrapped: the VM interpreter source (${h.v14wire.vmBytes}B) and the program bytecode (${h.v14wire.dataBytes}B) are recovered; the paste is the complete decrypted constant pool. Bytecode→source lifting is engine-0.13 work.`,
                 engine: await engine.probe(),
               };
@@ -537,7 +591,7 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
             if (art.kind === 'source') {
               data = Buffer.from(art.code, 'utf8');
               chunkVerifyOverride = verifyCode(art.code, { lang: art.lang === 'js' ? 'js' : 'lua', filename: 'recovered.lua' });
-              luraphNote = `Luraph ${detected.version || 'v15.x'} devirtualization: **full source recovered** — the loader decrypted its payload inside the jailed VM and handed it to load()/loadstring(). The code below is the complete original script${art.lang === 'luau' ? ' (Luau syntax normalized)' : ''}; ${h.strings.length} pool strings were also decrypted.`;
+              luraphNote = `Luraph ${verStr || 'v15.x'} devirtualization: **full source recovered** — the loader decrypted its payload inside the jailed VM and handed it to load()/loadstring(). The code below is the complete original script${art.lang === 'luau' ? ' (Luau syntax normalized)' : ''}; ${h.strings.length} pool strings were also decrypted.`;
             } else {
               const buf = Buffer.from(art.text, 'latin1');
               return {
@@ -551,78 +605,35 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
                 originalSize: buffer.length,
                 recoveredSize: buf.length,
                 how: `Luraph v15 — decrypted ${art.format} bytecode captured at load()`,
-                partialNote: `Luraph ${detected.version || 'v15.x'}: full bytecode recovered from the load()-hook — the ${buf.length}-byte ${art.format} chunk is attached.`,
+                partialNote: `Luraph ${verStr || 'v15.x'}: full bytecode recovered from the load()-hook — the ${buf.length}-byte ${art.format} chunk is attached.`,
                 engine: await engine.probe(),
               };
             }
           } else {
-            // v2.1.0: vendored full-source devirtualizer (MIT engine, CFG+SSA
-            // lift) — true readable source for the standard Luraph v15
-            // closure-maker layout; our own chain below covers the hybrid
-            // CPS-loader layout it cannot read. (v14 builds take the
-            // behaviour-trace sweep branch below instead.) Any miss falls
-            // through.
-            if (!binaryOutput && (detected.version || '').startsWith('v15')) {
-              stage('luraph15:ext-attempt', 'vendored v15 devirtualizer (full-source lift)');
-              let ext = null;
-              try {
-                const { runExtDeobf } = await import('./luraph15-ext.js');
-                ext = await runExtDeobf(buffer.toString('utf8'), {
-                  timeoutMs: Math.min(CONFIG.engineTimeoutMs, 150_000),
-                  version: detected.version || 'v15',
-                });
-              } catch (e) {
-                stage('luraph15:ext:miss', String(e.message || e).slice(0, 120));
-              }
-              if (ext) {
-                stage('luraph15:ext', ext.how);
-                const post = postprocessFile('recovered.lua', Buffer.from(ext.code, 'utf8'));
+            if (h && h.lift && h.lift.snap) {
+              // v1.9.0: VM state captured — behavioral lift REPLACES the inventory
+              const lift = liftFromHarvest(h.lift, { detectedName: detected.name, version: verStr });
+              if (lift.ok) {
+                stage('luraph15:devirt', lift.how);
+                const post = postprocessFile('devirtualized.lua', Buffer.from(lift.code, 'utf8'));
                 if (outcome.workDir) await engine.cleanupWorkDir(outcome.workDir);
-                const tracePhase = ext.phase === 'trace';
                 return {
                   ok: true,
                   code: post.data.toString('utf8'),
                   binaryOutput: false,
                   outputBuffer: null,
-                  codeName: 'recovered.lua',
+                  codeName: 'devirtualized.lua',
                   detected, stages, durationMs: Date.now() - t0, lang,
-                  verification: ext.verification,
+                  verification: verifyCode(post.data.toString('utf8'), { lang: 'lua', filename: 'devirtualized.lua' }),
                   originalSize: buffer.length,
                   recoveredSize: post.data.length,
-                  how: tracePhase
-                    ? 'Luraph v15 devirtualization (vendored engine, behaviour-trace recovery)'
-                    : 'Luraph v15 devirtualization (vendored CFG+SSA full-source lift)',
-                  partialNote: tracePhase
-                    ? `Luraph ${detected.version || 'v15.x'}: **source recovered** by the vendored engine's behaviour-trace pass — the sample ran in the offline emulator and its executed statements were recorded and re-emitted as real source (${ext.how}).`
-                    : `Luraph ${detected.version || 'v15.x'}: **full source recovered** by the vendored devirtualization engine — control flow, closures and constants reconstructed (${ext.how}).`,
+                  how: 'Luraph VM devirtualization (behavioral opcode lifting)',
+                  partialNote: `Luraph ${verStr || 'v15.x'} devirtualization: the obfuscator's own VM ran inside the jailed sandbox — instruction stream + decrypted constant pool captured at the dispatcher, ${lift.classified}/${lift.total} opcodes behaviorally probed, bytecode transpiled below.${h.strings.length ? ` ${h.strings.length} pool strings also decrypted.` : ''}`,
                   engine: await engine.probe(),
                 };
               }
-              stage('luraph15:ext:miss', 'vendored engine could not lift this layout');
             }
-            if (h && h.lift && h.lift.snap) {
-            // v1.9.0: VM state captured — behavioral lift REPLACES the inventory
-            const lift = liftFromHarvest(h.lift, { detectedName: detected.name, version: detected.version || '' });
-            if (lift.ok) {
-              stage('luraph15:devirt', lift.how);
-              const post = postprocessFile('devirtualized.lua', Buffer.from(lift.code, 'utf8'));
-              if (outcome.workDir) await engine.cleanupWorkDir(outcome.workDir);
-              return {
-                ok: true,
-                code: post.data.toString('utf8'),
-                binaryOutput: false,
-                outputBuffer: null,
-                codeName: 'devirtualized.lua',
-                detected, stages, durationMs: Date.now() - t0, lang,
-                verification: verifyCode(post.data.toString('utf8'), { lang: 'lua', filename: 'devirtualized.lua' }),
-                originalSize: buffer.length,
-                recoveredSize: post.data.length,
-                how: 'Luraph VM devirtualization (behavioral opcode lifting)',
-                partialNote: `Luraph ${detected.version || 'v15.x'} devirtualization: the obfuscator's own VM ran inside the jailed sandbox — instruction stream + decrypted constant pool captured at the dispatcher, ${lift.classified}/${lift.total} opcodes behaviorally probed, bytecode transpiled below.${h.strings.length ? ` ${h.strings.length} pool strings also decrypted.` : ''}`,
-                engine: await engine.probe(),
-              };
-            }
-          } else if (!binaryOutput && /^v1[0-4]/.test(detected.version || '')) {
+            if (!binaryOutput && isV14OrTokra) {
             // v2.6.0: runtime-state devirtualizer for Luraph v10–v14 payload
             // VMs — runs the build's own VM inside the offline emulator with
             // its interpreter instrumented: captures the deserialized program
@@ -735,9 +746,10 @@ async function deobfuscateOnce({ buffer, filename = 'input.lua', hintId = null, 
               }
               stage('luraph14:trace:thin', `only ${sweep.statements} statements — falling through`);
             }
-          } else if (!binaryOutput
-            && looksLikeLuraphInventory(data.toString('utf8'))
-            && (detected.version || '').startsWith('v15')) {
+            }
+            if (!binaryOutput
+              && looksLikeLuraphInventory(data.toString('utf8'))
+              && isV15) {
             // v2.0: real-Luau VM capture — run the sample inside the bundled real
             // Luau runtime with its own interpreter instrumented in place; replay
             // every lazy decrypt it performed; deliver the decrypted instruction
@@ -1194,9 +1206,11 @@ async function runLuaEngineRoute(inputPath, detected, stage, inLen = 0) {
   if (b.ok && sweepHitIsReal(b, inLen)) return { ...b, how: 'engine auto' };
   if (b.ok) stage('auto:echo', `output ≈ input — not a real peel`);
   if (b.workDir) await engine.cleanupWorkDir(b.workDir);
-  stage('sweep', 'all engine lua families');
+  const sweepDeadline = Date.now() + 30_000;
+  stage('sweep', 'targeted engine lua families');
   for (const f of engine.ENGINE_LUA_FAMILIES) {
     if (f === fam) continue;
+    if (Date.now() > sweepDeadline) { stage('sweep:budget', '30s sweep budget reached'); break; }
     const c = await engine.luaPeel(inputPath, f);
     if (c.ok && sweepHitIsReal(c, inLen)) { stage('sweep:hit', f); return { ...c, how: `lua sweep (${f})` }; }
     if (c.ok) stage('sweep:echo', `${f} — output ≈ input, not a real peel`);
@@ -1263,8 +1277,10 @@ async function runAutoRoute(inputPath, _detected, stage, inLen = 0) {
   if (b.ok && sweepHitIsReal(b, inLen)) return { ...b, how: 'engine auto' };
   if (b.ok) stage('auto:echo', 'output ≈ input — not a real peel');
   if (b.workDir) await engine.cleanupWorkDir(b.workDir);
-  stage('sweep', 'all engine lua families');
+  const sweepDeadline = Date.now() + 30_000;
+  stage('sweep', 'targeted engine lua families');
   for (const f of engine.ENGINE_LUA_FAMILIES) {
+    if (Date.now() > sweepDeadline) { stage('sweep:budget', '30s sweep budget reached'); break; }
     const c = await engine.luaPeel(inputPath, f);
     if (c.ok && sweepHitIsReal(c, inLen)) { stage('sweep:hit', f); return { ...c, how: `lua sweep (${f})` }; }
     if (c.ok) stage('sweep:echo', `${f} — output ≈ input, not a real peel`);

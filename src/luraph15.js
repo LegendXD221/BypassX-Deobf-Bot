@@ -68,7 +68,7 @@ function entropyBitsPerByte(buf) {
  */
 export function captureKeyCarriers(sourceText) {
   const carriers = [];
-  const re = /"((?:[^"\\\n]|\\.|\\x[0-9a-fA-F]{2}|\\[0-7]{1,3}|\\[abfnrtv]){64,})"/g;
+  const re = /"((?:[^"\\\n]|\\.){64,})"/g;
   let m;
   while ((m = re.exec(sourceText))) {
     if (carriers.length >= 32) break;

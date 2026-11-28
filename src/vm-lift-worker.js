@@ -970,8 +970,6 @@ async function main() {
   } catch { /* shim unavailable — original path */ }
 
   // ---- run 1: plain harvest (identical jail to harvester-worker) ---------------
-  const s1 = freshState({ left: Math.floor(BUDGET_TOTAL * 0.55) });
-  runLua(s1, jail.PRELUDE, 'prelude');
   const run1Sources = [transformed, repaired, code].filter((s, i, a) => s && a.indexOf(s) === i);
   let l1 = { loaded: false, err: null };
   let d1 = { ran: false, runError: null, strings: [], chunks: [], log: [] };

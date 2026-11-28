@@ -19,18 +19,7 @@
  *      ISA (loop-1 v-map): register ops, calls, jumps, decrypt blocks.
  */
 import { verifyCode } from './validate.js';
-
-const M29 = 536870911;
-const bxor = (a, b) => (a ^ b) >>> 0;
-const band = (a, b) => (a & b) >>> 0;
-const rshift = (a, b) => (a >>> (b & 31)) >>> 0;
-
-function xorshiftStep(H) {
-  H = band(bxor(H, (H << 13) >>> 0), M29);
-  H = bxor(H, rshift(H, 13));
-  H = band(bxor(H, (H << 14) >>> 0), M29);
-  return H >>> 0;
-}
+import { M29, bxor, band, rshift, xorshiftStep } from './luraph-vm15-core.js';
 
 /** block-decrypt site roles come from the capture (per-build, auto-detected);
  *  this fallback covers the common role families when the capture omits them. */
@@ -46,24 +35,6 @@ function siteRoles(capture, id) {
 }
 
 const CONST_KEY = 535359694;
-
-function readVarint(buf, pos) {
-  const b0 = buf[pos];
-  if (b0 === undefined) return null;
-  if (b0 < 128) return { v: b0, next: pos + 1 };
-  const b1 = buf[pos + 1];
-  if (b1 === undefined) return null;
-  if (b1 < 128) return { v: (b0 - 128) * 128 + b1, next: pos + 2 };
-  const b2 = buf[pos + 2];
-  if (b2 === undefined) return null;
-  if (b2 < 128) return { v: (b0 - 128) + (b1 - 128) * 16384 + b2 * 128, next: pos + 3 };
-  const b3 = buf[pos + 3];
-  if (b3 === undefined) return null;
-  return {
-    v: (b0 - 128) * 2097152 + (b1 - 128) * 128 + (b2 - 128) * 16384 + (b3 % 128) + (b3 - (b3 % 128)) * 2097152,
-    next: pos + 4,
-  };
-}
 
 /** Loop-1 (v) ISA — semantic names for the decrypted opcodes. */
 const V_ISA = {

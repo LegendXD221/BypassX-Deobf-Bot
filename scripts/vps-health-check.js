@@ -19,9 +19,10 @@ await new Promise((resolve) => {
     res.on('end', () => {
       const ready = /"discordReady"\s*:\s*true/.test(b) || /discordReady['"]?\s*[:=]\s*true/.test(b);
       console.log(`http ${res.statusCode} discordReady=${ready ? 'true' : 'false'}`);
+      if (res.statusCode !== 200 || !ready) process.exitCode = 1;
       resolve();
     });
   });
-  r.on('error', (e) => { console.log(`ERR ${e.code || e.message}`); resolve(); });
-  r.on('timeout', () => { r.destroy(); console.log('ERR timeout'); resolve(); });
+  r.on('error', (e) => { console.log(`ERR ${e.code || e.message}`); process.exitCode = 1; resolve(); });
+  r.on('timeout', () => { r.destroy(); console.log('ERR timeout'); process.exitCode = 1; resolve(); });
 });

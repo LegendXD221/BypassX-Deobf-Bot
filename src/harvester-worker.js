@@ -523,6 +523,55 @@ for (const tier of attempts) {
       }
     }
   }
+  // v2.26.0 (kvms HarvestAllRoots + TIPS#6): walk user-populated _G tables via raw next()
+  // to harvest decoded constant tables built without string.char/table.concat hooks,
+  // and try hiding loadstring when sinks are still empty (forces unpack fallback).
+  if (!best || best.usable < 3) {
+    try {
+      lauxlib.luaL_dostring(L, to_luastring(`
+        local __seen, __cnt = {}, 0
+        local __skip = { _G=1, string=1, table=1, math=1, os=1, debug=1, utf8=1, coroutine=1, bit32=1, bit=1, buffer=1, task=1, game=1, workspace=1, script=1, Enum=1, Instance=1, Random=1, _BX_SINK=1, _BX_CHUNKS=1, _BX_LOG=1, _BX_ENVLOG=1 }
+        local function __walk(t, d)
+          if d > 4 or __cnt >= 2000 or type(t) ~= 'table' or __seen[t] then return end
+          __seen[t] = true
+          for k, v in next, t do
+            if type(v) == 'string' and #v >= 4 and #v <= 4096 then
+              __cnt = __cnt + 1
+              _BX_SINK[#_BX_SINK + 1] = v
+            elseif type(v) == 'table' and d < 4 then
+              __walk(v, d + 1)
+            end
+          end
+        end
+        for k, v in next, _G do
+          if type(k) == 'string' and not __skip[k] and k:sub(1, 4) ~= '_BX_' and k:sub(1, 4) ~= '__bx' then
+            if type(v) == 'string' and #v >= 4 and #v <= 4096 then
+              __cnt = __cnt + 1; _BX_SINK[#_BX_SINK + 1] = v
+            elseif type(v) == 'table' then
+              __walk(v, 1)
+            end
+          end
+        end
+      `));
+      const gotH = usableCount();
+      if (gotH > (best?.usable || 0)) {
+        best = { usable: gotH, tier: 'harvest-roots', note: null };
+        extraLog.push(`tier4b harvest-roots: ${gotH} usable strings`);
+      }
+    } catch { /* best effort */ }
+  }
+  if ((!best || best.usable < 3) && /\bloadstring\b/.test(code || '') && budget > 15e6) {
+    try {
+      lauxlib.luaL_dostring(L, to_luastring('loadstring = nil'));
+      for (const source of [transformed, code].filter((s, i, a) => s && parsable(s) && a.indexOf(s) === i)) {
+        try { runOnce(source); } catch { /* sink survives */ }
+        const got = usableCount();
+        if (got > (best?.usable || 0)) best = { usable: got, tier: 'no-loadstring', note: null };
+        if (got >= 3) break;
+      }
+      extraLog.push(`tier4c no-loadstring: ${usableCount()} usable strings`);
+    } catch { /* ignore */ }
+  }
   // v2.18.0 tier5 — static literal floor: NEVER return zero recon. Loaders
   // and config stubs (LuArmor _bsdata, Junkie loader config, 25ms pool heads)
   // keep their static string table even when every runtime tier starves.

@@ -458,7 +458,7 @@ function renderGuilds(){
     var st = (s.guildSettings || [])[i] || {};
     var chs = (x.channels || []).map(function(c){ return '<option value="' + c.id + '">#' + esc(c.name) + '</option>'; }).join('');
     return '<div class="gcard" data-id="' + x.id + '">' +
-      '<div class="ghead">' + (x.icon ? '<img src="' + x.icon + '" alt="">' : '<img alt="" style="background:var(--panel2)">') +
+      '<div class="ghead">' + (x.icon ? '<img src="' + esc(x.icon) + '" alt="">' : '<img alt="" style="background:var(--panel2)">') +
       '<div><div class="gname">' + esc(x.name) + '</div><div class="gid">' + x.id + ' · ' + (x.memberCount == null ? '?' : x.memberCount) + ' members · joined ' + (x.joinedAt || '?') + '</div></div></div>' +
       '<div class="tog">' +
       '<button class="' + (st.disabled ? 'off' : 'on') + '" data-a="disabled">' + (st.disabled ? '⛔ bot DISABLED' : '✅ bot enabled') + '</button>' +

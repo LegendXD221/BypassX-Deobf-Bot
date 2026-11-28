@@ -140,6 +140,23 @@ export async function init() {
     state.latencyMs = Date.now() - t0;
     state.lastOkAt = Date.now();
     logger.info({ latencyMs: state.latencyMs, host: describe().host }, 'db: Neon connected + schema ready');
+    // Pre-warm blacklist + guild settings caches so the first Discord commands don't hit 1.7s cold DB latency.
+    refreshBlacklist().catch(() => {});
+    query('SELECT guild_id, disabled, deobf_enabled, detect_enabled, prefix, note FROM guild_settings').then((r) => {
+      const now = Date.now();
+      for (const row of r?.rows || []) {
+        guildCache.set(String(row.guild_id), {
+          at: now,
+          settings: {
+            disabled: Boolean(row.disabled),
+            deobf_enabled: Boolean(row.deobf_enabled),
+            detect_enabled: Boolean(row.detect_enabled),
+            prefix: row.prefix || null,
+            note: row.note || null,
+          },
+        });
+      }
+    }).catch(() => {});
     return true;
   } catch (e) {
     state.lastError = String(e?.message || e).slice(0, 200);
@@ -358,18 +375,26 @@ function invalidateBlacklist() {
   blacklistCache.set = new Set();
 }
 
-/** Cached membership check (30s TTL) — cheap enough for every dispatch. */
+let blacklistPending = null;
+async function refreshBlacklist() {
+  if (blacklistPending) return blacklistPending;
+  blacklistPending = (async () => {
+    const res = await query('SELECT target FROM blacklist');
+    blacklistCache.at = Date.now();
+    if (res) blacklistCache.set = new Set(res.rows.map((r) => String(r.target)));
+  })().finally(() => { blacklistPending = null; });
+  return blacklistPending;
+}
+
+/** Stale-while-revalidate membership check (5m TTL, deduped) — 0ms on hot path. */
 export async function blacklistHas(target) {
   if (!target || !dbUrl()) return false;
   const now = Date.now();
-  if (now - blacklistCache.at > BLACKLIST_TTL) {
-    const res = await query('SELECT target FROM blacklist');
-    // Refresh the TTL even on failure — a down/overloaded DB must not be
-    // re-queried on literally every dispatch (the breaker alone is not
-    // enough at command-fanout scale; serve the last known set instead).
-    blacklistCache.at = now;
-    if (res) {
-      blacklistCache.set = new Set(res.rows.map((r) => String(r.target)));
+  if (now - blacklistCache.at > 5 * 60_000) {
+    if (blacklistCache.at > 0) {
+      refreshBlacklist().catch(() => {});
+    } else {
+      await Promise.race([refreshBlacklist(), new Promise((r) => setTimeout(r, 750))]);
     }
   }
   return blacklistCache.set.has(String(target));
@@ -377,8 +402,9 @@ export async function blacklistHas(target) {
 
 // ---- guild settings (dashboard-controlled per-guild behaviour) ---------------
 
-const GUILD_TTL = 60_000;
+const GUILD_TTL = 5 * 60_000;
 const guildCache = new Map(); // guildId -> { at, settings }
+const guildPending = new Map(); // guildId -> Promise
 
 export const GUILD_DEFAULTS = Object.freeze({
   disabled: false,
@@ -388,25 +414,52 @@ export const GUILD_DEFAULTS = Object.freeze({
   note: null,
 });
 
-/** Cached per-guild settings (60 s TTL). Always resolves — defaults when the
- *  DB is off. Owner/dispatch code must never await an error from here. */
+function refreshGuildSettings(id) {
+  if (guildPending.has(id)) return guildPending.get(id);
+  const p = (async () => {
+    const res = await query('SELECT disabled, deobf_enabled, detect_enabled, prefix, note FROM guild_settings WHERE guild_id = $1', [id]);
+    const settings = res?.rows?.[0]
+      ? {
+        disabled: Boolean(res.rows[0].disabled),
+        deobf_enabled: Boolean(res.rows[0].deobf_enabled),
+        detect_enabled: Boolean(res.rows[0].detect_enabled),
+        prefix: res.rows[0].prefix || null,
+        note: res.rows[0].note || null,
+      }
+      : { ...GUILD_DEFAULTS };
+    if (guildCache.size >= 5000) guildCache.clear();
+    guildCache.set(id, { at: Date.now(), settings });
+    return settings;
+  })().finally(() => { guildPending.delete(id); });
+  guildPending.set(id, p);
+  return p;
+}
+
+/** Synchronous cached guild prefix lookup (triggers background refresh if stale). */
+export function peekGuildPrefix(guildId) {
+  if (!guildId || !dbUrl()) return { hit: true, prefix: null };
+  const id = String(guildId);
+  const hit = guildCache.get(id);
+  if (!hit) return { hit: false, prefix: null };
+  if (Date.now() - hit.at >= GUILD_TTL) refreshGuildSettings(id).catch(() => {});
+  return { hit: true, prefix: hit.settings.prefix || null };
+}
+
+/** Cached per-guild settings (5m TTL, stale-while-revalidate). Always resolves. */
 export async function getGuildSettings(guildId) {
   if (!guildId || !dbUrl()) return { ...GUILD_DEFAULTS };
+  const id = String(guildId);
   const now = Date.now();
-  const hit = guildCache.get(String(guildId));
-  if (hit && now - hit.at < GUILD_TTL) return hit.settings;
-  const res = await query('SELECT disabled, deobf_enabled, detect_enabled, prefix, note FROM guild_settings WHERE guild_id = $1', [String(guildId)]);
-  const settings = res?.rows?.[0]
-    ? {
-      disabled: Boolean(res.rows[0].disabled),
-      deobf_enabled: Boolean(res.rows[0].deobf_enabled),
-      detect_enabled: Boolean(res.rows[0].detect_enabled),
-      prefix: res.rows[0].prefix || null,
-      note: res.rows[0].note || null,
-    }
-    : { ...GUILD_DEFAULTS };
-  guildCache.set(String(guildId), { at: now, settings });
-  return settings;
+  const hit = guildCache.get(id);
+  if (hit) {
+    if (now - hit.at >= GUILD_TTL) refreshGuildSettings(id).catch(() => {});
+    return hit.settings;
+  }
+  const raced = await Promise.race([
+    refreshGuildSettings(id),
+    new Promise((r) => setTimeout(() => r(null), 750)),
+  ]);
+  return raced || { ...GUILD_DEFAULTS };
 }
 
 /** Per-guild prefix for prefix commands (null → global PREFIX). */
@@ -446,34 +499,28 @@ export async function setGuildSettings(guildId, patch = {}) {
  */
 export async function kvGet(key) {
   if (!describe().enabled) return null;
-  try {
-    const r = await gate.run(() => state.pool.query('SELECT value FROM dashboard_state WHERE key = $1', [String(key)]));
-    return r.rows?.[0]?.value ?? null;
-  } catch { return null; }
+  const r = await query('SELECT value FROM dashboard_state WHERE key = $1', [String(key)]);
+  return r?.rows?.[0]?.value ?? null;
 }
 
 export async function kvSet(key, value) {
   if (!describe().enabled) return false;
-  try {
-    await gate.run(() => state.pool.query(
-      `INSERT INTO dashboard_state (key, value, updated_at) VALUES ($1, $2, now())
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-      [String(key), String(value)],
-    ));
-    return true;
-  } catch { return false; }
+  const r = await query(
+    `INSERT INTO dashboard_state (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [String(key), String(value)],
+  );
+  return r !== null;
 }
 
 /** Recent deobfuscation jobs across ALL users — dashboard history viewer. */
 export async function historyTail(limit = 25) {
   if (!describe().enabled) return [];
   const n = Math.max(1, Math.min(100, Number(limit) || 25));
-  try {
-    const r = await gate.run(() => state.pool.query(
-      `SELECT created_at, command, family, confidence, success, filename, size, duration_ms, paste_url, source
-       FROM deobf_history ORDER BY created_at DESC LIMIT $1`, [n]));
-    return r.rows || [];
-  } catch { return []; }
+  const r = await query(
+    `SELECT created_at, command, family, confidence, success, filename, size, duration_ms, paste_url, source
+     FROM deobf_history ORDER BY created_at DESC LIMIT $1`, [n]);
+  return r?.rows || [];
 }
 
 export async function rawSql(text) {

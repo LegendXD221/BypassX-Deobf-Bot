@@ -5,10 +5,11 @@
  * 300 s max), 16 MB capture, long output auto-pasted. Protected by the 5
  * owner layers at dispatch.
  */
-import { createPaste } from '../pastefy.js';
+import { AttachmentBuilder } from 'discord.js';
 import { runShell } from '../runners.js';
 import { ownerOutputReply, errorReply } from '../replies.js';
 import { logger } from '../logger.js';
+import { redactSecrets } from '../redact.js';
 
 export default {
   name: 'exec',
@@ -29,20 +30,20 @@ export default {
     if (!cmd.trim()) return ctx.reply(errorReply('Missing command', 'Give me a shell command.'));
 
     await ctx.defer();
-    const { ok, output, ms, exit, timeoutCap } = await runShell(cmd);
+    const { ok, output: rawOutput, ms, exit, timeoutCap } = await runShell(cmd);
+    const output = redactSecrets(rawOutput);
     logger.info({ ms }, 'owner exec done');
 
     const meta = [`${ms}ms`, `exit ${exit}`, `${timeoutCap}s cap`];
     if (output.length > 1500) {
-      let paste = null;
-      try {
-        paste = await createPaste({ title: `Lucid Deobf — exec output (${ms}ms)`, text: output });
-      } catch { /* file attachment still carries it */ }
-      return ctx.reply(ownerOutputReply({
+      // Never upload host shell output to public Pastefy — keep inside ephemeral Discord attachment.
+      const reply = ownerOutputReply({
         title: 'exec', ok, input: cmd,
-        output: `${output.slice(0, 1500)}\n… (${output.length - 1500} more chars)`,
-        meta: [...meta, paste ? `full output: ${paste.url}` : 'full output attached'],
-      }));
+        output: `${output.slice(0, 1500)}\n… (${output.length - 1500} more chars attached)`,
+        meta: [...meta, 'redacted & private attachment'],
+      });
+      reply.files = [new AttachmentBuilder(Buffer.from(output.slice(0, 4 * 1024 * 1024), 'utf8'), { name: 'exec-output.txt' })];
+      return ctx.reply(reply);
     }
     return ctx.reply(ownerOutputReply({ title: 'exec', ok, input: cmd, output, meta }));
   },
