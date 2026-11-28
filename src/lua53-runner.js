@@ -87,7 +87,8 @@ export async function runLua53Jailed(inputPath, { timeoutMs = 30_000 } = {}) {
     const prologue = `
 local __bx_io_open = io.open
 local __bx_raw_load = load
-local __bx_stdout_write = function(s) io.stdout:write(s) end
+local __bx_stdout = io.stdout
+local __bx_stdout_write = function(s) __bx_stdout:write(s) end
 local __f = assert(__bx_io_open(${JSON.stringify(inputPath)}, 'rb'))
 local __BX_SRC = __f:read('*a')
 __f:close()
